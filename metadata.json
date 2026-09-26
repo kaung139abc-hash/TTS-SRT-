@@ -1,0 +1,6 @@
+{
+  "name": "FloatDesk - Phone Taskbar & Floating Window OS",
+  "description": "FloatDesk is a mobile floating window OS launcher featuring phone app deep links, Taskbar permissions, Camera, Gallery, Music Player, Sticky Notes, Calculator & Floating Desktop Launcher.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,6 @@
+{
+  "appId": "com.floatdesk.phone.taskbar",
+  "appName": "Floating Window",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
