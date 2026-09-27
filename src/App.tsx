@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   FileText, Upload, Download, Copy, Check, Play, Pause,
-  Sparkles, RefreshCw, AlertCircle, DollarSign,
+  Sparkles, RefreshCw, AlertCircle, DollarSign, Image,
   Languages, Clock, Subtitles, Volume2, Video, CheckCircle2,
   ExternalLink, Layers, ArrowRight, Settings2, Sliders, UserCheck,
   FileAudio, Info, Mic, X, BookOpen, Wand2, Lightbulb, History, Trash2, RotateCcw, Music, Music2, Disc,
-  Users, Plus, ArrowUp, ArrowDown, MessageSquare, Users2, Megaphone, Zap, ShieldCheck
+  Users, Plus, ArrowUp, ArrowDown, MessageSquare, Users2, Megaphone, Zap, ShieldCheck, MoveVertical
 } from 'lucide-react';
 
 interface VoiceItem {
@@ -71,8 +71,8 @@ interface DialogueResult {
 }
 
 export const App: React.FC = () => {
-  // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'history'
-  const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'history'>('tts');
+  // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'history' | 'imager'
+  const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'history' | 'imager'>('tts');
 
   // ----------------------------------------------------
   // Mode 1: Text-to-Speech (TTS) State
@@ -138,22 +138,27 @@ export const App: React.FC = () => {
   // ----------------------------------------------------
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [videoAudioData, setVideoAudioData] = useState('');
-  const [videoTitleText, setVideoTitleText] = useState('VoiceMaster AI Story');
+  const [videoTitleText, setVideoTitleText] = useState('');
   const [videoSubtitleText, setVideoSubtitleText] = useState('');
   const [videoAspectRatio, setVideoAspectRatio] = useState<'9:16' | '16:9' | '1:1'>('9:16');
   const [videoTheme, setVideoTheme] = useState<'cyberpunk' | 'indigo' | 'sunset' | 'emerald' | 'dark'>('cyberpunk');
   const [videoWaveStyle, setVideoWaveStyle] = useState<'cline' | 'line' | 'point'>('cline');
+  const [videoCustomWaveColor, setVideoCustomWaveColor] = useState('');
+  const [videoWaveY, setVideoWaveY] = useState(50); // Default to middle
+  const [videoBgImage, setVideoBgImage] = useState<string>(''); // Base64 of custom background
   const [isVideoGenerating, setIsVideoGenerating] = useState(false);
   const [videoResultUrl, setVideoResultUrl] = useState('');
   const [videoError, setVideoError] = useState('');
 
   const openVideoModalForAudio = (audioUrl: string, title?: string, subtitle?: string) => {
     setVideoAudioData(audioUrl);
-    setVideoTitleText(title || 'VoiceMaster Studio');
+    setVideoTitleText(title || '');
     setVideoSubtitleText(subtitle || '');
+    setVideoBgImage('');
     setVideoResultUrl('');
     setVideoError('');
-    setShowVideoModal(true);
+    setMainMode('video');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleGenerateMP4Video = async () => {
@@ -172,11 +177,21 @@ export const App: React.FC = () => {
           subtitleText: videoSubtitleText,
           aspectRatio: videoAspectRatio,
           theme: videoTheme,
-          waveStyle: videoWaveStyle
+          waveStyle: videoWaveStyle,
+          customWaveColor: videoCustomWaveColor,
+          waveYPercentage: videoWaveY,
+          bgImageData: videoBgImage
         })
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (jsonErr) {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု အချိန်ကုန်သွားပါသည် (သို့မဟုတ်) Memory ကန့်သတ်ချက် ကျော်လွန်သွားပါသည်။ ကျေးဇူးပြု၍ ခေတ္တစောင့်ပြီး ထပ်ကြိုးစားပေးပါခင်ဗျာ။');
+      }
+
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'MP4 ဗီဒီယို ဖန်တီးရာတွင် အမှားအယွင်း ရှိနေပါသည်။');
       }
@@ -198,6 +213,12 @@ export const App: React.FC = () => {
   const [isScriptLoading, setIsScriptLoading] = useState(false);
   const [scriptError, setScriptError] = useState('');
   const [generatedScript, setGeneratedScript] = useState<ScriptResult | null>(null);
+  const [storyImages, setStoryImages] = useState<any[]>([]);
+  const [isStoryImagesLoading, setIsStoryImagesLoading] = useState(false);
+  const [storyImagesError, setStoryImagesError] = useState('');
+  const [isStoryVideoLoading, setIsStoryVideoLoading] = useState(false);
+  const [storyVideoUrl, setStoryVideoUrl] = useState('');
+  const [storyVideoError, setStoryVideoError] = useState('');
 
   // ----------------------------------------------------
   // Mode 3: Audio & Story History Library State
@@ -235,6 +256,53 @@ export const App: React.FC = () => {
       } catch (_) {}
       return updated;
     });
+  };
+
+  // ----------------------------------------------------
+  // Mode 4: Standalone AI Image Generator State
+  // ----------------------------------------------------
+  const [imagePrompt, setImagePrompt] = useState('');
+  const [imageGenAspectRatio, setImageGenAspectRatio] = useState<'9:16' | '16:9' | '1:1'>('9:16');
+  const [imageStyle, setImageStyle] = useState('cinematic');
+  const [isImageGenerating, setIsImageGenerating] = useState(false);
+  const [imageResultUrl, setImageResultUrl] = useState('');
+  const [imageError, setImageError] = useState('');
+
+  // New Pro Features States
+  const [voiceEffect, setVoiceEffect] = useState<'none' | 'echo' | 'deep' | 'radio'>('none');
+  const [enableSubtitles, setEnableSubtitles] = useState(false);
+  const [scriptTemplate, setScriptTemplate] = useState('none');
+
+  const handleGenerateStandaloneImage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!imagePrompt.trim()) return;
+
+    setIsImageGenerating(true);
+    setImageError('');
+    setImageResultUrl('');
+
+    try {
+      const res = await fetch('/api/generate-standalone-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: imagePrompt,
+          aspectRatio: imageGenAspectRatio,
+          style: imageStyle
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'AI ရုပ်ပုံ ဖန်တီး၍ မရပါ။');
+      }
+
+      setImageResultUrl(data.imageUrl);
+    } catch (err: any) {
+      setImageError(err.message || 'ရုပ်ပုံ ဖန်တီးမှု မအောင်မြင်ပါ။');
+    } finally {
+      setIsImageGenerating(false);
+    }
   };
 
   const clearAllHistory = () => {
@@ -472,7 +540,8 @@ export const App: React.FC = () => {
           rate: speechRate,
           pitch: speechPitch,
           bgm: selectedBgm,
-          bgmVolume: bgmVolume
+          bgmVolume: bgmVolume,
+          voiceEffect: voiceEffect
         })
       });
 
@@ -536,7 +605,8 @@ export const App: React.FC = () => {
         body: JSON.stringify({
           topic: scriptTopic.trim(),
           genre: scriptGenre,
-          duration: scriptDuration
+          duration: scriptDuration,
+          template: scriptTemplate // New: Script Template
         })
       });
 
@@ -554,6 +624,11 @@ export const App: React.FC = () => {
 
       setGeneratedScript(data);
 
+      // Automatically start generating scene images for the story
+      setTimeout(() => {
+        handleGenerateStoryImages(data);
+      }, 500);
+
       // Automatically save generated story to History Library
       saveToHistory({
         type: 'story',
@@ -565,6 +640,76 @@ export const App: React.FC = () => {
       setScriptError(err.message || 'ဇာတ်ညွှန်းဖန်တီးရာတွင် ချွတ်ယွင်းချက်ဖြစ်ပေါ်သွားပါသည်။');
     } finally {
       setIsScriptLoading(false);
+    }
+  };
+
+  const handleGenerateStoryImages = async (scriptData?: ScriptResult) => {
+    const targetScript = scriptData || generatedScript;
+    if (!targetScript) return;
+    setIsStoryImagesLoading(true);
+    setStoryImagesError('');
+    setStoryImages([]);
+
+    try {
+      const res = await fetch('/api/generate-story-images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: targetScript.title,
+          script: targetScript.script,
+          genre: scriptGenre
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to generate story scene images');
+      }
+      setStoryImages(data.scenes || []);
+    } catch (err: any) {
+      setStoryImagesError(err.message || 'AI ရုပ်ပုံများ ထုတ်ယူ၍ မရပါ။');
+    } finally {
+      setIsStoryImagesLoading(false);
+    }
+  };
+
+  const handleGenerateStoryVideo = async (customBgData?: string) => {
+    if (!generatedScript) return;
+    setIsStoryVideoLoading(true);
+    setStoryVideoError('');
+    setStoryVideoUrl('');
+
+    try {
+      const res = await fetch('/api/generate-story-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: generatedScript.title,
+          script: generatedScript.script,
+          genre: scriptGenre,
+          waveYPercentage: videoWaveY,
+          bgImageData: customBgData || '',
+          allSceneImages: storyImages.map(img => img.imageUrl).filter(Boolean), // Send all 4 scene images for multi-scene video
+          enableSubtitles: enableSubtitles,
+          voiceEffect: voiceEffect
+        })
+      });
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု အချိန်ကုန်သွားပါသည် (Timeout)။');
+      }
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'AI ဇာတ်လမ်းဗီဒီယို ဖန်တီး၍ မရပါ။');
+      }
+
+      setStoryVideoUrl(data.videoUrl);
+    } catch (err: any) {
+      setStoryVideoError(err.message || 'ဗီဒီယို ဖန်တီးမှု မအောင်မြင်ပါ။');
+    } finally {
+      setIsStoryVideoLoading(false);
     }
   };
 
@@ -652,7 +797,7 @@ export const App: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-6 flex flex-col gap-6">
         {/* Navigation Tabs */}
-        <div className="bg-[#151824] p-2 rounded-2xl border border-white/15 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 max-w-4xl mx-auto w-full shadow-2xl shadow-black/50">
+        <div className="bg-[#151824] p-2 rounded-2xl border border-white/15 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 max-w-4xl mx-auto w-full shadow-2xl shadow-black/50">
           <button
             onClick={() => setMainMode('tts')}
             className={`w-full flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold transition-all ${
@@ -690,6 +835,18 @@ export const App: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setMainMode('imager')}
+            className={`w-full flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold transition-all ${
+              mainMode === 'imager'
+                ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-600/40 ring-2 ring-cyan-400/50'
+                : 'text-cyan-300 hover:text-white hover:bg-cyan-500/10 bg-[#0e111a] border border-cyan-500/20'
+            }`}
+          >
+            <Image className="w-4 h-4 shrink-0 text-cyan-400" />
+            <span>🖼️ ပုံထုတ်စက်</span>
+          </button>
+
+          <button
             onClick={() => setMainMode('video')}
             className={`w-full flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold transition-all ${
               mainMode === 'video'
@@ -698,7 +855,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Video className="w-4 h-4 shrink-0 text-purple-400" />
-            <span>🎬 ဗီဒီယို ပြုလုပ်စက်</span>
+            <span>🎬 ဗီဒီယို</span>
           </button>
 
           <button
@@ -710,9 +867,173 @@ export const App: React.FC = () => {
             }`}
           >
             <History className="w-4 h-4 shrink-0 text-emerald-400" />
-            <span>📂 သမိုင်း ({historyItems.length})</span>
+            <span>📂 မှတ်တမ်း</span>
           </button>
         </div>
+
+        {/* ========================================================================= */}
+        {/* MODE 4: AI IMAGE GENERATOR                                               */}
+        {/* ========================================================================= */}
+        {mainMode === 'imager' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="bg-[#151926] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-5">
+              <div className="border-b border-white/10 pb-3">
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Image className="w-5 h-5 text-cyan-400" />
+                  <span>AI ရုပ်ပုံ ထုတ်လုပ်စက် (Image Generator)</span>
+                </h2>
+                <p className="text-xs text-slate-400">
+                  မိမိစိတ်ကူးထဲက ပုံရိပ်များကို စာသားဖြင့် ရေးသားပြီး အလှပဆုံး AI ရုပ်ပုံများ ထုတ်လုပ်ပါ
+                </p>
+              </div>
+
+              <form onSubmit={handleGenerateStandaloneImage} className="space-y-5">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <Wand2 className="w-4 h-4 text-cyan-400" />
+                    <span>ရုပ်ပုံအတွက် စာသား ရိုက်ထည့်ပါ (English ဖြင့် ရေးပါက ပိုမိုလှပပါသည်):</span>
+                  </label>
+                  <textarea
+                    value={imagePrompt}
+                    onChange={(e) => setImagePrompt(e.target.value)}
+                    placeholder="ဥပမာ - A cinematic landscape of a mystical mountain forest at sunset, 8k, photorealistic..."
+                    rows={3}
+                    className="w-full bg-[#0d0f17] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-all resize-none shadow-inner"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-300">အရွယ်အစား (Aspect Ratio):</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: '9:16', name: '📱 9:16', desc: 'TikTok' },
+                        { id: '16:9', name: '💻 16:9', desc: 'YouTube' },
+                        { id: '1:1', name: '📷 1:1', desc: 'Square' }
+                      ].map(r => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => setImageGenAspectRatio(r.id as any)}
+                          className={`py-2 px-1 rounded-xl text-[10px] font-bold border transition-all flex flex-col items-center ${
+                            imageGenAspectRatio === r.id
+                              ? 'bg-cyan-600/20 border-cyan-500 text-cyan-200'
+                              : 'bg-black/20 border-white/5 text-slate-400 hover:bg-white/5'
+                          }`}
+                        >
+                          <span>{r.name}</span>
+                          <span className="opacity-50 font-normal">{r.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-300">Style (အလှဆင်ပုံစံ):</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { id: 'cinematic', name: '🎬 Cinematic' },
+                        { id: 'photorealistic', name: '📸 Realistic' },
+                        { id: 'anime', name: '🏯 Anime' },
+                        { id: 'digital-art', name: '🎨 Digital Art' }
+                      ].map(s => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => setImageStyle(s.id)}
+                          className={`py-2 px-2 rounded-xl text-[10px] font-bold border transition-all ${
+                            imageStyle === s.id
+                              ? 'bg-cyan-600/20 border-cyan-500 text-cyan-200'
+                              : 'bg-black/20 border-white/5 text-slate-400 hover:bg-white/5'
+                          }`}
+                        >
+                          {s.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isImageGenerating || !imagePrompt.trim()}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-sm shadow-xl shadow-cyan-600/30 flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50"
+                >
+                  {isImageGenerating ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>AI က ရုပ်ပုံကို ရေးဆွဲနေပါသည်...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>AI ရုပ်ပုံ ဖန်တီးမည် (Generate Image)</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+
+            {imageError && (
+              <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center gap-3 text-rose-400 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <p>{imageError}</p>
+              </div>
+            )}
+
+            {imageResultUrl && (
+              <div className="bg-[#151926] border border-cyan-500/30 rounded-2xl p-5 shadow-2xl space-y-4 animate-in zoom-in-95 duration-300">
+                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>AI ရုပ်ပုံ အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ</span>
+                  </h3>
+                </div>
+
+                <div className="relative group max-w-sm mx-auto overflow-hidden rounded-2xl border border-white/10 shadow-2xl">
+                  <img src={imageResultUrl} alt="AI Result" className="w-full h-auto object-contain" />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                     <button 
+                       onClick={() => {
+                         const a = document.createElement('a');
+                         a.href = imageResultUrl;
+                         a.download = `AI_Image_${Date.now()}.png`;
+                         a.click();
+                       }}
+                       className="p-3 bg-white text-black rounded-full hover:scale-110 transition-all shadow-lg"
+                       title="Download"
+                     >
+                       <Download className="w-5 h-5" />
+                     </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      setVideoBgImage(imageResultUrl);
+                      setMainMode('video');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95"
+                  >
+                    <Video className="w-4 h-4" />
+                    <span>ဤပုံကို ဗီဒီယိုနောက်ခံအဖြစ် အသုံးပြုမည်</span>
+                  </button>
+
+                  <a
+                    href={imageResultUrl}
+                    download={`AI_Image_${Date.now()}.png`}
+                    className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 border border-white/10"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>ဖုန်းထဲသို့ သိမ်းဆည်းမည် (Download)</span>
+                  </a>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ========================================================================= */}
         {/* MODE 1: TEXT-TO-SPEECH (TTS) - Unlimited Chars, 9 Human Voices            */}
@@ -879,29 +1200,50 @@ export const App: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-300 font-semibold flex items-center gap-1.5">
-                        <Sliders className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>အသံအနိမ့်အမြင့် (Pitch Tone)</span>
-                      </span>
-                      <span className="text-indigo-400 font-mono font-bold">{speechPitch}</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-300 font-semibold flex items-center gap-1.5">
+                          <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>အသံအနိမ့်အမြင့် (Pitch Tone)</span>
+                        </span>
+                        <span className="text-indigo-400 font-mono font-bold">{speechPitch}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {['-10Hz', '-5Hz', '+0Hz', '+5Hz', '+10Hz'].map((pitch) => (
+                          <button
+                            key={pitch}
+                            type="button"
+                            onClick={() => setSpeechPitch(pitch)}
+                            className={`flex-1 py-1 rounded text-[11px] font-bold transition-all ${
+                              speechPitch === pitch
+                                ? 'bg-indigo-600 text-white shadow'
+                                : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                            }`}
+                          >
+                            {pitch === '+0Hz' ? 'မူလ' : pitch}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {['-10Hz', '-5Hz', '+0Hz', '+5Hz', '+10Hz'].map((pitch) => (
-                        <button
-                          key={pitch}
-                          type="button"
-                          onClick={() => setSpeechPitch(pitch)}
-                          className={`flex-1 py-1 rounded text-[11px] font-bold transition-all ${
-                            speechPitch === pitch
-                              ? 'bg-indigo-600 text-white shadow'
-                              : 'bg-white/5 text-slate-400 hover:bg-white/10'
-                          }`}
-                        >
-                          {pitch === '+0Hz' ? 'မူလ' : pitch}
-                        </button>
-                      ))}
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-300 font-semibold flex items-center gap-1.5">
+                          <Zap className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>အသံ၏ အထူးပြုလုပ်ချက် (Voice Effect)</span>
+                        </span>
+                      </div>
+                      <select 
+                        value={voiceEffect}
+                        onChange={(e) => setVoiceEffect(e.target.value as any)}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="none">ပုံမှန် (Normal)</option>
+                        <option value="echo">ပဲ့တင်သံ (Echo)</option>
+                        <option value="deep">အသံကြီး/အသံဩ (Deep)</option>
+                        <option value="radio">ရေဒီယိုအသံ (Radio)</option>
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -1395,37 +1737,40 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* 3. Duration Selector */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
                       <Clock className="w-4 h-4 text-indigo-400" />
-                      <span>ဇာတ်လမ်း အရှည် ရွေးချယ်ပါ (Duration Select)</span>
-                    </span>
-                    <span className="text-[11px] text-purple-400 font-semibold bg-purple-500/10 px-2.5 py-0.5 rounded-full border border-purple-500/20">
-                      ✓ စာလုံးနှုန်းတိုက်ခြင်း- ၁ မိနစ် = ၁,၅၀၀ လုံးနှုန်း
-                    </span>
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {[
-                      { id: '3min', label: '၃ မိနစ်စာ (စာလုံးရေ ၄,၅၀၀ ခန့်)', desc: 'TikTok, Reels တိုတိုရှင်းရှင်း ဇာတ်လမ်းဆန်း' },
-                      { id: '5min', label: '၅ မိနစ်စာ (စာလုံးရေ ၇,၅၀၀ ခန့်)', desc: 'ဝတ္ထုတို / YouTube ဗီဒီယို (အထူးအကြံပြု)' },
-                      { id: '8min', label: '၈ မိနစ်စာ (စာလုံးရေ ၁၂,၀၀၀ ခန့်) ⭐️', desc: 'YouTube Mid-roll Ads ရရှိရန် အကောင်းဆုံးအရှည်' },
-                      { id: '10min', label: '၁၀ မိနစ်စာ (စာလုံးရေ ၁၅,၀၀၀ ခန့်)', desc: 'စိတ်ဝင်စားဖွယ် ဇာတ်လမ်းရှည်ကြီးများ ဖန်တီးစက်' }
-                    ].map((d) => (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => setScriptDuration(d.id)}
-                        className={`p-3 rounded-xl border text-left transition-all ${
-                          scriptDuration === d.id
-                            ? 'bg-purple-600 text-white border-purple-500 shadow-lg shadow-purple-600/30 ring-2 ring-purple-400/40'
-                            : 'bg-[#0d0f17] border-white/10 text-slate-400 hover:text-white hover:border-white/20'
-                        }`}
-                      >
-                        <span className="block text-xs font-bold text-white mb-0.5">{d.label}</span>
-                        <span className="block text-[10px] opacity-75">{d.desc}</span>
-                      </button>
-                    ))}
+                      <span>ဇာတ်လမ်း အရှည် (Duration)</span>
+                    </label>
+                    <select 
+                      value={scriptDuration}
+                      onChange={(e) => setScriptDuration(e.target.value)}
+                      className="w-full bg-[#0d0f17] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="3min">၃ မိနစ် (Short)</option>
+                      <option value="5min">၅ မိနစ် (Standard)</option>
+                      <option value="6min">၆ မိနစ် (Pro)</option>
+                      <option value="8min">၈ မိနစ် (Ultra)</option>
+                      <option value="10min">၁၀ မိနစ် (Long)</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-emerald-400" />
+                      <span>ပုံစံခွက် (Script Template)</span>
+                    </label>
+                    <select 
+                      value={scriptTemplate}
+                      onChange={(e) => setScriptTemplate(e.target.value)}
+                      className="w-full bg-[#0d0f17] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="none">ပုံမှန် (Normal)</option>
+                      <option value="news">သတင်းတင်ဆက်မှု (News Report)</option>
+                      <option value="tiktok">TikTok/Reels Script</option>
+                      <option value="documentary">မှတ်တမ်းတင် (Documentary)</option>
+                      <option value="health">ကျန်းမာရေး (Health Tips)</option>
+                    </select>
                   </div>
                 </div>
 
@@ -1502,6 +1847,210 @@ export const App: React.FC = () => {
                 <div className="p-3 bg-indigo-950/30 border border-indigo-500/20 rounded-xl flex items-center justify-between text-xs text-indigo-300">
                   <span>💡 အကြံပြုချက် - အပေါ်ရှိ <b>"လူအသံစစ်စစ်ဖြင့် အသံထွက်ပြောင်းမည်"</b> ခလုတ်ကို နှိပ်လိုက်ပါက ဤဇာတ်ညွှန်းစာသား အပြည့်အစုံကို မြန်မာလူအသံစစ်စစ် (သီဟ သို့မဟုတ် နီလာ) ဖြင့် MP3 အသံဖိုင်အပြည့်အစုံ ချက်ချင်း ထုတ်ယူနိုင်ပါမည်။</span>
                 </div>
+
+                {/* AI Storyboard Scene Images Generator Box */}
+                <div className="p-4 bg-gradient-to-r from-purple-950/40 to-indigo-950/40 border border-purple-500/30 rounded-2xl space-y-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-purple-400" />
+                        <span>🎨 ဇာတ်လမ်းဇာတ်ကွက်အလိုက် AI သရုပ်ဖော်ပုံများ (AI Storyboard Scenes)</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        ဤဇာတ်လမ်းနှင့် တိုက်ရိုက်ကိုက်ညီသော Cinematic AI ရုပ်ပုံ (၄) ပုံကို အလိုအလျောက် ထုတ်ယူပါ
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={handleGenerateStoryImages}
+                      disabled={isStoryImagesLoading}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-600/30 active:scale-95 disabled:opacity-50 shrink-0"
+                    >
+                      {isStoryImagesLoading ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>AI ရုပ်ပုံများ ဖန်တီးနေပါသည်...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          <span>✨ AI ဇာတ်လမ်းပုံများ ထုတ်မည်</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {storyImagesError && (
+                    <p className="text-xs text-rose-300 bg-rose-950/40 p-2 rounded-lg border border-rose-500/30">
+                      {storyImagesError}
+                    </p>
+                  )}
+
+                  {storyImages.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                      {storyImages.map((scene) => (
+                        <div key={scene.sceneNumber} className="bg-[#0c0e14] p-3 rounded-xl border border-white/10 space-y-2 flex flex-col justify-between">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded border border-purple-500/30">
+                                {scene.title || `Scene ${scene.sceneNumber}`}
+                              </span>
+                              <span className="text-[10px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                                🎭 {scene.mood}
+                              </span>
+                            </div>
+
+                            {scene.imageUrl && (
+                              <div className="aspect-video w-full rounded-lg overflow-hidden border border-white/10 shadow-lg group relative">
+                                <img 
+                                  src={scene.imageUrl} 
+                                  alt={scene.title}
+                                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
+                                  <span className="text-[10px] text-white font-bold">AI Generated Vision</span>
+                                </div>
+                              </div>
+                            )}
+
+                            <p className="text-[11px] text-slate-300 font-mono bg-black/30 p-2.5 rounded-lg border border-white/5 select-all leading-relaxed">
+                              {scene.visualPrompt}
+                            </p>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            {scene.imageUrl && (
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  onClick={() => handleGenerateStoryVideo(scene.imageUrl)}
+                                  disabled={isStoryVideoLoading}
+                                  className="py-2 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 shadow transition-all active:scale-95 disabled:opacity-50"
+                                >
+                                  <Video className="w-3 h-3" />
+                                  <span>ဇာတ်လမ်းဗီဒီယို ထုတ်မည်</span>
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setVideoBgImage(scene.imageUrl);
+                                    setVideoTitleText(generatedScript?.title || '');
+                                    setMainMode('video');
+                                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                                  }}
+                                  className="py-2 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 shadow transition-all active:scale-95"
+                                >
+                                  <Settings2 className="w-3 h-3" />
+                                  <span>ဒီဇိုင်း ပြင်ဆင်မည်</span>
+                                </button>
+                              </div>
+                            )}
+                            <button
+                              onClick={() => handleCopy(scene.visualPrompt, `scene_${scene.sceneNumber}`)}
+                              className="w-full py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold text-[9px] flex items-center justify-center gap-1.5 border border-white/5 transition-all active:scale-95"
+                            >
+                              {copiedType === `scene_${scene.sceneNumber}` ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                              <span>{copiedType === `scene_${scene.sceneNumber}` ? 'Prompt ကူးယူပြီး' : 'AI Prompt ကူးယူမည်'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Direct AI Story Video Maker Card */}
+                <div className="p-4 bg-gradient-to-r from-pink-950/40 via-purple-950/40 to-indigo-950/40 border border-pink-500/30 rounded-2xl space-y-4">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Video className="w-4 h-4 text-pink-400" />
+                        <span>🎬 AI ရုပ်ပုံနှင့် အသံဖိုင်ကို ဗီဒီယိုအဖြစ် တိုက်ရိုက်ပေါင်းစပ်မည် (Direct AI Video Maker)</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        ဤဇာတ်လမ်းအတွက် Cinematic AI နောက်ခံပုံ၊ အသံဖိုင် နှင့် အသံလှိုင်း (Waveform) တို့ကို Download ဆွဲစရာမလိုဘဲ MP4 ဗီဒီယိုအဖြစ် တစ်ခါတည်း တိုက်ရိုက်ပေါင်းစပ်ပါ
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Voice Effect:</label>
+                          <select 
+                            value={voiceEffect}
+                            onChange={(e) => setVoiceEffect(e.target.value as any)}
+                            className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-white focus:outline-none"
+                          >
+                            <option value="none">Normal</option>
+                            <option value="echo">Echo Effect</option>
+                            <option value="deep">Deep Voice</option>
+                            <option value="radio">Radio Style</option>
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-2 pt-4">
+                          <input 
+                            type="checkbox" 
+                            id="sub_toggle"
+                            checked={enableSubtitles} 
+                            onChange={(e) => setEnableSubtitles(e.target.checked)}
+                            className="w-3.5 h-3.5 rounded border-white/10 bg-black/20 text-pink-500 focus:ring-pink-500" 
+                          />
+                          <label htmlFor="sub_toggle" className="text-[10px] font-bold text-slate-300 cursor-pointer">Auto Subtitles (စာတန်းထိုး)</label>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleGenerateStoryVideo()}
+                        disabled={isStoryVideoLoading}
+                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-xl shadow-pink-600/35 active:scale-95 disabled:opacity-50 shrink-0"
+                      >
+                        {isStoryVideoLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Pro ဗီဒီယို ဖန်တီးနေပါသည်...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Video className="w-4 h-4" />
+                            <span>🎬 Pro ဗီဒီယို တိုက်ရိုက်ထုတ်မည် (Multi-Scene)</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {storyVideoError && (
+                    <p className="text-xs text-rose-300 bg-rose-950/40 p-2.5 rounded-lg border border-rose-500/30">
+                      {storyVideoError}
+                    </p>
+                  )}
+
+                  {storyVideoUrl && (
+                    <div className="space-y-3 bg-[#0c0e14] p-4 rounded-xl border border-pink-500/30 animate-in fade-in duration-300">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>AI ဗီဒီယို အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ! (Download ဆွဲစရာမလိုဘဲ တိုက်ရိုက်ကြည့်ရှုနိုင်ပါပြီ)</span>
+                        </span>
+                        <a
+                          href={storyVideoUrl}
+                          download={`AI_Story_Video_${Date.now()}.mp4`}
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95 transition-all"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>MP4 ဗီဒီယို ဒေါင်းလုဒ် (Download)</span>
+                        </a>
+                      </div>
+
+                      <div className="aspect-[9/16] max-h-[480px] w-full mx-auto bg-black rounded-xl overflow-hidden border border-white/10 relative shadow-2xl flex items-center justify-center">
+                        <video
+                          src={storyVideoUrl}
+                          controls
+                          autoPlay
+                          playsInline
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1521,6 +2070,17 @@ export const App: React.FC = () => {
                 <p className="text-xs text-slate-400 mt-1">
                   သင့်အသံဖိုင်များကို Waveform Spectrum Animation နှင့် စာတန်းထိုးပါဝင်သော TikTok / Reels / Shorts အဆင်သင့် MP4 ဗီဒီယိုအဖြစ် ၁-Click ပြုလုပ်ပါ
                 </p>
+              </div>
+
+              {/* Direct 1-Click Guidance Notice */}
+              <div className="p-3.5 bg-emerald-950/40 border border-emerald-500/30 rounded-xl flex items-start gap-2.5 text-xs text-emerald-300">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <span className="font-bold text-white block">💡 Download ဆွဲစရာ လုံးဝ မလိုပါ!</span>
+                  <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+                    ဖန်တီးပြီးသား အသံဖိုင်သည် ဤဗီဒီယိုဖန်တီးစက်သို့ အလိုအလျောက် ရောက်ရှိလာပြီးဖြစ်ပါသည်။ အောက်ပါ အသံလှိုင်းအရောင် (Waveform Color) ကို စိတ်ကြိုက်ရွေးချယ်ပြီး <b>"🎬 ဗီဒီယို ဖန်တီးမည်"</b> ကို နှိပ်ရုံဖြင့် အသံနှင့်ဗီဒီယိုကို တစ်ခါတည်း အလိုအလျောက် ပေါင်းစပ်ထုတ်ယူနိုင်ပါပြီ။
+                  </p>
+                </div>
               </div>
 
               {/* Step 1: Select Audio Source */}
@@ -1689,9 +2249,55 @@ export const App: React.FC = () => {
                   {/* Themes */}
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-300">
-                      နောက်ခံ Style နှင့် Wave Colors (Theme Select):
+                      နောက်ခံ ပုံစံ (Background & Theme):
                     </label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    
+                    {/* Background Image Upload */}
+                    <div className="p-3 bg-black/20 border border-white/5 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Custom Background Image (Optional)</span>
+                        {videoBgImage && (
+                          <button 
+                            onClick={() => setVideoBgImage('')}
+                            className="text-[10px] text-rose-400 hover:text-rose-300 transition-all font-bold"
+                          >
+                            ဖယ်ထုတ်မည်
+                          </button>
+                        )}
+                      </div>
+                      
+                      {!videoBgImage ? (
+                        <label className="flex flex-col items-center justify-center py-4 border-2 border-dashed border-white/10 rounded-xl hover:border-indigo-500/50 hover:bg-white/5 transition-all cursor-pointer group">
+                          <Image className="w-6 h-6 text-slate-500 group-hover:text-indigo-400 mb-1" />
+                          <span className="text-[11px] text-slate-400 group-hover:text-slate-200">နောက်ခံပုံ တင်ရန် (Upload Background)</span>
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                  setVideoBgImage(reader.result as string);
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                        </label>
+                      ) : (
+                        <div className="relative aspect-video w-full rounded-lg overflow-hidden border border-white/10">
+                          <img src={videoBgImage} className="w-full h-full object-cover" alt="Background" />
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                            <span className="text-[10px] text-white font-bold">တင်ပြီးပါပြီ</span>
+                          </div>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-slate-500 italic">ပုံမတင်လျှင် အောက်ပါ Theme အရောင်များကို အသုံးပြုပါမည်။</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
                       {[
                         { id: 'cyberpunk', name: '🌌 Neon Cyberpunk', color: 'bg-slate-900 border-indigo-500' },
                         { id: 'indigo', name: '🔮 Indigo Galaxy', color: 'bg-indigo-950 border-indigo-400' },
@@ -1740,6 +2346,69 @@ export const App: React.FC = () => {
                         </button>
                       ))}
                     </div>
+                  </div>
+
+                  {/* Waveform Custom Color Picker */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                      <span>အသံလှိုင်း အရောင် (Waveform Color Picker):</span>
+                      <span className="text-[10px] text-purple-300">ကိုယ်ကြိုက်တဲ့ အရောင် ရွေးနိုင်ပါသည်</span>
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        { id: '', name: '✨ အလိုအလျောက် (Theme)', color: '#818cf8' },
+                        { id: '0x38bdf8|0x0284c7', name: '💙 လျှပ်စစ်ပြာ (Cyan)', color: '#38bdf8' },
+                        { id: '0x10b981|0x34d399', name: '💚 မြစိမ်း (Emerald)', color: '#10b981' },
+                        { id: '0xf97316|0xf43f5e', name: '🧡 မီးတောက် (Fire)', color: '#f97316' },
+                        { id: '0xec4899|0xf43f5e', name: '🩷 ပန်းရောင် (Hot Pink)', color: '#ec4899' },
+                        { id: '0xeab308|0xfacc15', name: '💛 ရွှေဝါရောင် (Gold)', color: '#eab308' },
+                        { id: '0xffffff|0xe2e8f0', name: '🤍 အဖြူစင်စစ် (White)', color: '#ffffff' }
+                      ].map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => setVideoCustomWaveColor(c.id)}
+                          className={`py-2 px-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all ${
+                            videoCustomWaveColor === c.id
+                              ? 'bg-purple-600/30 border-purple-500 text-white ring-2 ring-purple-400'
+                              : 'bg-[#0b0d16] border-white/10 text-slate-400 hover:bg-white/5'
+                          }`}
+                        >
+                          <span className="w-3 h-3 rounded-full shrink-0 border border-white/20" style={{ backgroundColor: c.color }}></span>
+                          <span className="truncate">{c.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Waveform Vertical Position Control */}
+                  <div className="space-y-3 p-3.5 bg-indigo-950/20 border border-indigo-500/20 rounded-2xl">
+                    <label className="text-xs font-bold text-indigo-300 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <MoveVertical className="w-3.5 h-3.5" />
+                        <span>အသံလှိုင်း အနိမ့်အမြင့် (Waveform Position):</span>
+                      </span>
+                      <span className="text-[11px] text-amber-400 font-mono bg-amber-400/10 px-2 py-0.5 rounded-md border border-amber-400/20">{videoWaveY}%</span>
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter shrink-0">Top</span>
+                      <div className="relative flex-1 h-6 flex items-center">
+                        <div className="absolute inset-0 bg-slate-800/50 rounded-full h-1.5 self-center"></div>
+                        <input 
+                          type="range"
+                          min="15"
+                          max="85"
+                          step="1"
+                          value={videoWaveY}
+                          onChange={(e) => setVideoWaveY(parseInt(e.target.value))}
+                          className="relative z-10 w-full h-1.5 bg-transparent appearance-none cursor-pointer accent-amber-500 hover:accent-amber-400 transition-all [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-500 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter shrink-0">Bottom</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 italic leading-relaxed text-center opacity-80">
+                      💡 ဗီဒီယို၏ အပေါ် (သို့) အောက် ကြိုက်ရာနေရာသို့ အသံလှိုင်းကို ရွှေ့နိုင်ပါသည်
+                    </p>
                   </div>
 
                   {/* Video Title Input */}

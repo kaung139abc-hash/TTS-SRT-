@@ -215,7 +215,7 @@ app.get('/api/tts-voices', (_req: Request, res: Response) => {
 });
 
 app.post('/api/text-to-speech', async (req: Request, res: Response) => {
-  const { text, voice = 'my-MM-ThihaNeural', rate = '+0%', pitch = '+0Hz', bgm = 'none', bgmVolume = 0.2 } = req.body;
+  const { text, voice = 'my-MM-ThihaNeural', rate = '+0%', pitch = '+0Hz', bgm = 'none', bgmVolume = 0.2, voiceEffect = 'none' } = req.body;
 
   if (!text || typeof text !== 'string' || text.trim().length === 0) {
     return res.status(400).json({ error: 'ကျေးဇူးပြု၍ စာသား ရိုက်ထည့်ပေးပါခင်ဗျာ။' });
@@ -224,11 +224,11 @@ app.post('/api/text-to-speech', async (req: Request, res: Response) => {
   const cleanText = text.trim();
 
   try {
-    console.log(`Starting Natural Edge TTS with voice: ${voice}, BGM: ${bgm}, length: ${cleanText.length} chars`);
+    console.log(`Starting TTS with effect: ${voiceEffect}, voice: ${voice}, BGM: ${bgm}`);
     
-    // Clean natural streaming with zero artificial pitch distortion
     const synthesizeStream = async (txt: string, vName: string): Promise<Buffer> => {
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      // Basic attempt loop
+      for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const comm = new Communicate(txt, {
             voice: vName,
@@ -236,74 +236,98 @@ app.post('/api/text-to-speech', async (req: Request, res: Response) => {
             pitch: pitch || '+0Hz',
           });
           const parts: Buffer[] = [];
-          for await (const chunk of comm.stream()) {
-            if (chunk.type === 'audio' && chunk.data) {
-              parts.push(chunk.data);
-            }
-          }
-          const buf = Buffer.concat(parts);
+          
+          // Use a timeout for the stream to prevent hanging
+          const streamPromise = (async () => {
+              for await (const chunk of comm.stream()) {
+                if (chunk.type === 'audio' && chunk.data) {
+                  parts.push(chunk.data);
+                }
+              }
+              return Buffer.concat(parts);
+          })();
+
+          const buf = await Promise.race([
+              streamPromise,
+              new Promise<Buffer>((_, reject) => setTimeout(() => reject(new Error('TTS Stream Timeout')), 15000))
+          ]);
+          
           if (buf.length > 0) return buf;
-        } catch (err) {
-          console.warn(`Attempt ${attempt} for voice ${vName} error:`, err);
-          await new Promise(r => setTimeout(r, 200 * attempt));
+          
+          console.warn(`Attempt ${attempt} for voice ${vName} returned empty audio.`);
+        } catch (err: any) {
+          console.warn(`Attempt ${attempt} for voice ${vName} error:`, err.message || err);
         }
+        await new Promise(r => setTimeout(r, 2000 * attempt));
       }
       return Buffer.alloc(0);
     };
 
     let audioBuffer: Buffer = Buffer.alloc(0);
+    const voicesToTry = [voice, 'en-US-ChristopherNeural', 'en-AU-WilliamMultilingualNeural', 'my-MM-ThihaNeural'];
 
-    // 1. If text is moderate (< 3,000 chars), try direct single stream
-    if (cleanText.length <= 3000) {
-      try {
-        audioBuffer = await synthesizeStream(cleanText, voice);
-      } catch (directErr) {
-        console.warn('Direct stream failed, falling back to chunking:', directErr);
-      }
-    }
-
-    // 2. Paragraph / Chunk-level Synthesis (Supports Unlimited Characters cleanly)
-    if (audioBuffer.length === 0) {
-      console.log('Running paragraph-level continuous chunk synthesis for unlimited length...');
-      const paragraphs = cleanText
-        .split(/\n+/)
-        .map(p => p.trim())
-        .filter(p => p.length > 0);
-
-      const audioChunks: Buffer[] = [];
-      for (const para of paragraphs) {
-        // If an individual paragraph is huge, split by sentences
-        if (para.length > 1500) {
-          const sentences = para.match(/[^။!?\n]+[။!?\n]?/g) || [para];
-          for (const s of sentences) {
-            const sTrim = s.trim();
-            if (!sTrim) continue;
-            const sBuf = await synthesizeStream(sTrim, voice);
-            if (sBuf.length > 0) audioChunks.push(sBuf);
-          }
+    // Try primary voice and fallbacks
+    for (const vName of voicesToTry) {
+      console.log(`Attempting synthesis with voice: ${vName}`);
+      
+      // Robust chunking: Split text into chunks of max 400 characters to prevent edge-tts timeouts or limits
+      const chunks: string[] = [];
+      let currentChunk = '';
+      const words = cleanText.split(/\s+/);
+      for (const word of words) {
+        if ((currentChunk + ' ' + word).length > 400) {
+          if (currentChunk.trim()) chunks.push(currentChunk.trim());
+          currentChunk = word;
         } else {
-          const pBuf = await synthesizeStream(para, voice);
-          if (pBuf.length > 0) audioChunks.push(pBuf);
+          currentChunk += (currentChunk ? ' ' : '') + word;
         }
       }
+      if (currentChunk.trim()) chunks.push(currentChunk.trim());
+      if (chunks.length === 0) chunks.push(cleanText);
 
+      const audioChunks: Buffer[] = [];
+      for (const chunk of chunks) {
+        const sBuf = await synthesizeStream(chunk, vName);
+        if (sBuf.length > 0) audioChunks.push(sBuf);
+      }
       if (audioChunks.length > 0) {
         audioBuffer = Buffer.concat(audioChunks);
+        break; // Success!
       }
     }
 
-    // 3. Fallback to resilient voice if chosen voice failed
-    if (audioBuffer.length === 0) {
-      const fallbackVoice = voice === 'en-AU-WilliamMultilingualNeural' ? 'en-US-AndrewMultilingualNeural' : 'en-AU-WilliamMultilingualNeural';
-      console.log(`Using fallback voice: ${fallbackVoice} for full text`);
-      audioBuffer = await synthesizeStream(cleanText, fallbackVoice);
+    if (audioBuffer.length === 0) throw new Error('Speech synthesis failed for all available voices.');
+
+    // Apply Voice Effects
+    if (voiceEffect !== 'none') {
+      const tempIn = `/tmp/eff_in_${Date.now()}.mp3`;
+      const tempOut = `/tmp/eff_out_${Date.now()}.mp3`;
+      try {
+        fs.writeFileSync(tempIn, audioBuffer);
+        let audioFilter = '';
+        if (voiceEffect === 'echo') audioFilter = 'aecho=0.8:0.88:60:0.4';
+        else if (voiceEffect === 'deep') audioFilter = 'atempo=1.0,asetrate=24000*0.85,aresample=24000';
+        else if (voiceEffect === 'radio') audioFilter = 'highpass=f=1000,lowpass=f=3000';
+        
+        if (audioFilter) {
+          console.log(`Applying filter: ${audioFilter}`);
+          await execAsync(`ffmpeg -y -i "${tempIn}" -af "${audioFilter}" "${tempOut}"`);
+          if (fs.existsSync(tempOut)) {
+            audioBuffer = fs.readFileSync(tempOut);
+            console.log('Voice effect applied successfully.');
+          } else {
+            console.warn('Voice effect FFmpeg output file not found.');
+          }
+        }
+      } catch (effErr) {
+        console.error('Voice Effect application failed:', effErr);
+      } finally {
+        try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
+        try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
+      }
     }
 
-    if (audioBuffer.length === 0) {
-      throw new Error('Speech synthesis produced no audio data.');
-    }
-
-    // 4. BGM Audio Mixing (Natural ambient music mixed underneath human speech)
+    // 4. BGM Audio Mixing
     if (bgm && bgm !== 'none') {
       const selectedBgmTrack = SUPPORTED_BGM_TRACKS.find(b => b.id === bgm);
       if (selectedBgmTrack && selectedBgmTrack.file) {
@@ -485,7 +509,10 @@ app.post('/api/audio-to-video', async (req: Request, res: Response) => {
     subtitleText = '', 
     aspectRatio = '9:16', 
     theme = 'cyberpunk',
-    waveStyle = 'cline'
+    waveStyle = 'cline',
+    customWaveColor = '',
+    waveYPercentage = 50,
+    bgImageData = ''
   } = req.body;
 
   if (!audioData) {
@@ -495,10 +522,11 @@ app.post('/api/audio-to-video', async (req: Request, res: Response) => {
   const timestamp = Date.now();
   const randomId = Math.random().toString(36).substr(2, 5);
   const inputAudioPath = `/tmp/video_in_${timestamp}_${randomId}.mp3`;
+  const inputImagePath = `/tmp/video_bg_${timestamp}_${randomId}.png`;
   const outputVideoPath = `/tmp/video_out_${timestamp}_${randomId}.mp4`;
 
   try {
-    // 1. Extract base64
+    // 1. Extract audio base64
     let base64Content = audioData;
     if (audioData.includes('base64,')) {
       base64Content = audioData.split('base64,')[1];
@@ -506,7 +534,18 @@ app.post('/api/audio-to-video', async (req: Request, res: Response) => {
     const audioBuffer = Buffer.from(base64Content, 'base64');
     fs.writeFileSync(inputAudioPath, audioBuffer);
 
-    // 2. Set dimensions according to aspect ratio (Ultra-optimized for full-length 8fps rendering to prevent OOM)
+    // 1.5 Extract image base64 if provided
+    let hasCustomBg = false;
+    if (bgImageData) {
+      let imgBase64 = bgImageData;
+      if (bgImageData.includes('base64,')) {
+        imgBase64 = bgImageData.split('base64,')[1];
+      }
+      fs.writeFileSync(inputImagePath, Buffer.from(imgBase64, 'base64'));
+      hasCustomBg = true;
+    }
+
+    // 2. Set dimensions according to aspect ratio (Ultra-optimized for full-length 5fps rendering to prevent OOM)
     let width = 360;
     let height = 640; // 9:16 vertical TikTok/Shorts
     if (aspectRatio === '16:9') {
@@ -520,7 +559,9 @@ app.post('/api/audio-to-video', async (req: Request, res: Response) => {
     // 3. Theme colors
     let bgHex = '0x0f172a';
     let waveColors = '0x818cf8|0xc084fc';
-    if (theme === 'indigo') {
+    if (customWaveColor) {
+      waveColors = customWaveColor;
+    } else if (theme === 'indigo') {
       bgHex = '0x1e1b4b';
       waveColors = '0x6366f1|0x818cf8';
     } else if (theme === 'sunset') {
@@ -536,21 +577,30 @@ app.post('/api/audio-to-video', async (req: Request, res: Response) => {
 
     const waveW = Math.round(width * 0.85);
     const waveH = Math.round(height * 0.22);
-    const waveY = Math.round((height - waveH) / 2);
+    // Custom wave Y position based on percentage (0% top, 100% bottom, 50% middle)
+    const waveY = Math.round((height * (waveYPercentage / 100)) - (waveH / 2));
 
-    const cleanTitle = (titleText || 'VoiceMaster AI').replace(/['"\\]/g, '').slice(0, 50);
+    const cleanTitle = (titleText || '').replace(/['"\\]/g, '').slice(0, 50);
+    const bgFilter = hasCustomBg 
+      ? `[1:v]scale=${width}:${height},setsar=1[bg]`
+      : `color=c=${bgHex}:s=${width}x${height}[bg]`;
+
     // Optimization: render showwaves at a tiny size (120x60 at 5fps) and scale up instantly using neighbor interpolation for 10x speedup
     const filterParts = [
-      `color=c=${bgHex}:s=${width}x${height}[bg]`,
+      bgFilter,
       `[0:a]showwaves=r=5:s=120x60:mode=${waveStyle}:colors=${waveColors},scale=${waveW}:${waveH}:flags=neighbor[waves]`,
-      `[bg][waves]overlay=(W-w)/2:${waveY}[v1]`,
-      `[v1]drawtext=text='${cleanTitle}':fontcolor=white:fontsize=${Math.round(width * 0.05)}:x=(w-text_w)/2:y=${Math.round(height * 0.15)}[v2]`,
-      `[v2]drawtext=text='VoiceMaster Studio • TikTok/Reels Visualizer':fontcolor=0x94a3b8:fontsize=${Math.round(width * 0.03)}:x=(w-text_w)/2:y=${Math.round(height * 0.88)}[v]`
+      `[bg][waves]overlay=(W-w)/2:${waveY}[v1]`
     ];
 
+    if (cleanTitle) {
+      filterParts.push(`[v1]drawtext=text='${cleanTitle}':fontcolor=white:fontsize=${Math.round(width * 0.05)}:x=(w-text_w)/2:y=${Math.round(height * 0.15)}[v]`);
+    } else {
+      filterParts.push(`[v1]copy[v]`);
+    }
+
     const filterString = filterParts.join(';');
-    // Full-length rendering optimized with -threads 0, ultrafast preset, tune zerolatency, and 5fps for lightning-fast speeds
-    const ffmpegCmd = `ffmpeg -y -i "${inputAudioPath}" -filter_complex "${filterString}" -map "[v]" -map 0:a -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -r 5 -pix_fmt yuv420p -c:a copy "${outputVideoPath}"`;
+    const inputArgs = hasCustomBg ? `-i "${inputAudioPath}" -loop 1 -i "${inputImagePath}"` : `-i "${inputAudioPath}"`;
+    const ffmpegCmd = `ffmpeg -y ${inputArgs} -t 60 -filter_complex "${filterString}" -map "[v]" -map 0:a -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -r 5 -pix_fmt yuv420p -shortest "${outputVideoPath}"`;
 
     try {
       await execAsync(ffmpegCmd);
@@ -559,12 +609,12 @@ app.post('/api/audio-to-video', async (req: Request, res: Response) => {
       
       // Fallback filter without drawtext (Guaranteed to work on any system without fonts installed)
       const fallbackFilterParts = [
-        `color=c=${bgHex}:s=${width}x${height}[bg]`,
+        bgFilter,
         `[0:a]showwaves=r=5:s=120x60:mode=${waveStyle}:colors=${waveColors},scale=${waveW}:${waveH}:flags=neighbor[waves]`,
         `[bg][waves]overlay=(W-w)/2:${waveY}[v]`
       ];
       const fallbackFilterString = fallbackFilterParts.join(';');
-      const fallbackCmd = `ffmpeg -y -i "${inputAudioPath}" -filter_complex "${fallbackFilterString}" -map "[v]" -map 0:a -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -r 5 -pix_fmt yuv420p -c:a copy "${outputVideoPath}"`;
+      const fallbackCmd = `ffmpeg -y ${inputArgs} -t 60 -filter_complex "${fallbackFilterString}" -map "[v]" -map 0:a -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -r 5 -pix_fmt yuv420p -shortest "${outputVideoPath}"`;
       
       await execAsync(fallbackCmd);
     }
@@ -592,6 +642,7 @@ app.post('/api/audio-to-video', async (req: Request, res: Response) => {
   } finally {
     try {
       if (fs.existsSync(inputAudioPath)) fs.unlinkSync(inputAudioPath);
+      if (fs.existsSync(inputImagePath)) fs.unlinkSync(inputImagePath);
       if (fs.existsSync(outputVideoPath)) fs.unlinkSync(outputVideoPath);
     } catch (_) {}
   }
@@ -701,13 +752,12 @@ Schema:
 // AI Story & Video Script Generator (Generates full, rich, long 7,000-character scripts)
 // =====================================================================================
 app.post('/api/generate-story-script', async (req: Request, res: Response) => {
-  const { topic, genre = 'horror', duration = '5min', targetAudience = 'all', language = 'my' } = req.body;
+  const { topic, genre = 'horror', duration = '5min', template = 'none' } = req.body;
   if (!topic || !topic.trim()) {
     return res.status(400).json({ error: 'ဇာတ်လမ်း သို့မဟုတ် ခေါင်းစဉ်ကို ထည့်သွင်းပေးပါခင်ဗျာ။' });
   }
 
   try {
-    // Determine precise target characters and minutes matching: normal speaking speed in Burmese is ~1,500 characters per minute.
     let totalTargetChars = 7500;
     let partTargetChars = 3750;
     let minutesLabel = '၅ မိနစ် (စာလုံးရေ ၇,၅၀၀ ခန့်)';
@@ -720,6 +770,10 @@ app.post('/api/generate-story-script', async (req: Request, res: Response) => {
       totalTargetChars = 7500;
       partTargetChars = 3750;
       minutesLabel = '၅ မိနစ် (စာလုံးရေ ၇,၅၀၀ ခန့်)';
+    } else if (duration === '6min') {
+      totalTargetChars = 9000;
+      partTargetChars = 4500;
+      minutesLabel = '၆ မိနစ် (စာလုံးရေ ၉,၀၀၀ ခန့်)';
     } else if (duration === '8min') {
       totalTargetChars = 12000;
       partTargetChars = 6000;
@@ -730,26 +784,30 @@ app.post('/api/generate-story-script', async (req: Request, res: Response) => {
       minutesLabel = '၁၀ မိနစ် (စာလုံးရေ ၁၅,၀၀၀ ခန့်)';
     }
 
-    console.log(`Starting 2-Part Deep Story Generation for topic: "${topic}" (${genre}) - Target: ${minutesLabel}...`);
+    let templateInstruction = '';
+    if (template === 'news') templateInstruction = 'Write this in a Professional News Anchor report style (သတင်းတင်ဆက်မှု ပုံစံမျိုးဖြင့် ရေးသားပါ)။';
+    else if (template === 'tiktok') templateInstruction = 'Write this in a Viral Short-form Content style, punchy sentences, high energy (TikTok/Reels စတိုင်မျိုးဖြင့် လိုတိုရှင်း ရေးသားပါ)။';
+    else if (template === 'documentary') templateInstruction = 'Write this in a Deep Documentary Narrator style, informative and calm (မှတ်တမ်းတင် တင်ဆက်သူ ပုံစံမျိုးဖြင့် ရေးသားပါ)။';
+    else if (template === 'health') templateInstruction = 'Write this in an Informative Health & Wellness advice style (ကျန်းမာရေး ဗဟုသုတ ပေးသည့် ပုံစံမျိုးဖြင့် ရေးသားပါ)။';
+
+    console.log(`Starting Pro Script Generation for topic: "${topic}" (${genre}) Template: ${template}...`);
 
     // Part 1: Act 1 & Act 2
     const promptPart1 = `You are an acclaimed master novelist, film screenwriter, and viral storyteller in Myanmar.
 The user wants an EXTREMELY IMMERSIVE storytelling script in natural spoken Burmese Unicode (မြန်မာစကားပြော လေသံစစ်စစ်).
+${templateInstruction}
 
 Topic/Theme: "${topic.trim()}"
-Genre: "${genre}" (horror/သရဲဇာတ်လမ်း, motivation/စိတ်ခွန်အားဖြည့်, tech/နည်းပညာ, history/သမိုင်း, fun-facts/ဗဟုသုတ, bedtime-story/ပုံပြင်)
+Genre: "${genre}"
 
 INSTRUCTIONS FOR PART 1:
-- Write Part 1 covering Act 1 (Atmospheric opening, setting, character background, eerie journey) and Act 2 (Deepening mystery, creepy encounters, ominous signs).
-- IMPORTANT: You MUST write exactly or at least ${partTargetChars} Myanmar Unicode characters for this Part 1 to match the precise duration!
-- Build immense tension. Do NOT resolve the conflict yet; end Part 1 on a dramatic suspenseful cliffhanger.
-- Do NOT include bracketed stage directions like [Music starts] or [Scene 1] so it can be fed directly to Text-to-Speech.
-
-Respond strictly in valid JSON:
+- Write Part 1 covering the introduction and rising action.
+- IMPORTANT: You MUST write exactly or at least ${partTargetChars} Myanmar Unicode characters for this Part 1!
+- Respond strictly in valid JSON:
 {
   "title": "string (Creative Myanmar Title)",
   "category": "string",
-  "part1Text": "string (long spoken Burmese story text of exactly ${partTargetChars} characters)"
+  "part1Text": "string (long spoken Burmese story text)"
 }`;
 
     let resPart1: any = null;
@@ -833,7 +891,260 @@ Respond strictly in valid JSON:
     });
   } catch (error: any) {
     console.error('Script generation error:', error);
-    return res.status(500).json({ error: error.message || 'ဇာတ်ညွှန်းဖန်တီးရာတွင် အမှားဖြစ်ပေါ်သွားပါသည်။ နောက်တစ်ကြိမ် ထပ်မံကြိုးစားပေးပါ။' });
+    const errStr = error?.message || String(error);
+    if (errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('rate-limit')) {
+      return res.status(429).json({ error: 'AI Quota အသုံးပြုမှု ခေတ္တပြည့်သွားပါသည် (Rate Limit Exceeded)။ ကျေးဇူးပြု၍ ခေတ္တစောင့်ပြီး (၁ မိနစ်ခန့်အကြာ) ထပ်မံကြိုးစားပေးပါခင်ဗျာ။' });
+    }
+    return res.status(500).json({ error: errStr || 'ဇာတ်ညွှန်းဖန်တီးရာတွင် အမှားဖြစ်ပေါ်သွားပါသည်။ နောက်တစ်ကြိမ် ထပ်မံကြိုးစားပေးပါ။' });
+  }
+});
+
+// -------------------------------------------------------------------------------------
+// AI Story Scene Storyboard Prompt Generator (Lightning-fast cinematic prompts)
+// -------------------------------------------------------------------------------------
+app.post('/api/generate-story-images', async (req: Request, res: Response) => {
+  const { title, script, genre = 'horror' } = req.body;
+  if (!script) {
+    return res.status(400).json({ error: 'No script provided' });
+  }
+
+  try {
+    const promptExtractor = `You are a professional film storyboard artist.
+Based on the story "${title}", create 4 cinematic visual scene descriptions in English for AI image generation. Each scene: (1. Opening, 2. Rising Action, 3. Climax, 4. Resolution).
+Match "${genre}" mood.
+
+Respond strictly in valid JSON:
+{
+  "scenes": [
+    { "sceneNumber": 1, "title": "Opening", "visualPrompt": "English prompt...", "mood": "mood" },
+    { "sceneNumber": 2, "title": "Rising Action", "visualPrompt": "English prompt...", "mood": "mood" },
+    { "sceneNumber": 3, "title": "Climax", "visualPrompt": "English prompt...", "mood": "mood" },
+    { "sceneNumber": 4, "title": "Resolution", "visualPrompt": "English prompt...", "mood": "mood" }
+  ]
+}`;
+
+    const resExtraction = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: promptExtractor,
+      config: { responseMimeType: 'application/json' }
+    });
+
+    const parsed = JSON.parse(resExtraction.text || '{}');
+    const scenePrompts = parsed.scenes || [];
+    
+    // Actually generate the images for each scene
+    const scenesWithImages = await Promise.all(scenePrompts.map(async (scene: any) => {
+      try {
+        const imgRes = await ai.models.generateContent({
+          model: 'gemini-3.1-flash-lite-image',
+          contents: {
+            parts: [{ text: `${scene.visualPrompt}, cinematic lighting, photorealistic, 8k resolution, cinematic atmosphere` }]
+          },
+          config: {
+            imageConfig: { aspectRatio: "16:9", imageSize: "1K" }
+          }
+        });
+
+        let imageUrl = '';
+        if (imgRes.candidates?.[0]?.content?.parts) {
+          for (const part of imgRes.candidates[0].content.parts) {
+            if (part.inlineData) {
+              imageUrl = `data:image/png;base64,${part.inlineData.data}`;
+              break;
+            }
+          }
+        }
+        return { ...scene, imageUrl };
+      } catch (e) {
+        console.warn(`Failed to generate image for scene ${scene.sceneNumber}:`, e);
+        return { ...scene, imageUrl: '' };
+      }
+    }));
+
+    return res.json({
+      success: true,
+      scenes: scenesWithImages
+    });
+  } catch (err: any) {
+    console.error('Story Image Generation Error:', err);
+    return res.status(500).json({ error: 'AI ဇာတ်ကွက် နှင့် ရုပ်ပုံများ ဖန်တီးရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။' });
+  }
+});
+
+// -------------------------------------------------------------------------------------
+// Direct AI Story Video Generator (Combines AI Image + Audio + Waveform into MP4 directly)
+// -------------------------------------------------------------------------------------
+app.post('/api/generate-story-video', async (req: Request, res: Response) => {
+  const { 
+    title, 
+    script, 
+    genre = 'horror', 
+    voice = 'my-MM-ThihaNeural', 
+    waveYPercentage = 62.5, 
+    bgImageData = '', 
+    allSceneImages = [], // New: Array of all generated scene images
+    enableSubtitles = false,
+    voiceEffect = 'none' // New: 'none' | 'echo' | 'deep' | 'radio'
+  } = req.body;
+
+  if (!script) {
+    return res.status(400).json({ error: 'No script provided' });
+  }
+
+  const timestamp = Date.now();
+  const audioPath = path.join(os.tmpdir(), `story_audio_${timestamp}.mp3`);
+  const finalAudioPath = path.join(os.tmpdir(), `story_audio_effect_${timestamp}.mp3`);
+  const videoPath = path.join(os.tmpdir(), `story_video_${timestamp}.mp4`);
+  
+  // Array to store temp image paths
+  const imagePaths: string[] = [];
+
+  try {
+    console.log(`Generating AI Story Video (Pro) for "${title}"...`);
+
+    // 1. Synthesize audio
+    const comm = new Communicate(script, { voice, rate: '+0%', pitch: '+0Hz' });
+    const audioParts: Buffer[] = [];
+    for await (const chunk of comm.stream()) {
+      if (chunk.type === 'audio' && chunk.data) audioParts.push(chunk.data);
+    }
+    const audioBuf = Buffer.concat(audioParts);
+    if (audioBuf.length === 0) throw new Error('Audio synthesis failed.');
+    fs.writeFileSync(audioPath, audioBuf);
+
+    // Apply Voice Effects if selected
+    let audioFilter = '';
+    if (voiceEffect === 'echo') audioFilter = 'aecho=0.8:0.88:60:0.4';
+    else if (voiceEffect === 'deep') audioFilter = 'atempo=1.0,asetrate=24000*0.85,aresample=24000';
+    else if (voiceEffect === 'radio') audioFilter = 'highpass=f=1000,lowpass=f=3000';
+
+    if (audioFilter) {
+      await execAsync(`ffmpeg -y -i "${audioPath}" -af "${audioFilter}" "${finalAudioPath}"`);
+    } else {
+      fs.copyFileSync(audioPath, finalAudioPath);
+    }
+
+    // 2. Prepare Background Image (Use bgImageData or generate one)
+    let bgImagePath = path.join(os.tmpdir(), `story_bg_${timestamp}.png`);
+    let imageGenerated = false;
+
+    if (bgImageData && bgImageData.startsWith('data:image')) {
+        const base64Data = bgImageData.split('base64,')[1];
+        fs.writeFileSync(bgImagePath, Buffer.from(base64Data, 'base64'));
+        imageGenerated = true;
+    }
+
+    // Generate if not provided or failed
+    if (!imageGenerated) {
+      try {
+        const imgRes = await ai.models.generateContent({
+          model: 'gemini-3.1-flash-lite-image',
+          contents: { parts: [{ text: `Cinematic background for story "${title}", ${genre} mood, photorealistic, 8k, 9:16 vertical` }] },
+          config: { imageConfig: { aspectRatio: "9:16", imageSize: "1K" } }
+        });
+        if (imgRes.candidates?.[0]?.content?.parts) {
+          for (const part of imgRes.candidates[0].content.parts) {
+            if (part.inlineData) {
+              fs.writeFileSync(bgImagePath, Buffer.from(part.inlineData.data, 'base64'));
+              imageGenerated = true;
+              break;
+            }
+          }
+        }
+      } catch (e) { console.warn('Gemini image failed:', e); }
+    }
+
+    // 3. Get Audio Duration (simplified)
+    const { stdout: durationOut } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${finalAudioPath}"`);
+    const totalDuration = parseFloat(durationOut.trim()) || 10;
+
+    // 4. Build FFmpeg Filter Complex for Slideshow + Waveform + (Optional) Subtitles
+    let waveColors = '0x818cf8|0xc084fc';
+    if (genre === 'horror') waveColors = '0xf97316|0xf43f5e';
+    else if (genre === 'motivation') waveColors = '0x10b981|0x34d399';
+
+    const width = 360;
+    const height = 640;
+    const waveW = 300;
+    const waveH = 120;
+    const waveY = Math.round((height * (waveYPercentage / 100)) - (waveH / 2));
+    const cleanTitle = title.replace(/['"\\]/g, '').slice(0, 40);
+
+    // Single-input argument for image
+    const inputArgs = `-loop 1 -i "${bgImagePath}"`;
+    
+    // Audio is the 2nd input (index 1)
+    const audioIdx = 1;
+    
+    const filterParts = [
+      `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1[bg]`,
+      `[${audioIdx}:a]showwaves=r=5:s=120x60:mode=cline:colors=${waveColors},scale=${waveW}:${waveH}:flags=neighbor[waves]`,
+      `[bg][waves]overlay=(W-w)/2:${waveY}[v_base]`
+    ];
+
+    // Subtitles Logic with character-length proportion timing
+    let lastV = 'v_base';
+    if (enableSubtitles) {
+      const words = script.split(/\s+/);
+      const chunkSize = 6;
+      const rawChunks: string[] = [];
+      for (let i = 0; i < words.length; i += chunkSize) rawChunks.push(words.slice(i, i + chunkSize).join(' '));
+      
+      const totalChars = rawChunks.reduce((acc, c) => acc + c.length, 0) || 1;
+      let currentTime = 0;
+
+      rawChunks.forEach((chunk, idx) => {
+        const proportion = chunk.length / totalChars;
+        const chunkDuration = Math.max(1.0, totalDuration * proportion);
+        const start = currentTime.toFixed(2);
+        const end = (currentTime + chunkDuration).toFixed(2);
+        currentTime += chunkDuration;
+
+        // Properly escape special characters for FFmpeg drawtext filter
+        const cleanChunk = chunk
+          .replace(/\\/g, '\\\\')
+          .replace(/'/g, "'\\''")
+          .replace(/:/g, '\\:')
+          .replace(/%/g, '\\%');
+
+        const nextV = `v_sub_${idx}`;
+        filterParts.push(`[${lastV}]drawtext=text='${cleanChunk}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=h-120:box=1:boxcolor=black@0.5:boxborderw=5:enable='between(t,${start},${end})'[${nextV}]`);
+        lastV = nextV;
+      });
+    }
+
+    // Properly escape title for FFmpeg
+    const escapedTitle = cleanTitle
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "'\\''")
+      .replace(/:/g, '\\:')
+      .replace(/%/g, '\\%');
+
+    // Add Title Overlay at the top
+    filterParts.push(`[${lastV}]drawtext=text='${escapedTitle}':fontcolor=white:fontsize=22:x=(w-text_w)/2:y=80:shadowcolor=black:shadowx=2:shadowy=2[v_final]`);
+
+    const filterString = filterParts.join(';');
+    const ffmpegCmd = `ffmpeg -y ${inputArgs} -i "${finalAudioPath}" -filter_complex "${filterString}" -map "[v_final]" -map ${audioIdx}:a -c:v libx264 -preset ultrafast -r 5 -pix_fmt yuv420p -shortest "${videoPath}"`;
+
+    await execAsync(ffmpegCmd);
+
+    if (!fs.existsSync(videoPath)) throw new Error('Video file not produced.');
+
+    const videoBuf = fs.readFileSync(videoPath);
+    const videoBase64 = `data:video/mp4;base64,${videoBuf.toString('base64')}`;
+
+    // Cleanup
+    [audioPath, finalAudioPath, videoPath, bgImagePath].forEach(p => {
+      try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+    });
+
+    return res.json({ success: true, title, videoUrl: videoBase64 });
+  } catch (err: any) {
+    console.error('Pro Video Generation Error:', err);
+    [audioPath, finalAudioPath, videoPath, ...imagePaths].forEach(p => {
+      try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+    });
+    return res.status(500).json({ error: err.message || 'ဗီဒီယိုဖန်တီးမှု မအောင်မြင်ပါ။' });
   }
 });
 
@@ -945,6 +1256,55 @@ app.post('/api/download-subtitles', (req: Request, res: Response) => {
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}.${format}"`);
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   return res.send(content);
+});
+
+// -------------------------------------------------------------------------------------
+// Standalone AI Image Generator
+// -------------------------------------------------------------------------------------
+app.post('/api/generate-standalone-image', async (req: Request, res: Response) => {
+  const { prompt, aspectRatio = '9:16', style = 'cinematic' } = req.body;
+  if (!prompt) {
+    return res.status(400).json({ error: 'Please provide a prompt.' });
+  }
+
+  try {
+    const fullPrompt = `${prompt}, ${style} style, high quality, 8k resolution, detailed texture, masterfully composed`;
+    
+    const imgRes = await ai.models.generateContent({
+      model: 'gemini-3.1-flash-lite-image',
+      contents: {
+        parts: [{ text: fullPrompt }]
+      },
+      config: {
+        imageConfig: { 
+          aspectRatio: aspectRatio as any, 
+          imageSize: "1K" 
+        }
+      }
+    });
+
+    let imageUrl = '';
+    if (imgRes.candidates?.[0]?.content?.parts) {
+      for (const part of imgRes.candidates[0].content.parts) {
+        if (part.inlineData) {
+          imageUrl = `data:image/png;base64,${part.inlineData.data}`;
+          break;
+        }
+      }
+    }
+
+    if (!imageUrl) {
+      throw new Error('Failed to generate image data.');
+    }
+
+    return res.json({
+      success: true,
+      imageUrl
+    });
+  } catch (err: any) {
+    console.error('Image Generation Error:', err);
+    return res.status(500).json({ error: 'AI ရုပ်ပုံ ဖန်တီးရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။' });
+  }
 });
 
 // Static assets / SPA setup
