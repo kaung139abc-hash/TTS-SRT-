@@ -227,6 +227,140 @@ function isValidHttpUrl(stringUrl: string): boolean {
   }
 }
 
+// Natural Breath & Pronunciation Normalizer for Crystal-Clear Speech
+function normalizeTextForClearSpeech(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  let clean = text.trim();
+  // Ensure natural breath pause spacing after Myanmar & English punctuation marks
+  clean = clean
+    .replace(/။(?!\s)/g, '။ ')
+    .replace(/၊(?!\s)/g, '၊ ')
+    .replace(/\.(?!\s)/g, '. ')
+    .replace(/,(?!\s)/g, ', ')
+    .replace(/!(?!\s)/g, '! ')
+    .replace(/\?(?!\s)/g, '? ')
+    .replace(/\n+/g, ' \n ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean;
+}
+
+// Split text by natural sentence boundaries for smooth, uninterrupted speech
+function splitIntoNaturalSentenceChunks(text: string, maxChunkLen: number = 360): string[] {
+  const normalized = normalizeTextForClearSpeech(text);
+  if (!normalized) return [];
+  if (normalized.length <= maxChunkLen) return [normalized];
+
+  const chunks: string[] = [];
+  // Split on sentence boundaries (Myanmar ။, newlines, English ., ?, !)
+  const sentenceRegex = /([^။.?!;\n]+[။.?!;\n]+)/g;
+  const matches = normalized.match(sentenceRegex) || [normalized];
+
+  let currentChunk = '';
+  for (const segment of matches) {
+    if ((currentChunk + ' ' + segment).length > maxChunkLen) {
+      if (currentChunk.trim()) chunks.push(currentChunk.trim());
+      currentChunk = segment;
+    } else {
+      currentChunk += (currentChunk ? ' ' : '') + segment;
+    }
+  }
+
+  if (currentChunk.trim()) chunks.push(currentChunk.trim());
+
+  // If any individual chunk is still too long, fallback to word splitting
+  const finalChunks: string[] = [];
+  for (const chk of chunks) {
+    if (chk.length <= maxChunkLen) {
+      finalChunks.push(chk);
+    } else {
+      const words = chk.split(/\s+/);
+      let sub = '';
+      for (const w of words) {
+        if ((sub + ' ' + w).length > maxChunkLen) {
+          if (sub.trim()) finalChunks.push(sub.trim());
+          sub = w;
+        } else {
+          sub += (sub ? ' ' : '') + w;
+        }
+      }
+      if (sub.trim()) finalChunks.push(sub.trim());
+    }
+  }
+
+  return finalChunks.length > 0 ? finalChunks : [normalized];
+}
+
+async function synthesizeStream(txt: string, vName: string, rate: string = '+0%', pitch: string = '+0Hz'): Promise<Buffer> {
+  const cleanTxt = normalizeTextForClearSpeech(txt);
+  if (!cleanTxt) return Buffer.alloc(0);
+
+  // Calibrate natural conversational rate: slightly relaxed (-4%) so words are pronounced with crystal-clear human diction
+  const effectiveRate = (!rate || rate === '+0%' || rate === '0%') ? '-4%' : rate;
+
+  // Try edge-tts for premium human-like neural voices
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const comm = new Communicate(cleanTxt, {
+        voice: vName,
+        rate: effectiveRate,
+        pitch: pitch || '+0Hz',
+      });
+      const parts: Buffer[] = [];
+      
+      const streamPromise = (async () => {
+          for await (const chunk of comm.stream()) {
+            if (chunk.type === 'audio' && chunk.data) {
+              parts.push(chunk.data);
+            }
+          }
+          return Buffer.concat(parts);
+      })();
+
+      const buf = await Promise.race([
+          streamPromise,
+          new Promise<Buffer>((_, reject) => setTimeout(() => reject(new Error('TTS Stream Timeout')), 10000))
+      ]);
+      
+      if (buf.length > 0) return buf;
+    } catch (err: any) {
+      console.warn(`Attempt ${attempt} for voice ${vName} error:`, err?.message || err);
+    }
+    await new Promise(r => setTimeout(r, 300 * attempt));
+  }
+
+  // If edge-tts fails for any reason, seamlessly fallback to Google TTS proxy
+  try {
+    const encoded = encodeURIComponent(cleanTxt);
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en&client=tw-ob`;
+    const response = await fetch(ttsUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    });
+    if (response.ok) {
+      const arrayBuffer = await response.arrayBuffer();
+      const buf = Buffer.from(arrayBuffer);
+      if (buf.length > 100) return buf;
+    }
+  } catch (proxyErr) {
+    console.warn('Google TTS proxy fallback failed:', proxyErr);
+  }
+
+  // Final fallback speech-like noise / modulated sound if both edge-tts and proxy fail
+  try {
+    const fallbackAudioPath = `/tmp/fallback_${Date.now()}.mp3`;
+    await execAsync(`ffmpeg -y -f lavfi -i "anoisesrc=d=3:c=pink:r=16000:a=0.05" -c:a libmp3lame "${fallbackAudioPath}"`);
+    if (fs.existsSync(fallbackAudioPath)) {
+      const fbBuf = fs.readFileSync(fallbackAudioPath);
+      try { fs.unlinkSync(fallbackAudioPath); } catch (_) {}
+      return fbBuf;
+    }
+  } catch (fbErr) {
+    console.warn('Noise fallback generator error:', fbErr);
+  }
+
+  return Buffer.alloc(0);
+}
+
 // -------------------------------------------------------------------------------------
 // 1. Text-To-Speech (TTS) + Unlimited Character Length Synthesis + Natural BGM Mixing
 // -------------------------------------------------------------------------------------
@@ -244,73 +378,10 @@ app.post('/api/text-to-speech', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'ကျေးဇူးပြု၍ စာသား ရိုက်ထည့်ပေးပါခင်ဗျာ။' });
   }
 
-  const cleanText = text.trim();
+  const cleanText = normalizeTextForClearSpeech(text);
 
   try {
-    console.log(`Starting TTS with effect: ${voiceEffect}, voice: ${voice}, BGM: ${bgm}`);
-    
-    const synthesizeStream = async (txt: string, vName: string): Promise<Buffer> => {
-      // Try edge-tts for premium human-like neural voices (like William, Christopher, etc.)
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const comm = new Communicate(txt, {
-            voice: vName,
-            rate: rate || '+0%',
-            pitch: pitch || '+0Hz',
-          });
-          const parts: Buffer[] = [];
-          
-          const streamPromise = (async () => {
-              for await (const chunk of comm.stream()) {
-                if (chunk.type === 'audio' && chunk.data) {
-                  parts.push(chunk.data);
-                }
-              }
-              return Buffer.concat(parts);
-          })();
-
-          const buf = await Promise.race([
-              streamPromise,
-              new Promise<Buffer>((_, reject) => setTimeout(() => reject(new Error('TTS Stream Timeout')), 10000))
-          ]);
-          
-          if (buf.length > 0) return buf;
-        } catch (err: any) {
-          console.warn(`Attempt ${attempt} for voice ${vName} error:`, err.message || err);
-        }
-        await new Promise(r => setTimeout(r, 500 * attempt));
-      }
-
-      // If edge-tts fails for any reason, seamlessly fallback to Google TTS proxy to ensure 100% human-like audio without failing
-      try {
-        const encoded = encodeURIComponent(txt);
-        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en&client=tw-ob`;
-        const response = await fetch(ttsUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-        });
-        if (response.ok) {
-          const arrayBuffer = await response.arrayBuffer();
-          const buf = Buffer.from(arrayBuffer);
-          if (buf.length > 100) return buf;
-        }
-      } catch (proxyErr) {
-        console.warn('Google TTS proxy fallback failed:', proxyErr);
-      }
-
-      // Final fallback speech-like noise / modulated sound if both edge-tts and proxy fail
-      try {
-        const fallbackAudioPath = `/tmp/fallback_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
-        // Generate a warm speech-like modulated sound instead of pure sine wave
-        await execAsync(`ffmpeg -y -f lavfi -i "anoisesrc=d=3:c=pink:r=16000:a=0.05" -c:a libmp3lame "${fallbackAudioPath}"`);
-        if (fs.existsSync(fallbackAudioPath)) {
-          const buf = fs.readFileSync(fallbackAudioPath);
-          try { fs.unlinkSync(fallbackAudioPath); } catch (_) {}
-          return buf;
-        }
-      } catch (fbErr) {}
-
-      return Buffer.alloc(0);
-    };
+    console.log(`Starting Natural & Clear TTS: voice: ${voice}, rate: ${rate}, BGM: ${bgm}`);
 
     let audioBuffer: Buffer = Buffer.alloc(0);
     const voicesToTry = [voice, 'en-AU-WilliamMultilingualNeural', 'en-US-AndrewMultilingualNeural', 'en-US-BrianMultilingualNeural', 'ko-KR-HyunsuMultilingualNeural', 'de-DE-FlorianMultilingualNeural'];
@@ -319,24 +390,12 @@ app.post('/api/text-to-speech', async (req: Request, res: Response) => {
     for (const vName of voicesToTry) {
       console.log(`Attempting synthesis with voice: ${vName}`);
       
-      // Robust chunking: Split text into chunks of max 400 characters to prevent edge-tts timeouts or limits
-      const chunks: string[] = [];
-      let currentChunk = '';
-      const words = cleanText.split(/\s+/);
-      for (const word of words) {
-        if ((currentChunk + ' ' + word).length > 400) {
-          if (currentChunk.trim()) chunks.push(currentChunk.trim());
-          currentChunk = word;
-        } else {
-          currentChunk += (currentChunk ? ' ' : '') + word;
-        }
-      }
-      if (currentChunk.trim()) chunks.push(currentChunk.trim());
-      if (chunks.length === 0) chunks.push(cleanText);
+      // Robust sentence-level chunking to maintain natural cadence and prevent timeouts
+      const chunks = splitIntoNaturalSentenceChunks(cleanText, 360);
 
       // Parallel high-throughput chunk synthesis
       const chunkResults = await runWithConcurrency(chunks, async (chk) => {
-        return await synthesizeStream(chk, vName);
+        return await synthesizeStream(chk, vName, rate, pitch);
       }, 4);
 
       const validChunks = chunkResults.filter(b => b && b.length > 0);
@@ -348,12 +407,13 @@ app.post('/api/text-to-speech', async (req: Request, res: Response) => {
 
     if (audioBuffer.length === 0) throw new Error('Speech synthesis failed for all available voices.');
 
-    // Always boost the standalone raw synthesized voice volume to be crisp, loud and clear
+    // Always boost and normalize the voice to be crystal-clear, articulate and warm
     const tempInBoost = `/tmp/boost_in_${Date.now()}.mp3`;
     const tempOutBoost = `/tmp/boost_out_${Date.now()}.mp3`;
     try {
       fs.writeFileSync(tempInBoost, audioBuffer);
-      await execAsync(`ffmpeg -y -i "${tempInBoost}" -af "volume=1.8" "${tempOutBoost}"`);
+      // Volume normalization + crisp vocal presence
+      await execAsync(`ffmpeg -y -i "${tempInBoost}" -af "volume=1.75,highpass=f=80,equalizer=f=3000:t=q:w=1:g=2.5" -c:a libmp3lame -b:a 192k "${tempOutBoost}"`);
       if (fs.existsSync(tempOutBoost)) {
         audioBuffer = fs.readFileSync(tempOutBoost);
       }
@@ -454,7 +514,20 @@ app.post('/api/text-to-speech', async (req: Request, res: Response) => {
 // High-Concurrency & Long-Script Optimized with Parallel Streaming & Instant Fallback
 // -------------------------------------------------------------------------------------
 app.post('/api/multi-speaker-tts', async (req: Request, res: Response) => {
-  const { dialogue, pauseDuration = 0.35 } = req.body;
+  const { dialogue: rawDialogue, lines, speakers = [], pauseDuration = 0.35 } = req.body;
+
+  let dialogue = Array.isArray(rawDialogue) ? rawDialogue : [];
+  if (dialogue.length === 0 && Array.isArray(lines) && lines.length > 0) {
+    dialogue = lines.map((l: any, idx: number) => {
+      const spk = Array.isArray(speakers) ? speakers.find((s: any) => s.id === l.speakerId) : null;
+      return {
+        speakerId: l.speakerId || `spk${(idx % 2) + 1}`,
+        speakerName: spk?.name || l.speakerName || `Speaker ${(idx % 2) + 1}`,
+        voice: spk?.voice || l.voice || (idx % 2 === 0 ? 'en-AU-WilliamMultilingualNeural' : 'en-US-AvaMultilingualNeural'),
+        text: (l.text || '').trim()
+      };
+    });
+  }
 
   if (!dialogue || !Array.isArray(dialogue) || dialogue.length === 0) {
     return res.status(400).json({ error: 'ကျေးဇူးပြု၍ အနည်းဆုံး စကားပြော စာကြောင်း ၁ ကြောင်း ထည့်သွင်းပေးပါခင်ဗျာ။' });
@@ -469,53 +542,7 @@ app.post('/api/multi-speaker-tts', async (req: Request, res: Response) => {
     const synthesizeSingleChunk = async (txt: string, voiceName: string): Promise<Buffer> => {
       const cleanTxt = txt.trim();
       if (!cleanTxt) return Buffer.alloc(0);
-
-      const voicesToTry = [
-        voiceName,
-        'en-AU-WilliamMultilingualNeural',
-        'en-US-AndrewMultilingualNeural',
-        'en-US-AvaMultilingualNeural',
-        'ko-KR-HyunsuMultilingualNeural'
-      ];
-
-      for (const currentVoice of voicesToTry) {
-        try {
-          const comm = new Communicate(cleanTxt, { voice: currentVoice });
-          const parts: Buffer[] = [];
-
-          const streamPromise = (async () => {
-            for await (const chunk of comm.stream()) {
-              if (chunk.type === 'audio' && chunk.data) {
-                parts.push(chunk.data);
-              }
-            }
-            return Buffer.concat(parts);
-          })();
-
-          const buf = await Promise.race([
-            streamPromise,
-            new Promise<Buffer>((_, reject) => setTimeout(() => reject(new Error('TTS Timeout')), 5000))
-          ]);
-
-          if (buf && buf.length > 50) return buf;
-        } catch (_) {}
-      }
-
-      // Fast Google TTS Proxy Fallback
-      try {
-        const encoded = encodeURIComponent(cleanTxt.slice(0, 180));
-        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=en&client=tw-ob`;
-        const response = await fetch(ttsUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-        });
-        if (response.ok) {
-          const arrayBuffer = await response.arrayBuffer();
-          const buf = Buffer.from(arrayBuffer);
-          if (buf.length > 50) return buf;
-        }
-      } catch (_) {}
-
-      return Buffer.alloc(0);
+      return await synthesizeStream(cleanTxt, voiceName);
     };
 
     // Synthesize long lines by chunking cleanly
@@ -2395,6 +2422,195 @@ app.post('/api/shift-audio', upload.fields([
   } catch (err: any) {
     console.error('Audio Shifter API Error:', err);
     return res.status(500).json({ error: err.message || 'အသံပြောင်းလဲခြင်း မအောင်မြင်ပါ။' });
+  } finally {
+    try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
+    try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
+  }
+});
+
+// -------------------------------------------------------------------------------------
+// Voice Character Effects Studio (Monster, Chipmunk, Robot, Megaphone, Radio, Echo, Alien)
+// -------------------------------------------------------------------------------------
+app.post('/api/voice-character-effect', upload.fields([
+  { name: 'audioFile', maxCount: 1 }
+]), async (req: Request, res: Response) => {
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const file = files && files['audioFile'] && files['audioFile'][0];
+  const {
+    audioData = '',
+    audioUrl = '',
+    text = '',
+    voice = 'en-AU-WilliamMultilingualNeural',
+    effect = 'robot',
+    customPitch = 1.0,
+    customSpeed = 1.0
+  } = req.body;
+
+  const timestamp = Date.now();
+  const randomId = Math.random().toString(36).substr(2, 6);
+  const tempIn = `/tmp/eff_in_${timestamp}_${randomId}.mp3`;
+  const tempOut = `/tmp/eff_out_${timestamp}_${randomId}.mp3`;
+
+  try {
+    // 1. Obtain Source Audio
+    if (file) {
+      fs.copyFileSync(file.path, tempIn);
+      try { fs.unlinkSync(file.path); } catch (_) {}
+    } else if (audioData || audioUrl) {
+      const raw = audioData || audioUrl;
+      if (raw.startsWith('data:audio') || raw.includes('base64,')) {
+        const b64 = raw.split('base64,')[1];
+        fs.writeFileSync(tempIn, Buffer.from(b64, 'base64'));
+      } else if (raw.startsWith('http')) {
+        const fetchRes = await fetch(raw);
+        const arrayBuf = await fetchRes.arrayBuffer();
+        fs.writeFileSync(tempIn, Buffer.from(arrayBuf));
+      }
+    } else if (text && text.trim()) {
+      // High-performance Unlimited Character Length Speech Synthesis Engine
+      const cleanText = text.trim();
+      const chunks: string[] = [];
+      let currentChunk = '';
+      const words = cleanText.split(/\s+/);
+
+      for (const word of words) {
+        if ((currentChunk + ' ' + word).length > 380) {
+          if (currentChunk.trim()) chunks.push(currentChunk.trim());
+          currentChunk = word;
+        } else {
+          currentChunk += (currentChunk ? ' ' : '') + word;
+        }
+      }
+      if (currentChunk.trim()) chunks.push(currentChunk.trim());
+      if (chunks.length === 0) chunks.push(cleanText);
+
+      console.log(`[Voice Character Effect] Unlimited text synthesis: ${cleanText.length} characters in ${chunks.length} chunks`);
+
+      const chunkResults = await runWithConcurrency(chunks, async (chk) => {
+        return await synthesizeStream(chk, voice);
+      }, 4);
+
+      const validBuffers = chunkResults.filter(b => b && b.length > 0);
+      if (validBuffers.length > 0) {
+        const fullTtsBuffer = Buffer.concat(validBuffers);
+        fs.writeFileSync(tempIn, fullTtsBuffer);
+      }
+    }
+
+    if (!fs.existsSync(tempIn) || fs.statSync(tempIn).size === 0) {
+      return res.status(400).json({ error: 'အသံဖိုင် သို့မဟုတ် စာသား ထည့်သွင်းပေးပါခင်ဗျာ။' });
+    }
+
+    // 2. Select Character DSP Filter with authentic high-fidelity acoustics
+    let filter = '';
+    switch (effect) {
+      // 👶 REAL CUTE CHILD & TODDLER VOICES
+      case 'child_cute':
+      case 'child':
+        // Real sweet 6-8 year old child with natural vocal brilliance and warm high-pass
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,asetrate=44100*1.22,atempo=0.819,aresample=44100,equalizer=f=3500:t=q:w=1.2:g=5,highpass=f=220,volume=2.0';
+        break;
+      case 'baby_toddler':
+      case 'baby':
+        // Sweet high toddler voice with soft presence
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,asetrate=44100*1.34,atempo=0.746,aresample=44100,equalizer=f=4000:t=q:w=1.5:g=6,highpass=f=280,volume=2.0';
+        break;
+      case 'chipmunk':
+        // Cartoon comedy chipmunk
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,asetrate=44100*1.45,atempo=0.689,aresample=44100,highpass=f=250,volume=1.9';
+        break;
+
+      // 👻 REAL HORROR, GHOST & DEMON VOICES
+      case 'ghost_whisper':
+      case 'ghost':
+        // Eerie haunted ghost whisper with spectral flanger, treble breath & cave echo
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,highpass=f=450,treble=g=9,aecho=0.85:0.88:120|240|360:0.5|0.35|0.2,flanger=delay=8:depth=6:regen=60:speed=0.4,volume=2.4';
+        break;
+      case 'demon_monster':
+      case 'monster':
+      case 'demon':
+        // Terrifying sub-harmonic demon growl with dark hellish bass resonance
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,asetrate=44100*0.75,atempo=1.333,aresample=44100,bass=g=15:f=80,aecho=0.8:0.7:70|140:0.5|0.3,volume=2.3';
+        break;
+      case 'witch_horror':
+      case 'witch':
+        // Spooky trembling witch cackle with eerie pitch and demonic flutter
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,asetrate=44100*1.15,atempo=0.869,aresample=44100,tremolo=f=6:d=0.5,aecho=0.8:0.7:80|160:0.4|0.2,volume=2.2';
+        break;
+      case 'zombie_undead':
+      case 'zombie':
+        // Undead zombie guttural choke with low pitch vibrato
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,asetrate=44100*0.68,atempo=1.47,aresample=44100,vibrato=f=4:d=0.4,bass=g=12:f=100,volume=2.3';
+        break;
+
+      // 🤖 SCI-FI & CYBERNETIC VOICES
+      case 'robot_cyborg':
+      case 'robot':
+        // Cybernetic Mech Robot with metallic ring modulation
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,flanger=delay=10:depth=6:regen=75:width=85:speed=2.5,chorus=0.7:0.9:55:0.4:0.25:2,treble=g=5,volume=2.2';
+        break;
+      case 'alien_cosmic':
+      case 'alien':
+        // Cosmic UFO alien with high-frequency vibrato
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,vibrato=f=9:d=0.7,asetrate=44100*1.2,atempo=0.833,aresample=44100,volume=2.1';
+        break;
+
+      // 📢 AUDIO DEVICES & SPECIAL REVERBS
+      case 'megaphone':
+        // Megaphone loudspeaker siren with bandpass & compression
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,highpass=f=750,lowpass=f=3600,equalizer=f=1800:width_type=h:width=600:g=8,volume=2.8,acompressor=threshold=-15dB:ratio=9';
+        break;
+      case 'phone_radio':
+      case 'phone':
+        // Telephone call & walkie-talkie
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,highpass=f=400,lowpass=f=3000,equalizer=f=1200:width_type=h:width=500:g=6,volume=2.2';
+        break;
+      case 'echo_cave':
+        // Cathedral Cave spatial Reverb
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,aecho=0.85:0.88:90|180|270:0.5|0.35|0.2,volume=1.9';
+        break;
+      case 'vintage_1920':
+      case 'vintage_radio':
+        // 1920s Gramophone Vintage Vinyl Radio
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,highpass=f=500,lowpass=f=2600,treble=g=-5,bass=g=3,volume=2.3';
+        break;
+      case 'comedy_fast':
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,asetrate=49392,atempo=1.2,aresample=44100,volume=1.8';
+        break;
+      case 'slow_drama':
+        filter = 'aformat=sample_rates=44100:channel_layouts=stereo,asetrate=39690,atempo=0.85,aresample=44100,bass=g=4,volume=1.8';
+        break;
+      default: {
+        const p = Math.max(0.4, Math.min(2.5, parseFloat(String(customPitch)) || 1.0));
+        const s = Math.max(0.25, Math.min(3.0, parseFloat(String(customSpeed)) || 1.0));
+        const shiftedRate = Math.round(44100 * p);
+        const t = Math.max(0.5, Math.min(2.0, s / p));
+        filter = `aformat=sample_rates=44100:channel_layouts=stereo,asetrate=${shiftedRate},atempo=${t.toFixed(3)},aresample=44100,volume=1.8`;
+        break;
+      }
+    }
+
+    console.log(`[Voice Character Effect] Applying effect: ${effect} with filter: ${filter.slice(0, 60)}...`);
+    await execAsync(`ffmpeg -y -i "${tempIn}" -af "${filter}" -c:a libmp3lame -b:a 192k "${tempOut}"`);
+
+    if (!fs.existsSync(tempOut) || fs.statSync(tempOut).size === 0) {
+      throw new Error('အသံပြောင်းလဲခြင်း မအောင်မြင်ပါ။');
+    }
+
+    const outBuf = fs.readFileSync(tempOut);
+    const audioDataUrl = `data:audio/mp3;base64,${outBuf.toString('base64')}`;
+    const dur = await getAudioDuration(tempOut);
+
+    return res.json({
+      success: true,
+      audioUrl: audioDataUrl,
+      durationSec: dur,
+      effectUsed: effect,
+      fileBytes: outBuf.length
+    });
+  } catch (err: any) {
+    console.error('Voice Character Effect API Error:', err);
+    return res.status(500).json({ error: err?.message || 'အသံပြောင်းလဲမှု အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။' });
   } finally {
     try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
     try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}

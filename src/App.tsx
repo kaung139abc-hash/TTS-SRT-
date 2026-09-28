@@ -5,7 +5,7 @@ import {
   Languages, Clock, Subtitles, Volume2, Video, CheckCircle2,
   ExternalLink, Layers, ArrowRight, Settings2, Sliders, UserCheck,
   FileAudio, Info, Mic, X, BookOpen, Wand2, Lightbulb, History, Trash2, RotateCcw, Music, Music2, Disc,
-  Users, Plus, ArrowUp, ArrowDown, MessageSquare, Users2, Megaphone, Zap, ShieldCheck, MoveVertical, Search
+  Users, Plus, ArrowUp, ArrowDown, MessageSquare, Users2, Megaphone, Zap, ShieldCheck, MoveVertical, Search, Square
 } from 'lucide-react';
 import { getAllHistory, saveHistoryRecord, deleteHistoryRecord, clearAllHistoryRecords, StoredHistoryItem } from './historyDb';
 
@@ -269,8 +269,8 @@ const SrtTimelineInspector: React.FC<{
 };
 
 export const App: React.FC = () => {
-  // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator'
-  const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator'>('tts');
+  // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator'
+  const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator'>('tts');
 
   // ----------------------------------------------------
   // Mode 1: Text-to-Speech (TTS) State
@@ -420,6 +420,26 @@ export const App: React.FC = () => {
     characterCount: number;
   } | null>(null);
   const [translateError, setTranslateError] = useState('');
+
+  // ----------------------------------------------------
+  // Voice Character Effects Studio State
+  // ----------------------------------------------------
+  const [vcInputMode, setVcInputMode] = useState<'upload' | 'mic' | 'tts'>('upload');
+  const [vcAudioFile, setVcAudioFile] = useState<File | null>(null);
+  const [vcAudioPreview, setVcAudioPreview] = useState<string>('');
+  const [vcTtsText, setVcTtsText] = useState('');
+  const [vcTtsVoice, setVcTtsVoice] = useState('en-AU-WilliamMultilingualNeural');
+  const [vcSelectedEffect, setVcSelectedEffect] = useState<string>('robot');
+  const [vcIsRecording, setVcIsRecording] = useState(false);
+  const [vcRecordSec, setVcRecordSec] = useState(0);
+  const vcMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const vcAudioChunksRef = useRef<Blob[]>([]);
+  const vcRecordTimerRef = useRef<any>(null);
+  const [isVcLoading, setIsVcLoading] = useState(false);
+  const [vcResultUrl, setVcResultUrl] = useState('');
+  const [vcError, setVcError] = useState('');
+  const [isPlayingVcAudio, setIsPlayingVcAudio] = useState(false);
+  const vcAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   // ----------------------------------------------------
   // AI Agent Auto-Healing & Diagnostic System State
@@ -1459,6 +1479,126 @@ export const App: React.FC = () => {
     }
   };
 
+  // ----------------------------------------------------
+  // Voice Character Effects Studio Handlers
+  // ----------------------------------------------------
+  const startVcRecording = async () => {
+    try {
+      setVcError('');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      vcAudioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      vcMediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          vcAudioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(vcAudioChunksRef.current, { type: 'audio/webm' });
+        const file = new File([blob], `recorded_voice_${Date.now()}.webm`, { type: 'audio/webm' });
+        setVcAudioFile(file);
+        const url = URL.createObjectURL(blob);
+        setVcAudioPreview(url);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start(200);
+      setVcIsRecording(true);
+      setVcRecordSec(0);
+
+      if (vcRecordTimerRef.current) clearInterval(vcRecordTimerRef.current);
+      vcRecordTimerRef.current = setInterval(() => {
+        setVcRecordSec(prev => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      setVcError('မိုက်ခရိုဖုန်း အသုံးပြုခွင့် မရရှိပါ (Microphone Permission Denied)။');
+    }
+  };
+
+  const stopVcRecording = () => {
+    if (vcMediaRecorderRef.current && vcIsRecording) {
+      vcMediaRecorderRef.current.stop();
+      setVcIsRecording(false);
+      if (vcRecordTimerRef.current) clearInterval(vcRecordTimerRef.current);
+    }
+  };
+
+  const handleApplyVoiceCharacterEffect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (vcInputMode === 'upload' && !vcAudioFile && !vcAudioPreview) {
+      setVcError('ကျေးဇူးပြု၍ အသံဖိုင် ရွေးချယ်တင်သွင်းပေးပါခင်ဗျာ။');
+      return;
+    }
+    if (vcInputMode === 'mic' && !vcAudioFile && !vcAudioPreview) {
+      setVcError('ကျေးဇူးပြု၍ မိုက်ခရိုဖုန်းဖြင့် အသံသွင်းပေးပါခင်ဗျာ။');
+      return;
+    }
+    if (vcInputMode === 'tts' && !vcTtsText.trim()) {
+      setVcError('ကျေးဇူးပြု၍ ပြောကြားစေလိုသော စာသား ရိုက်ထည့်ပေးပါခင်ဗျာ။');
+      return;
+    }
+
+    setIsVcLoading(true);
+    setVcError('');
+    setVcResultUrl('');
+
+    try {
+      const formData = new FormData();
+      if (vcInputMode === 'tts') {
+        formData.append('text', vcTtsText.trim());
+        formData.append('voice', vcTtsVoice);
+      } else if (vcAudioFile) {
+        formData.append('audioFile', vcAudioFile);
+      } else if (vcAudioPreview) {
+        if (vcAudioPreview.startsWith('blob:')) {
+          const blobRes = await fetch(vcAudioPreview);
+          const blob = await blobRes.blob();
+          formData.append('audioFile', blob, 'recorded_audio.webm');
+        } else if (vcAudioPreview.startsWith('data:audio') || vcAudioPreview.startsWith('http')) {
+          formData.append('audioData', vcAudioPreview);
+        }
+      }
+
+      formData.append('effect', vcSelectedEffect);
+
+      const res = await fetch('/api/voice-character-effect', {
+        method: 'POST',
+        body: formData
+      });
+
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု အချိန်ကုန်သွားပါသည် သို့မဟုတ် ဝန်ပိနေပါသည်။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။');
+      }
+
+      if (!res.ok || !data.success || !data.audioUrl) {
+        throw new Error(data.error || 'အသံပြောင်းလဲ၍ မရပါ။');
+      }
+
+      setVcResultUrl(data.audioUrl);
+      saveToHistory({
+        type: 'tts',
+        title: `🎭 Voice Changer: ${vcSelectedEffect.toUpperCase()}`,
+        content: `Effect: ${vcSelectedEffect}, Duration: ${data.durationSec ? data.durationSec.toFixed(1) + 's' : ''}`,
+        audioUrl: data.audioUrl,
+        characterCount: 0
+      });
+      registerGenerationAndCheckAd('voice_character_effect');
+    } catch (err: any) {
+      console.error('Voice Character Effect error:', err);
+      setVcError(err.message || 'အသံပြောင်းလဲရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။');
+      triggerAiAgentAutoHeal('Voice Character Changer', err.message || 'DSP Render Error');
+    } finally {
+      setIsVcLoading(false);
+    }
+  };
+
   const predefinedGenres = [
     { id: 'horror', label: 'သရဲ / ထိတ်လန့်ဖွယ် 👻', placeholder: 'ဥပမာ - ညသန်းခေါင် အဝေးပြေးလမ်းမပေါ်က ထူးဆန်းသော ကားကြုံခရီးသည်' },
     { id: 'motivation', label: 'စိတ်ခွန်အားဖြည့် 💪', placeholder: 'ဥပမာ - စိတ်ဓာတ်ကျနေချိန် ပြန်လည်ရုန်းထနိုင်မည့် စိတ်ခွန်အားပေး စကားများ' },
@@ -1601,16 +1741,28 @@ export const App: React.FC = () => {
         </div>
 
         {/* Premium Tools Sub-Tabs Row */}
-        <div className="bg-[#191d30]/50 p-2.5 rounded-2xl border border-indigo-500/20 grid grid-cols-2 sm:grid-cols-4 gap-2 max-w-4xl mx-auto w-full shadow-xl">
+        <div className="bg-[#191d30]/50 p-2.5 rounded-2xl border border-indigo-500/20 grid grid-cols-2 sm:grid-cols-5 gap-2 max-w-4xl mx-auto w-full shadow-xl">
           <button
-            onClick={() => setMainMode('autoPipeline')}
+            onClick={() => setMainMode('voiceChanger')}
             className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
-              mainMode === 'autoPipeline'
+              mainMode === 'voiceChanger'
                 ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 text-white shadow-md ring-2 ring-amber-400/50'
                 : 'text-amber-300 hover:text-white hover:bg-amber-500/10 bg-[#0e111a] border border-amber-500/30'
             }`}
           >
-            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>🎭 အသံပြောင်းစက်</span>
+          </button>
+
+          <button
+            onClick={() => setMainMode('autoPipeline')}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
+              mainMode === 'autoPipeline'
+                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md ring-2 ring-purple-400/50'
+                : 'text-purple-300 hover:text-white hover:bg-purple-500/10 bg-[#0e111a] border border-purple-500/30'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-purple-400" />
             <span>⚡ 1-Click ဗီဒီယို</span>
           </button>
 
@@ -1642,11 +1794,11 @@ export const App: React.FC = () => {
             onClick={() => setMainMode('audioModifier')}
             className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
               mainMode === 'audioModifier'
-                ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md ring-2 ring-amber-400/40'
+                ? 'bg-gradient-to-r from-orange-600 to-amber-600 text-white shadow-md ring-2 ring-orange-400/40'
                 : 'text-slate-300 hover:text-white hover:bg-white/5 bg-[#0e111a] border border-white/5'
             }`}
           >
-            <Sliders className="w-3.5 h-3.5 text-amber-400" />
+            <Sliders className="w-3.5 h-3.5 text-orange-400" />
             <span>🎛️ Speed / Pitch</span>
           </button>
         </div>
@@ -3807,6 +3959,436 @@ export const App: React.FC = () => {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODE 2.9: VOICE CHARACTER EFFECTS & VOICE CHANGER STUDIO                 */}
+        {/* ========================================================================= */}
+        {mainMode === 'voiceChanger' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="bg-[#151926] border border-amber-500/30 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-6">
+              <div className="border-b border-white/10 pb-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-amber-400" />
+                    <span>🎭 Voice Character Effects Studio (အသံပြောင်းစက် အထူးပြုလုပ်ချက်များ)</span>
+                  </h2>
+                  <span className="text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-full">
+                    DSP Multi-Character Voice FX
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  မည်သည့် အသံဖိုင် သို့မဟုတ် စကားပြောသံကိုမဆို သရဲ/ဘီလူးသံ၊ စက်ရုပ်သံ၊ ကလေးသံ၊ စပီကာသံ၊ ဖုန်းပြောသံ၊ ပဲ့တင်သံ၊ ဂြိုဟ်သားသံ စသည့် ထူးခြားဆန်းပြားသော Character အသံ ၁၀ မျိုးအဖြစ် ချက်ချင်း ပြောင်းလဲထုတ်လုပ်ပါ
+                </p>
+              </div>
+
+              {/* Step 1: Select Input Mode */}
+              <div className="space-y-4 bg-[#0d101d] p-4 sm:p-5 rounded-xl border border-white/5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h3 className="text-xs font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wider">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    ၁။ အသံ ထည့်သွင်းမည့် နည်းလမ်း ရွေးချယ်ပါ (Select Input Method)
+                  </h3>
+                  <div className="flex items-center bg-black/40 p-1 rounded-xl border border-white/10 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setVcInputMode('upload')}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all ${
+                        vcInputMode === 'upload'
+                          ? 'bg-amber-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      📁 အသံဖိုင် တင်မည်
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVcInputMode('mic')}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all ${
+                        vcInputMode === 'mic'
+                          ? 'bg-rose-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🎙️ မိုက်ဖြင့် အသံသွင်းမည်
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVcInputMode('tts')}
+                      className={`px-3 py-1 rounded-lg font-semibold transition-all ${
+                        vcInputMode === 'tts'
+                          ? 'bg-indigo-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      ✍️ စာသား ရိုက်ထည့်မည်
+                    </button>
+                  </div>
+                </div>
+
+                {/* Mode A: Upload Audio File */}
+                {vcInputMode === 'upload' && (
+                  <div className="space-y-3">
+                    {/* Quick import from recent TTS */}
+                    {ttsResult?.audioUrl && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVcAudioPreview(ttsResult.audioUrl);
+                            setVcAudioFile(null);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all shadow"
+                        >
+                          <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>✨ လက်ရှိ TTS အသံကို ထည့်သွင်းမည်</span>
+                        </button>
+                      </div>
+                    )}
+
+                    <label className="border-2 border-dashed border-amber-500/30 hover:border-amber-500/60 rounded-xl p-5 flex flex-col items-center justify-center gap-2 cursor-pointer bg-black/20 hover:bg-amber-500/5 transition-all text-center">
+                      <Upload className="w-7 h-7 text-amber-400" />
+                      <div className="text-xs font-bold text-slate-200">
+                        {vcAudioFile ? vcAudioFile.name : 'MP3 / WAV / M4A / AAC အသံဖိုင် ရွေးချယ်တင်သွင်းရန် နှိပ်ပါ'}
+                      </div>
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setVcAudioFile(file);
+                            const url = URL.createObjectURL(file);
+                            setVcAudioPreview(url);
+                          }
+                        }}
+                      />
+                    </label>
+
+                    {vcAudioPreview && (
+                      <div className="p-3 bg-black/40 rounded-xl border border-emerald-500/30 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>မူရင်းအသံဖိုင် ထည့်သွင်းထားပြီးပါပြီ</span>
+                        </div>
+                        <audio src={vcAudioPreview} controls className="h-8 max-w-[220px]" />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Mode B: Live Mic Recording */}
+                {vcInputMode === 'mic' && (
+                  <div className="space-y-4 text-center p-6 bg-black/30 rounded-xl border border-rose-500/20">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <div className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${
+                        vcIsRecording
+                          ? 'bg-rose-600 animate-pulse ring-8 ring-rose-600/30 shadow-lg shadow-rose-600/50'
+                          : 'bg-[#1e2337] border border-white/10'
+                      }`}>
+                        <Mic className={`w-8 h-8 ${vcIsRecording ? 'text-white' : 'text-rose-400'}`} />
+                      </div>
+
+                      {vcIsRecording ? (
+                        <div className="space-y-1">
+                          <div className="text-sm font-bold text-rose-400 animate-pulse">
+                            🎙️ အသံသွင်းနေပါသည် ({vcRecordSec} စက္ကန့်)
+                          </div>
+                          <p className="text-xs text-slate-400">စကားပြောဆိုပြီးပါက ရပ်တန့်ရန် ခလုတ်ကို နှိပ်ပါ</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="text-xs font-bold text-slate-200">
+                            {vcAudioPreview ? '✓ အသံသွင်းယူပြီးပါပြီ (ပြန်လည်နားဆင်နိုင်ပါသည်)' : 'မိုက်ခရိုဖုန်း စတင် အသံသွင်းရန် အောက်ပါခလုတ်ကို နှိပ်ပါ'}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-3 mt-1">
+                        {vcIsRecording ? (
+                          <button
+                            type="button"
+                            onClick={stopVcRecording}
+                            className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/40 active:scale-95 transition-all flex items-center gap-2"
+                          >
+                            <Square className="w-4 h-4 fill-white" />
+                            <span>အသံသွင်းခြင်း ရပ်တန့်မည် (Stop)</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={startVcRecording}
+                            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white text-xs font-bold shadow-lg shadow-rose-600/40 active:scale-95 transition-all flex items-center gap-2"
+                          >
+                            <Mic className="w-4 h-4" />
+                            <span>{vcAudioPreview ? 'အသံ အသစ်ပြန်သွင်းမည်' : 'အသံ စတင်သွင်းမည် (Record)'}</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {vcAudioPreview && !vcIsRecording && (
+                        <div className="w-full max-w-sm mt-3 p-3 bg-black/50 rounded-xl border border-emerald-500/30 flex items-center justify-between gap-3">
+                          <span className="text-[11px] font-bold text-emerald-400">သွင်းထားသော အသံ:</span>
+                          <audio src={vcAudioPreview} controls className="h-8 max-w-[200px]" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Mode C: Text to Speech Input */}
+                {vcInputMode === 'tts' && (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                        <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                          <span>ပြောကြားစေလိုသော စာသား (Text to Speak):</span>
+                        </label>
+                        <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
+                          <span>♾️ စာလုံးရေ အကန့်အသတ်မရှိ (Unlimited Characters)</span>
+                          <span className="text-slate-400">| {vcTtsText.length} လုံး</span>
+                        </span>
+                      </div>
+                      <textarea
+                        value={vcTtsText}
+                        onChange={(e) => setVcTtsText(e.target.value)}
+                        placeholder="ဥပမာ - မင်္ဂလာပါရှင် ကျွန်တော်သည် အနာဂတ်မှ လာသော စက်ရုပ်ဖြစ်ပါသည် (စာလုံးရေ ထောင်နှင့်ချီ၍ စိတ်ကြိုက် ရိုက်ထည့်နိုင်ပါသည်)..."
+                        className="w-full h-28 bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-all resize-none"
+                      />
+                    </div>
+
+                    {/* Quick Sample Presets for Testing */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] text-slate-400 font-semibold">နမူနာ စာသားများ:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVcTtsText('သတိပေးချက်! စနစ်လုံခြုံရေးချိုးဖောက်မှု တွေ့ရှိရပါသည်။ အလိုအလျောက် ကာကွယ်ရေးစနစ် စတင်အသက်ဝင်နေပါပြီ။');
+                          setVcSelectedEffect('robot');
+                        }}
+                        className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-[10px] transition-all border border-white/5"
+                      >
+                        🤖 စက်ရုပ် အမိန့်သံ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVcTtsText('ညသန်းခေါင်ယံ အမှောင်ထုထဲကနေ မင်းကို စောင့်ကြည့်နေတာ ငါပဲ... ဘယ်သူမှ မလွတ်မြောက်နိုင်ဘူး ဟားဟားဟား!');
+                          setVcSelectedEffect('monster');
+                        }}
+                        className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-[10px] transition-all border border-white/5"
+                      >
+                        👹 သရဲဘီလူးသံ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVcTtsText('ဟေး သူငယ်ချင်းတို့ရေ! ဒီနေ့တော့ တို့တွေ ပျော်စရာ ကစားနည်းအသစ်တစ်ခု ဆော့ကြရအောင်လား!');
+                          setVcSelectedEffect('chipmunk');
+                        }}
+                        className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-[10px] transition-all border border-white/5"
+                      >
+                        🐿️ ကာတွန်း ကလေးသံ
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-300 shrink-0">အခြေခံအသံ:</span>
+                      <select
+                        value={vcTtsVoice}
+                        onChange={(e) => setVcTtsVoice(e.target.value)}
+                        className="flex-1 bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                      >
+                        <option value="en-AU-WilliamMultilingualNeural">ကိုဝီလျံ (William - သဘာဝကျသော အသံ)</option>
+                        <option value="en-US-AvaMultilingualNeural">မအေဗာ (Ava - ကြည်လင်သော အမျိုးသမီးသံ)</option>
+                        <option value="en-US-AndrewMultilingualNeural">ကိုအင်ဒရူး (Andrew - နွေးထွေးသော အမျိုးသားသံ)</option>
+                        <option value="en-US-EmmaMultilingualNeural">မအမ်မာ (Emma - ချိုသာသော အမျိုးသမီးသံ)</option>
+                        <option value="my-MM-ThihaNeural">ကိုသီဟ (Thiha - စံမြန်မာသံ)</option>
+                        <option value="my-MM-NilarNeural">မနီလာ (Nilar - စံမြန်မာသံ)</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 2: Categorized Real Character Voice FX Presets */}
+              <div className="space-y-4 bg-[#0d101d] p-4 sm:p-5 rounded-xl border border-white/5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h3 className="text-xs font-bold text-amber-300 flex items-center gap-1.5 uppercase tracking-wider">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    ၂။ ပြောင်းလဲလိုသော အသံ Character ရွေးချယ်ပါ (Select Character Voice FX)
+                  </h3>
+                  <span className="text-[10px] text-amber-400/90 font-semibold bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                    Real DSP Acoustic Presets
+                  </span>
+                </div>
+
+                {/* Category 1: Real Cute Child & Kids */}
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold text-pink-300 flex items-center gap-1.5">
+                    <span>👶 🧒 တကယ့် ကလေးအသံများ (Real Child & Kid Voices):</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {[
+                      { id: 'child_cute', name: '🧒 တကယ့် ကလေးအသံ', sub: 'သဘာဝကျသော ကလေးငယ် စကားပြောသံစစ်စစ် (Real Cute Kid)' },
+                      { id: 'baby_toddler', name: '👶 ကလေးငယ် ချစ်စဖွယ်သံ', sub: 'နူးညံ့ချိုသာသော ကလေးငယ်သံ (Sweet Toddler)' },
+                      { id: 'chipmunk', name: '🐿️ ရှဉ့်ကလေးသံ', sub: 'ဟာသ ကာတွန်း အသံစူးစူးလေး (Cute Chipmunk)' }
+                    ].map(c => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setVcSelectedEffect(c.id)}
+                        className={`p-3 rounded-xl border text-left transition-all relative overflow-hidden ${
+                          vcSelectedEffect === c.id
+                            ? 'bg-pink-600/30 border-pink-500 text-white ring-2 ring-pink-500/50 shadow-lg shadow-pink-900/30'
+                            : 'bg-black/30 border-white/10 text-slate-300 hover:border-white/20 hover:bg-white/5'
+                        }`}
+                      >
+                        <div className="text-xs font-bold text-pink-200">{c.name}</div>
+                        <div className="text-[10px] text-slate-400 mt-1 line-clamp-1">{c.sub}</div>
+                        {vcSelectedEffect === c.id && (
+                          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-pink-400"></span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Category 2: Real Horror, Ghost & Demonic Entities */}
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <div className="text-[11px] font-bold text-purple-300 flex items-center gap-1.5">
+                    <span>👻 👹 ထိတ်လန့်ဖွယ် သရဲ/ဘီလူးသံများ (Horror, Demon & Ghost Voices):</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                    {[
+                      { id: 'ghost_whisper', name: '👻 သရဲမ ခြောက်ခြားသံ', sub: 'လေတိုးသံ၊ အေးစက်သော ပဲ့တင်သံ (Ghost Whisper)' },
+                      { id: 'demon_monster', name: '👹 ငရဲဘီလူး အသံနက်ကြီး', sub: 'ထိတ်လန့်ဖွယ် တုန်ခါသံနက်ကြီး (Demonic Growl)' },
+                      { id: 'witch_horror', name: '🧙 စုန်းမကြီး ခြောက်ခြားသံ', sub: 'တုန်ခါကြောက်မက်ဖွယ် စုန်းမသံ (Witch Cackle)' },
+                      { id: 'zombie_undead', name: '🧟 ဇွန်ဘီ/ဖုတ်ကောင်သံ', sub: 'လည်ချောင်းသံနက်ကြီးဖြင့် အသက်မဲ့သံ (Zombie)' }
+                    ].map(c => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setVcSelectedEffect(c.id)}
+                        className={`p-3 rounded-xl border text-left transition-all relative overflow-hidden ${
+                          vcSelectedEffect === c.id
+                            ? 'bg-purple-600/30 border-purple-500 text-white ring-2 ring-purple-500/50 shadow-lg shadow-purple-900/30'
+                            : 'bg-black/30 border-white/10 text-slate-300 hover:border-white/20 hover:bg-white/5'
+                        }`}
+                      >
+                        <div className="text-xs font-bold text-purple-200">{c.name}</div>
+                        <div className="text-[10px] text-slate-400 mt-1 line-clamp-1">{c.sub}</div>
+                        {vcSelectedEffect === c.id && (
+                          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-purple-400"></span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Category 3: Sci-Fi, Cyber & Audio Special Devices */}
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <div className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                    <span>🤖 📻 သိပ္ပံနှင့် အသံ အထူးပြုလုပ်ချက်များ (Sci-Fi & Audio FX):</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+                    {[
+                      { id: 'robot_cyborg', name: '🤖 သံမဏိ စက်ရုပ်သံ', sub: 'Cyber Cyborg Mech' },
+                      { id: 'alien_cosmic', name: '👽 ဂြိုဟ်သားသံ', sub: 'Cosmic Alien UFO' },
+                      { id: 'megaphone', name: '📢 လမ်းဘေး စပီကာသံ', sub: 'Megaphone Siren' },
+                      { id: 'phone_radio', name: '📞 ဖုန်းပြောသံ', sub: 'Phone & Radio' },
+                      { id: 'echo_cave', name: '🏰 ဂူနက် ပဲ့တင်သံ', sub: 'Cathedral Cave' },
+                      { id: 'vintage_1920', name: '📻 ရှေးဟောင်း ဓာတ်ပြား', sub: '1920s Vinyl Radio' },
+                      { id: 'comedy_fast', name: '🏎️ ဟာသ အမြန်သံ', sub: 'Fast Comedy Punch' },
+                      { id: 'slow_drama', name: '🐢 ဒရာမာ အနှေးသံ', sub: 'Deep Cinema Slow' }
+                    ].map(c => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setVcSelectedEffect(c.id)}
+                        className={`p-2.5 rounded-xl border text-left transition-all relative overflow-hidden ${
+                          vcSelectedEffect === c.id
+                            ? 'bg-amber-600/30 border-amber-500 text-white ring-2 ring-amber-500/50 shadow-lg shadow-amber-900/30'
+                            : 'bg-black/30 border-white/10 text-slate-300 hover:border-white/20 hover:bg-white/5'
+                        }`}
+                      >
+                        <div className="text-xs font-bold text-amber-200">{c.name}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{c.sub}</div>
+                        {vcSelectedEffect === c.id && (
+                          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400"></span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Error Message */}
+              {vcError && (
+                <div className="p-3 bg-rose-950/60 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{vcError}</span>
+                </div>
+              )}
+
+              {/* Action Button */}
+              <button
+                type="button"
+                disabled={isVcLoading || (vcInputMode === 'upload' && !vcAudioFile && !vcAudioPreview) || (vcInputMode === 'mic' && !vcAudioPreview) || (vcInputMode === 'tts' && !vcTtsText.trim())}
+                onClick={handleApplyVoiceCharacterEffect}
+                className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-sm shadow-xl shadow-amber-600/30 flex items-center justify-center gap-2 active:scale-[0.99] transition-all"
+              >
+                {isVcLoading ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin text-amber-200" />
+                    <span>အသံ အထူးပြုလုပ်ချက် ပြောင်းလဲနေပါသည် ခေတ္တစောင့်ပါ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5 text-amber-300" />
+                    <span>✨ 🎭 အသံ အထူးပြုလုပ်ချက် ပြောင်းလဲမည် (Apply Character Voice FX)</span>
+                  </>
+                )}
+              </button>
+
+              {/* Result Audio Player */}
+              {vcResultUrl && (
+                <div className="p-5 bg-[#0e1220] border border-amber-500/40 rounded-2xl space-y-4 shadow-2xl animate-in fade-in duration-300">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span>အသံပြောင်းလဲမှု အောင်မြင်ပါသည်! ({vcSelectedEffect.toUpperCase()})</span>
+                    </h3>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openVideoModalForAudio(vcResultUrl, `Voice Changer - ${vcSelectedEffect.toUpperCase()}`)}
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow active:scale-95 transition-all"
+                      >
+                        <Video className="w-3.5 h-3.5" />
+                        <span>🎬 ဗီဒီယို ပြုလုပ်မည်</span>
+                      </button>
+
+                      <a
+                        href={vcResultUrl}
+                        download={`VoiceMaster_${vcSelectedEffect}_${Date.now()}.mp3`}
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow active:scale-95 transition-all"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>.MP3 ဒေါင်းလုဒ်</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-black/60 rounded-xl border border-white/10 flex items-center justify-center">
+                    <audio src={vcResultUrl} controls autoPlay className="w-full max-w-lg" />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
