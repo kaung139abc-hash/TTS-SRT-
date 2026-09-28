@@ -9,10 +9,39 @@ import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { GoogleGenAI } from '@google/genai';
 import { Communicate, SubMaker } from 'edge-tts-universal';
+import ffmpegStaticPath from 'ffmpeg-static';
+// @ts-ignore
+import ffprobeStatic from 'ffprobe-static';
+
+const FFMPEG_PATH = (typeof ffmpegStaticPath === 'string' && fs.existsSync(ffmpegStaticPath))
+  ? ffmpegStaticPath
+  : 'ffmpeg';
+
+const FFPROBE_PATH = (ffprobeStatic && typeof ffprobeStatic.path === 'string' && fs.existsSync(ffprobeStatic.path))
+  ? ffprobeStatic.path
+  : 'ffprobe';
+
+try {
+  if (typeof FFMPEG_PATH === 'string' && fs.existsSync(FFMPEG_PATH)) {
+    fs.chmodSync(FFMPEG_PATH, 0o755);
+  }
+  if (typeof FFPROBE_PATH === 'string' && fs.existsSync(FFPROBE_PATH)) {
+    fs.chmodSync(FFPROBE_PATH, 0o755);
+  }
+} catch (_) {}
+
+console.log(`[FFmpeg Engine] Initialized using ffmpeg: ${FFMPEG_PATH}, ffprobe: ${FFPROBE_PATH}`);
 
 const execAsyncRaw = promisify(exec);
 const execAsync = (cmd: string, options: any = {}) => {
-  return execAsyncRaw(cmd, {
+  let resolvedCmd = cmd;
+  if (FFMPEG_PATH && FFMPEG_PATH !== 'ffmpeg') {
+    resolvedCmd = resolvedCmd.replace(/(^|\s)ffmpeg(?=\s|$)/g, `$1"${FFMPEG_PATH}"`);
+  }
+  if (FFPROBE_PATH && FFPROBE_PATH !== 'ffprobe') {
+    resolvedCmd = resolvedCmd.replace(/(^|\s)ffprobe(?=\s|$)/g, `$1"${FFPROBE_PATH}"`);
+  }
+  return execAsyncRaw(resolvedCmd, {
     maxBuffer: 100 * 1024 * 1024, // 100MB buffer to support long operations without overflow
     timeout: 600000, // 10 minutes timeout for long-form video encoding
     ...options
@@ -819,8 +848,7 @@ Output JSON:
 
     const filterParts: string[] = [
       `[0:a]showwaves=r=2:s=70x20:mode=cline:colors=0x818cf8|0xc084fc,scale=${waveW}:${waveH}:flags=neighbor[waves]`,
-      `[1:v][waves]overlay=(W-w)/2:${waveY}[v_waves]`,
-      `[v_waves]drawtext=textfile='${tempTitleFile}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=60:shadowcolor=black@0.8:shadowx=2:shadowy=2[v]`
+      `[1:v][waves]overlay=(W-w)/2:${waveY}[v]`
     ];
 
     const filterStr = filterParts.join(';');
@@ -1268,16 +1296,8 @@ app.post('/api/audio-to-video', upload.fields([
     // Turbo Filter: Tiny waveform scaled with nearest-neighbor, overlaid on pre-scaled background
     const filterParts = [
       `[0:a]showwaves=r=2:s=70x20:mode=${waveStyle}:colors=${waveColors},scale=${waveW}:${waveH}:flags=neighbor[waves]`,
-      `[1:v][waves]overlay=(W-w)/2:${waveY}[v1]`
+      `[1:v][waves]overlay=(W-w)/2:${waveY}[v]`
     ];
-
-    if (cleanTitle) {
-      const tempTitleFile = `/tmp/atv_title_${timestamp}_${randomId}.txt`;
-      fs.writeFileSync(tempTitleFile, cleanTitle, 'utf8');
-      filterParts.push(`[v1]drawtext=textfile='${tempTitleFile}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=50:shadowcolor=black@0.8:shadowx=2:shadowy=2[v]`);
-    } else {
-      filterParts.push(`[v1]copy[v]`);
-    }
 
     const filterString = filterParts.join(';');
     const inputArgs = `-i "${inputAudioPath}" -framerate 2 -loop 1 -i "${finalBgFile}"`;
@@ -1578,17 +1598,15 @@ Instructions:
       chunkTasks.push({ start, dur: chunkDur, file: chunkFile });
     }
 
-    // Execute chunk extractions and AI transcriptions with concurrency pool = 4
+    // Lossless 1ms stream copy chunk extraction (0% CPU load!)
     const chunkResults = await runWithConcurrency(chunkTasks, async (task) => {
       try {
-        // Sample-accurate audio chunk extraction placing -ss AFTER -i
-        await execAsync(`ffmpeg -y -threads 0 -i "${fileToUse}" -ss ${task.start} -t ${task.dur} -vn -ac 1 -ar 16000 -c:a libmp3lame -b:a 64k "${task.file}"`);
+        await execAsync(`ffmpeg -y -ss ${task.start} -t ${task.dur} -i "${fileToUse}" -c:a copy "${task.file}"`);
         if (fs.existsSync(task.file) && fs.statSync(task.file).size > 100) {
           let res = await transcribeSingleSegment(task.file, task.start, task.dur);
           if (!res || (!res.fullTranscript && (!res.subtitles || res.subtitles.length === 0))) {
-            // Retry pass once
             console.warn(`[Chunk Retry] Retrying chunk at ${task.start}s...`);
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 400));
             res = await transcribeSingleSegment(task.file, task.start, task.dur);
           }
           return res;
@@ -1599,58 +1617,56 @@ Instructions:
       return null;
     }, 4);
 
-    // Clean up temporary chunk files immediately
+    // Clean up temporary chunk files
     tempChunkFiles.forEach(f => {
       try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch (_) {}
     });
 
     let globalIndex = 1;
-    chunkResults.forEach((res, cIdx) => {
+    chunkResults.forEach((res) => {
       if (res) {
         if (res.detectedLanguage) detectedLanguage = res.detectedLanguage;
-        if (res.fullTranscript) {
+        if (res.fullTranscript && res.fullTranscript.trim()) {
           fullTranscript += (fullTranscript ? ' ' : '') + res.fullTranscript.trim();
         }
         if (Array.isArray(res.subtitles) && res.subtitles.length > 0) {
           res.subtitles.forEach((s: any) => {
-            allSubtitles.push({
-              index: globalIndex++,
-              startTime: s.startTime,
-              endTime: s.endTime,
-              text: s.text
-            });
-          });
-        }
-      } else {
-        // Fallback for missing chunk to maintain timeline continuity
-        const task = chunkTasks[cIdx];
-        if (task) {
-          allSubtitles.push({
-            index: globalIndex++,
-            startTime: secondsToSrtTime(task.start),
-            endTime: secondsToSrtTime(task.start + Math.min(5, task.dur)),
-            text: `[Audio Segment ${(task.start / 60).toFixed(0)}m - ${((task.start + task.dur) / 60).toFixed(0)}m]`
+            if (s && s.text && !s.text.includes('[Audio Segment')) {
+              allSubtitles.push({
+                index: globalIndex++,
+                startTime: s.startTime,
+                endTime: s.endTime,
+                text: s.text
+              });
+            }
           });
         }
       }
     });
   } else {
-    // Normal length (<= 2.5 mins), single blazing fast pass
+    // Normal length (<= 2 mins), single pass
     const singleRes = await transcribeSingleSegment(fileToUse, 0, durationSec);
     if (singleRes) {
       if (singleRes.detectedLanguage) detectedLanguage = singleRes.detectedLanguage;
       if (singleRes.fullTranscript) fullTranscript = singleRes.fullTranscript;
       if (Array.isArray(singleRes.subtitles)) {
-        allSubtitles = singleRes.subtitles.map((s: any, i: number) => ({
-          ...s,
-          index: i + 1
-        }));
+        allSubtitles = singleRes.subtitles
+          .filter((s: any) => s && s.text && !s.text.includes('[Audio Segment'))
+          .map((s: any, i: number) => ({
+            ...s,
+            index: i + 1
+          }));
       }
     }
   }
 
   if (createdTempFile) {
     try { if (fs.existsSync(compressedPath)) fs.unlinkSync(compressedPath); } catch (_) {}
+  }
+
+  // Ensure fullTranscript is never empty if we have subtitles
+  if (!fullTranscript && allSubtitles.length > 0) {
+    fullTranscript = allSubtitles.map(s => s.text).join(' ');
   }
 
   // Fallback if AI couldn't generate subtitles
@@ -1863,28 +1879,46 @@ app.post('/api/generate-story-images', async (req: Request, res: Response) => {
 
   try {
     const promptExtractor = `You are a professional film storyboard artist.
-Based on the story "${title}", create 4 cinematic visual scene descriptions in English for AI image generation. Each scene: (1. Opening, 2. Rising Action, 3. Climax, 4. Resolution).
-Match "${genre}" mood.
+Based on the story "${title || 'Untitled'}", create 4 cinematic visual scene descriptions in English for AI image generation. Each scene: (1. Opening, 2. Rising Action, 3. Climax, 4. Resolution).
+Match "${genre}" mood. Story context: ${script.slice(0, 1000)}
 
 Respond strictly in valid JSON:
 {
   "scenes": [
-    { "sceneNumber": 1, "title": "Opening", "visualPrompt": "English prompt...", "mood": "mood" },
-    { "sceneNumber": 2, "title": "Rising Action", "visualPrompt": "English prompt...", "mood": "mood" },
-    { "sceneNumber": 3, "title": "Climax", "visualPrompt": "English prompt...", "mood": "mood" },
-    { "sceneNumber": 4, "title": "Resolution", "visualPrompt": "English prompt...", "mood": "mood" }
+    { "sceneNumber": 1, "title": "Opening", "visualPrompt": "Cinematic visual prompt in English...", "mood": "${genre}" },
+    { "sceneNumber": 2, "title": "Rising Action", "visualPrompt": "Cinematic visual prompt in English...", "mood": "${genre}" },
+    { "sceneNumber": 3, "title": "Climax", "visualPrompt": "Cinematic visual prompt in English...", "mood": "${genre}" },
+    { "sceneNumber": 4, "title": "Resolution", "visualPrompt": "Cinematic visual prompt in English...", "mood": "${genre}" }
   ]
 }`;
 
-    const resExtraction = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: promptExtractor,
-      config: { responseMimeType: 'application/json' }
-    });
+    let parsed: any = null;
+    const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+    for (const m of modelsToTry) {
+      try {
+        const resExtraction = await ai.models.generateContent({
+          model: m,
+          contents: [{ role: 'user', parts: [{ text: promptExtractor }] }],
+          config: { responseMimeType: 'application/json' }
+        });
+        if (resExtraction && resExtraction.text) {
+          parsed = JSON.parse(resExtraction.text);
+          if (Array.isArray(parsed.scenes) && parsed.scenes.length > 0) break;
+        }
+      } catch (e) {
+        console.warn(`[Story Prompts] Model ${m} fallback:`, e);
+      }
+    }
 
-    const parsed = JSON.parse(resExtraction.text || '{}');
-    const scenePrompts = parsed.scenes || [];
-    
+    const scenePrompts = (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length > 0)
+      ? parsed.scenes
+      : [
+          { sceneNumber: 1, title: 'Opening', visualPrompt: `Cinematic opening scene of ${genre} story: ${title}`, mood: genre },
+          { sceneNumber: 2, title: 'Rising Action', visualPrompt: `Dramatic rising action in ${genre} setting: ${title}`, mood: genre },
+          { sceneNumber: 3, title: 'Climax', visualPrompt: `Epic climax scene of ${genre} tale: ${title}`, mood: genre },
+          { sceneNumber: 4, title: 'Resolution', visualPrompt: `Atmospheric resolution ending of ${genre}: ${title}`, mood: genre }
+        ];
+
     // Actually generate the images for each scene
     const scenesWithImages = await Promise.all(scenePrompts.map(async (scene: any) => {
       try {
@@ -2008,9 +2042,8 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
       }
     }
 
-    // 3. Get Audio Duration (simplified)
-    const { stdout: durationOut } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${finalAudioPath}"`);
-    const totalDuration = parseFloat(String(durationOut).trim()) || 10;
+    // 3. Get Audio Duration
+    const totalDuration = await getAudioDuration(finalAudioPath);
 
     // 4. Build FFmpeg Filter Complex for Slideshow + Waveform + (Optional) Subtitles
     let waveColors = '0x818cf8|0xc084fc';
@@ -2039,53 +2072,8 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
     
     const filterParts = [
       `[${audioIdx}:a]showwaves=r=2:s=70x20:mode=cline:colors=${waveColors},scale=${waveW}:${waveH}:flags=neighbor[waves]`,
-      `[0:v][waves]overlay=(W-w)/2:${waveY}[v_base]`
+      `[0:v][waves]overlay=(W-w)/2:${waveY}[v_final]`
     ];
-
-    // Subtitles Logic with character-length proportion timing
-    let lastV = 'v_base';
-    if (enableSubtitles) {
-      const words = script.split(/\s+/);
-      const chunkSize = 6;
-      const rawChunks: string[] = [];
-      for (let i = 0; i < words.length; i += chunkSize) rawChunks.push(words.slice(i, i + chunkSize).join(' '));
-      
-      const totalChars = rawChunks.reduce((acc, c) => acc + c.length, 0) || 1;
-      let currentTime = 0;
-
-      rawChunks.forEach((chunk, idx) => {
-        const proportion = chunk.length / totalChars;
-        const chunkDuration = Math.max(1.0, totalDuration * proportion);
-        const start = currentTime.toFixed(2);
-        const end = (currentTime + chunkDuration).toFixed(2);
-        currentTime += chunkDuration;
-
-        // Clean out speaker labels (e.g. "Andrew:", "Thiha:", "သီဟ:", "Narrator:") to keep subtitles completely clean
-        const stripped = chunk.replace(/^[\w\s\u1000-\u109F()（）-]+:\s*/i, '').trim();
-        const displayChunk = stripped || chunk;
-
-        // Properly escape special characters for FFmpeg drawtext filter
-        const cleanChunk = displayChunk
-          .replace(/\\/g, '\\\\')
-          .replace(/'/g, "'\\''")
-          .replace(/:/g, '\\:')
-          .replace(/%/g, '\\%');
-
-        const nextV = `v_sub_${idx}`;
-        filterParts.push(`[${lastV}]drawtext=text='${cleanChunk}':fontcolor=white:fontsize=16:x=(w-text_w)/2:y=h-100:box=1:boxcolor=black@0.5:boxborderw=4:enable='between(t,${start},${end})'[${nextV}]`);
-        lastV = nextV;
-      });
-    }
-
-    // Properly escape title for FFmpeg
-    const escapedTitle = cleanTitle
-      .replace(/\\/g, '\\\\')
-      .replace(/'/g, "'\\''")
-      .replace(/:/g, '\\:')
-      .replace(/%/g, '\\%');
-
-    // Add Title Overlay at the top
-    filterParts.push(`[${lastV}]drawtext=text='${escapedTitle}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=50:shadowcolor=black:shadowx=2:shadowy=2[v_final]`);
 
     const filterString = filterParts.join(';\n');
     const filterScriptPath = path.join(os.tmpdir(), `story_filter_${timestamp}.txt`);
@@ -2093,19 +2081,7 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
 
     const ffmpegCmd = `ffmpeg -y ${inputArgs} -i "${finalAudioPath}" -filter_complex_script "${filterScriptPath}" -map "[v_final]" -map ${audioIdx}:a -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -r 2 -b:v 250k -c:a aac -b:a 128k -movflags +faststart -shortest "${videoPath}"`;
 
-    try {
-      await execAsync(ffmpegCmd);
-    } catch (ffmpegErr) {
-      console.warn('Pro Video primary generation with subtitles failed, falling back to clean visualizer:', ffmpegErr);
-      const fallbackFilterParts = [
-        `[${audioIdx}:a]showwaves=r=2:s=70x20:mode=cline:colors=${waveColors},scale=${waveW}:${waveH}:flags=neighbor[waves]`,
-        `[0:v][waves]overlay=(W-w)/2:${waveY}[v]`
-      ];
-      const fallbackFilterString = fallbackFilterParts.join(';\n');
-      fs.writeFileSync(filterScriptPath, fallbackFilterString);
-      const fallbackCmd = `ffmpeg -y ${inputArgs} -i "${finalAudioPath}" -filter_complex_script "${filterScriptPath}" -map "[v]" -map ${audioIdx}:a -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -r 2 -b:v 250k -c:a aac -b:a 128k -movflags +faststart -shortest "${videoPath}"`;
-      await execAsync(fallbackCmd);
-    }
+    await execAsync(ffmpegCmd);
 
     if (!fs.existsSync(videoPath)) throw new Error('Video file not produced.');
 

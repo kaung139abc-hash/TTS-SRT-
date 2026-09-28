@@ -1,6 +1,6 @@
 {
-  "name": "VoiceMaster AI - TTS Studio & TikTok Video Maker",
-  "description": "VoiceMaster AI is a full-stack premium TTS synthesis studio featuring multi-speaker dialogue podcast recording, AI video storyboard scene generators, and auto-captioned TikTok/Reels MP4 video visualizer creator.",
+  "name": "Voice Master Studio",
+  "description": "Voice Master Studio is a premium full-stack TTS synthesis and AI video generation platform featuring real human speech up to 10k chars, multi-speaker dialogue podcast recording, AI storyboard scenes, and auto-captioned viral video visualizers.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
