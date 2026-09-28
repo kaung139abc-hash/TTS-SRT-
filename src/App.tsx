@@ -84,11 +84,12 @@ const SrtTimelineInspector: React.FC<{
   // Parse raw SRT into structured cues
   const cues = React.useMemo(() => {
     if (!srtText) return [];
-    const blocks = srtText.trim().split(/\n\s*\n/);
+    const normalized = srtText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    const blocks = normalized.split(/\n\s*\n/);
     const parsed: { index: number; startTime: string; endTime: string; durationSec: string; text: string }[] = [];
 
     blocks.forEach((block, idx) => {
-      const lines = block.trim().split('\n');
+      const lines = block.trim().split('\n').map(l => l.trim()).filter(Boolean);
       if (lines.length >= 2) {
         const timeLineIndex = lines.findIndex(l => l.includes('-->'));
         if (timeLineIndex !== -1) {

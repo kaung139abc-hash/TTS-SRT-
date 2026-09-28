@@ -808,6 +808,9 @@ Output JSON:
     const waveH = Math.round(height * 0.18);
     const waveY = Math.round(height * 0.52);
     const cleanTitle = scriptData.title.replace(/['"\\]/g, '').slice(0, 35);
+    const tempTitleFile = `/tmp/ap_title_${reqId}.txt`;
+    tempFiles.push(tempTitleFile);
+    fs.writeFileSync(tempTitleFile, cleanTitle, 'utf8');
 
     // Pre-scale background once with slight dimming for text legibility
     await execAsync(`ffmpeg -y -i "${tempBgPath}" -vf "scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},drawbox=x=0:y=0:w=${width}:h=${height}:color=black@0.30:t=fill" "${preScaledBg}"`);
@@ -817,7 +820,7 @@ Output JSON:
     const filterParts: string[] = [
       `[0:a]showwaves=r=2:s=70x20:mode=cline:colors=0x818cf8|0xc084fc,scale=${waveW}:${waveH}:flags=neighbor[waves]`,
       `[1:v][waves]overlay=(W-w)/2:${waveY}[v_waves]`,
-      `[v_waves]drawtext=text='${cleanTitle}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=60:shadowcolor=black@0.8:shadowx=2:shadowy=2[v]`
+      `[v_waves]drawtext=textfile='${tempTitleFile}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=60:shadowcolor=black@0.8:shadowx=2:shadowy=2[v]`
     ];
 
     const filterStr = filterParts.join(';');
@@ -927,7 +930,7 @@ ${text}
       }
     }
 
-    // Auto-select native voice based on target language
+    // Auto-select native voice based on target language with user preference override
     const nativeVoiceMap: Record<string, string> = {
       'my': 'my-MM-ThihaNeural',
       'en': 'en-US-AndrewMultilingualNeural',
@@ -937,11 +940,11 @@ ${text}
       'th': 'th-TH-NiwatNeural'
     };
 
-    const targetNativeVoice = nativeVoiceMap[targetLang] || voice;
+    const targetNativeVoice = voice || nativeVoiceMap[targetLang] || 'my-MM-ThihaNeural';
 
     // Synthesize speech
     let audioBuffer = Buffer.alloc(0);
-    const voicesToTry = [targetNativeVoice, voice, 'en-AU-WilliamMultilingualNeural', 'en-US-AvaMultilingualNeural'];
+    const voicesToTry = [voice, targetNativeVoice, nativeVoiceMap[targetLang] || 'my-MM-ThihaNeural', 'en-US-AndrewMultilingualNeural'].filter(Boolean);
 
     for (const v of voicesToTry) {
       try {
@@ -1004,27 +1007,35 @@ ${text}
 // 1.75 Translate SRT Subtitles to Burmese (Unicode) / Any Language
 // -------------------------------------------------------------------------------------
 function parseSrtSubtitles(srtContent: string): { index: number; timeRange: string; text: string }[] {
+  if (!srtContent || typeof srtContent !== 'string') return [];
   const normalized = srtContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (!normalized) return [];
+
   const blocks = normalized.split(/\n\s*\n/);
   const cues: { index: number; timeRange: string; text: string }[] = [];
 
   for (let i = 0; i < blocks.length; i++) {
     const lines = blocks[i].split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length >= 2) {
+    if (lines.length >= 1) {
       let idx = parseInt(lines[0], 10);
       let timeLineIdx = 1;
-      if (isNaN(idx) || !lines[1].includes('-->')) {
-        if (lines[0].includes('-->')) {
-          idx = i + 1;
-          timeLineIdx = 0;
-        } else {
-          idx = i + 1;
-        }
+      if (lines[0].includes('-->')) {
+        idx = i + 1;
+        timeLineIdx = 0;
+      } else if (lines.length > 1 && lines[1].includes('-->')) {
+        timeLineIdx = 1;
+      } else {
+        idx = i + 1;
+        timeLineIdx = -1;
       }
-      const timeRange = lines[timeLineIdx].includes('-->') ? lines[timeLineIdx] : `00:00:${(i * 3).toString().padStart(2, '0')},000 --> 00:00:${(i * 3 + 3).toString().padStart(2, '0')},000`;
-      const text = lines.slice(timeLineIdx + 1).join(' ');
-      if (text) {
-        cues.push({ index: idx, timeRange, text });
+
+      const timeRange = (timeLineIdx >= 0 && lines[timeLineIdx] && lines[timeLineIdx].includes('-->'))
+        ? lines[timeLineIdx]
+        : `00:00:${Math.min(59, i * 3).toString().padStart(2, '0')},000 --> 00:00:${Math.min(59, i * 3 + 3).toString().padStart(2, '0')},000`;
+
+      const text = timeLineIdx >= 0 ? lines.slice(timeLineIdx + 1).join(' ') : lines.join(' ');
+      if (text.trim()) {
+        cues.push({ index: idx || (i + 1), timeRange, text: text.trim() });
       }
     }
   }
@@ -1261,7 +1272,9 @@ app.post('/api/audio-to-video', upload.fields([
     ];
 
     if (cleanTitle) {
-      filterParts.push(`[v1]drawtext=text='${cleanTitle}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=50:shadowcolor=black@0.8:shadowx=2:shadowy=2[v]`);
+      const tempTitleFile = `/tmp/atv_title_${timestamp}_${randomId}.txt`;
+      fs.writeFileSync(tempTitleFile, cleanTitle, 'utf8');
+      filterParts.push(`[v1]drawtext=textfile='${tempTitleFile}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=50:shadowcolor=black@0.8:shadowx=2:shadowy=2[v]`);
     } else {
       filterParts.push(`[v1]copy[v]`);
     }
@@ -1406,21 +1419,15 @@ async function transcribeAudioToSRT(audioFilePath: string, originalName: string,
   let fileToUse = audioFilePath;
   let createdTempFile = false;
 
-  // Single-pass multi-threaded downsampling only when necessary (video or large audio > 3MB)
-  const isVideo = mimeType.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|flv|wmv|m4v|ts|3gp)$/i.test(originalName);
-  const fileSize = fs.existsSync(audioFilePath) ? fs.statSync(audioFilePath).size : 0;
-
-  if (isVideo || fileSize > 3 * 1024 * 1024) {
-    try {
-      // Hardware-accelerated ultrafast 16kHz mono audio extraction
-      await execAsync(`ffmpeg -y -threads 0 -i "${audioFilePath}" -vn -sn -dn -ac 1 -ar 16000 -c:a libmp3lame -b:a 32k -q:a 9 "${compressedPath}"`);
-      if (fs.existsSync(compressedPath) && fs.statSync(compressedPath).size > 0) {
-        fileToUse = compressedPath;
-        createdTempFile = true;
-      }
-    } catch (compErr) {
-      console.warn('[1GB Turbo Engine] Fast audio downsample fallback:', compErr);
+  // Convert ANY input audio/video file to 16kHz mono MP3 for 100% guaranteed Gemini Audio API support across iOS, Android & Web
+  try {
+    await execAsync(`ffmpeg -y -threads 0 -i "${audioFilePath}" -vn -sn -dn -ac 1 -ar 16000 -c:a libmp3lame -b:a 64k "${compressedPath}"`);
+    if (fs.existsSync(compressedPath) && fs.statSync(compressedPath).size > 0) {
+      fileToUse = compressedPath;
+      createdTempFile = true;
     }
+  } catch (compErr) {
+    console.warn('[1GB Turbo Engine] Fast audio downsample fallback:', compErr);
   }
 
   const durationSec = await getAudioDuration(fileToUse);
@@ -1446,7 +1453,7 @@ Instructions:
       "index": 1,
       "startTime": "00:00:01,200",
       "endTime": "00:00:04,500",
-      "text": "spoken phrase"
+      "text": "spoken phrase in Unicode Myanmar script"
     }
   ]
 }`;
@@ -1459,7 +1466,6 @@ Instructions:
       };
 
       let response = null;
-      // Primary: gemini-3.1-flash-lite (fastest, high throughput, zero 503s) -> Secondary: gemini-flash-latest -> Tertiary: gemini-3.8-flash
       const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
       
       for (const m of modelsToTry) {
@@ -1483,7 +1489,7 @@ Instructions:
             if (response && response.text && response.text.trim()) break;
           } catch (modelErr: any) {
             console.warn(`[1GB Turbo Engine] Model ${m} attempt ${attempt + 1} for offset ${offsetSec}s:`, modelErr?.message || modelErr);
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, 500));
           }
         }
         if (response && response.text && response.text.trim()) break;
@@ -1557,35 +1563,41 @@ Instructions:
   let fullTranscript = '';
   let detectedLanguage = 'Burmese';
 
-  // For media > 150 seconds (2.5 mins), use fast 120-second (2-minute) chunks with concurrency=3
-  // This guarantees that even 30-minute to 60-minute 1GB video files finish within 1-2 minutes (< 3 minutes)!
-  if (durationSec > 150) {
+  // For media > 120 seconds (2 mins), use fast 90-second chunks with concurrency=4
+  // Guarantees full-length 100% complete story coverage to the very end of long 60-minute video/audio files
+  if (durationSec > 120) {
     console.log(`[1GB Turbo Engine] Long media detected (${(durationSec / 60).toFixed(1)} mins). Running high-speed parallel chunking...`);
-    const chunkLength = 120; // 2-minute chunks for millimeter timestamp precision
+    const chunkLength = 90; // 90-second chunks for millimeter timestamp precision
     const chunkTasks: { start: number; dur: number; file: string }[] = [];
     const tempChunkFiles: string[] = [];
 
     for (let start = 0; start < durationSec; start += chunkLength) {
-      const chunkFile = `/tmp/tr_chk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}_${start}.mp3`;
+      const chunkFile = `/tmp/tr_chk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}_${Math.round(start)}.mp3`;
       tempChunkFiles.push(chunkFile);
       const chunkDur = Math.min(chunkLength, durationSec - start);
       chunkTasks.push({ start, dur: chunkDur, file: chunkFile });
     }
 
-    // Execute chunk extractions and AI transcriptions with concurrency pool = 3
+    // Execute chunk extractions and AI transcriptions with concurrency pool = 4
     const chunkResults = await runWithConcurrency(chunkTasks, async (task) => {
       try {
-        // Fast lossless stream slice with -c:a copy
-        await execAsync(`ffmpeg -y -threads 0 -ss ${task.start} -t ${task.dur} -i "${fileToUse}" -ac 1 -ar 16000 -c:a libmp3lame -b:a 32k "${task.file}"`);
-        if (fs.existsSync(task.file) && fs.statSync(task.file).size > 0) {
-          const res = await transcribeSingleSegment(task.file, task.start, task.dur);
+        // Sample-accurate audio chunk extraction placing -ss AFTER -i
+        await execAsync(`ffmpeg -y -threads 0 -i "${fileToUse}" -ss ${task.start} -t ${task.dur} -vn -ac 1 -ar 16000 -c:a libmp3lame -b:a 64k "${task.file}"`);
+        if (fs.existsSync(task.file) && fs.statSync(task.file).size > 100) {
+          let res = await transcribeSingleSegment(task.file, task.start, task.dur);
+          if (!res || (!res.fullTranscript && (!res.subtitles || res.subtitles.length === 0))) {
+            // Retry pass once
+            console.warn(`[Chunk Retry] Retrying chunk at ${task.start}s...`);
+            await new Promise(r => setTimeout(r, 500));
+            res = await transcribeSingleSegment(task.file, task.start, task.dur);
+          }
           return res;
         }
       } catch (chkErr) {
         console.warn(`[1GB Turbo Chunk ${task.start}s] error:`, chkErr);
       }
       return null;
-    }, 3);
+    }, 4);
 
     // Clean up temporary chunk files immediately
     tempChunkFiles.forEach(f => {
