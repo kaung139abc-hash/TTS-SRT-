@@ -1,6 +1,6 @@
 {
-  "name": "FloatDesk - Phone Taskbar & Floating Window OS",
-  "description": "FloatDesk is a mobile floating window OS launcher featuring phone app deep links, Taskbar permissions, Camera, Gallery, Music Player, Sticky Notes, Calculator & Floating Desktop Launcher.",
+  "name": "VoiceMaster AI - TTS Studio & TikTok Video Maker",
+  "description": "VoiceMaster AI is a full-stack premium TTS synthesis studio featuring multi-speaker dialogue podcast recording, AI video storyboard scene generators, and auto-captioned TikTok/Reels MP4 video visualizer creator.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

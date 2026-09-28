@@ -5,8 +5,9 @@ import {
   Languages, Clock, Subtitles, Volume2, Video, CheckCircle2,
   ExternalLink, Layers, ArrowRight, Settings2, Sliders, UserCheck,
   FileAudio, Info, Mic, X, BookOpen, Wand2, Lightbulb, History, Trash2, RotateCcw, Music, Music2, Disc,
-  Users, Plus, ArrowUp, ArrowDown, MessageSquare, Users2, Megaphone, Zap, ShieldCheck, MoveVertical
+  Users, Plus, ArrowUp, ArrowDown, MessageSquare, Users2, Megaphone, Zap, ShieldCheck, MoveVertical, Search
 } from 'lucide-react';
+import { getAllHistory, saveHistoryRecord, deleteHistoryRecord, clearAllHistoryRecords, StoredHistoryItem } from './historyDb';
 
 interface VoiceItem {
   id: string;
@@ -70,9 +71,205 @@ interface DialogueResult {
   speakersUsed: string[];
 }
 
+// Interactive SRT Subtitle Cue Inspector with Exact Timestamps for CapCut / Premiere Users
+const SrtTimelineInspector: React.FC<{
+  srtText: string;
+  title: string;
+  onCopy: (text: string, type: string) => void;
+  onDownload: (content: string, filename: string, mime: string) => void;
+}> = ({ srtText, title, onCopy, onDownload }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [viewMode, setViewMode] = useState<'timeline' | 'raw'>('timeline');
+
+  // Parse raw SRT into structured cues
+  const cues = React.useMemo(() => {
+    if (!srtText) return [];
+    const blocks = srtText.trim().split(/\n\s*\n/);
+    const parsed: { index: number; startTime: string; endTime: string; durationSec: string; text: string }[] = [];
+
+    blocks.forEach((block, idx) => {
+      const lines = block.trim().split('\n');
+      if (lines.length >= 2) {
+        const timeLineIndex = lines.findIndex(l => l.includes('-->'));
+        if (timeLineIndex !== -1) {
+          const timeParts = lines[timeLineIndex].split('-->');
+          const startTime = timeParts[0].trim();
+          const endTime = timeParts[1].trim();
+          const text = lines.slice(timeLineIndex + 1).join(' ').trim();
+
+          const parseSec = (t: string) => {
+            const parts = t.replace('.', ',').split(':');
+            if (parts.length === 3) {
+              const h = parseInt(parts[0], 10) || 0;
+              const m = parseInt(parts[1], 10) || 0;
+              const sParts = parts[2].split(',');
+              const s = parseInt(sParts[0], 10) || 0;
+              const ms = parseInt(sParts[1] || '0', 10) || 0;
+              return h * 3600 + m * 60 + s + ms / 1000;
+            }
+            return 0;
+          };
+
+          const startS = parseSec(startTime);
+          const endS = parseSec(endTime);
+          const durS = Math.max(0.1, endS - startS).toFixed(1);
+
+          parsed.push({
+            index: idx + 1,
+            startTime,
+            endTime,
+            durationSec: durS,
+            text
+          });
+        }
+      }
+    });
+    return parsed;
+  }, [srtText]);
+
+  const filteredCues = React.useMemo(() => {
+    if (!searchQuery.trim()) return cues;
+    const q = searchQuery.toLowerCase();
+    return cues.filter(c =>
+      c.text.toLowerCase().includes(q) ||
+      c.startTime.toLowerCase().includes(q) ||
+      c.endTime.toLowerCase().includes(q) ||
+      String(c.index).includes(q)
+    );
+  }, [cues, searchQuery]);
+
+  return (
+    <div className="bg-[#0b0e17] rounded-2xl border border-white/10 overflow-hidden shadow-2xl space-y-0">
+      {/* Header Bar */}
+      <div className="p-4 bg-[#121624] border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-emerald-400" />
+          <h4 className="text-xs font-bold text-white flex items-center gap-2">
+            <span>{title}</span>
+            <span className="text-[10px] font-mono bg-emerald-950/80 border border-emerald-500/30 px-2 py-0.5 rounded-full text-emerald-300">
+              {cues.length} Cues
+            </span>
+          </h4>
+        </div>
+
+        {/* Action Controls */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* View Toggle */}
+          <div className="flex items-center bg-black/50 p-0.5 rounded-lg border border-white/10 text-[10px] font-bold">
+            <button
+              onClick={() => setViewMode('timeline')}
+              className={`px-2.5 py-1 rounded-md transition-all ${
+                viewMode === 'timeline'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              ⏱️ စက္ကန့်အလိုက် (Timeline)
+            </button>
+            <button
+              onClick={() => setViewMode('raw')}
+              className={`px-2.5 py-1 rounded-md transition-all ${
+                viewMode === 'raw'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              📝 Raw SRT
+            </button>
+          </div>
+
+          <button
+            onClick={() => onDownload(srtText, 'VoiceMaster_Subtitles.srt', 'text/plain')}
+            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold active:scale-95 flex items-center gap-1 shadow"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>.SRT ဒေါင်းလုဒ်</span>
+          </button>
+          <button
+            onClick={() => onCopy(srtText, 'srt_inspector_full')}
+            className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-bold border border-white/5 active:scale-95 flex items-center gap-1"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span>Copy All</span>
+          </button>
+        </div>
+      </div>
+
+      {viewMode === 'timeline' ? (
+        <div className="p-4 space-y-3">
+          {/* Search Box */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              placeholder="စာသား သို့မဟုတ် စက္ကန့်ရှာရန် (ဥပမာ: 00:01 သို့မဟုတ် မင်္ဂလာပါ)..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 bg-black/40 border border-white/10 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
+            />
+          </div>
+
+          {/* Cue Cards Container */}
+          <div className="max-h-[380px] overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-slate-800">
+            {filteredCues.length === 0 ? (
+              <p className="text-center py-8 text-xs text-slate-500">ရှာဖွေမှုနှင့် ကိုက်ညီသော SRT စာတန်းထိုး မတွေ့ပါခင်ဗျာ။</p>
+            ) : (
+              filteredCues.map((cue) => (
+                <div
+                  key={cue.index}
+                  className="p-3 bg-[#111420] hover:bg-[#161a29] border border-white/5 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 transition-all group"
+                >
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                        #{cue.index}
+                      </span>
+                      {/* Exact Timestamp Badge */}
+                      <span className="text-[11px] font-mono font-bold text-cyan-300 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-500/30 flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-cyan-400" />
+                        <span>{cue.startTime} ➔ {cue.endTime}</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-emerald-400/80 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                        {cue.durationSec}s
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-100 font-medium leading-relaxed break-words pl-0.5">
+                      {cue.text}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1 self-end sm:self-center shrink-0 opacity-90 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => onCopy(cue.text, `cue_txt_${cue.index}`)}
+                      title="Copy Spoken Text"
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold active:scale-95 flex items-center gap-1 border border-white/5"
+                    >
+                      <Copy className="w-3 h-3 text-emerald-400" />
+                      <span>စာသား Copy</span>
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="p-4">
+          <textarea
+            readOnly
+            value={srtText}
+            className="w-full h-80 bg-black/50 border border-white/5 rounded-xl p-3.5 text-xs font-mono leading-relaxed text-slate-200 focus:outline-none resize-none"
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const App: React.FC = () => {
-  // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'history' | 'imager'
-  const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'history' | 'imager'>('tts');
+  // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator'
+  const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator'>('tts');
 
   // ----------------------------------------------------
   // Mode 1: Text-to-Speech (TTS) State
@@ -97,9 +294,9 @@ export const App: React.FC = () => {
   // ----------------------------------------------------
   const [speakers, setSpeakers] = useState<SpeakerSlot[]>([
     { id: 'spk1', name: 'ကိုဝီလျံ', voice: 'en-AU-WilliamMultilingualNeural', color: 'indigo' },
-    { id: 'spk2', name: 'မဂျန်နီ', voice: 'en-US-JennyNeural', color: 'emerald' },
+    { id: 'spk2', name: 'မအေဗာ', voice: 'en-US-AvaMultilingualNeural', color: 'emerald' },
     { id: 'spk3', name: 'ကိုအင်ဒရူး', voice: 'en-US-AndrewMultilingualNeural', color: 'amber' },
-    { id: 'spk4', name: 'မအေဗာ', voice: 'en-US-AvaMultilingualNeural', color: 'rose' },
+    { id: 'spk4', name: 'မအမ်မာ', voice: 'en-US-EmmaMultilingualNeural', color: 'rose' },
     { id: 'spk5', name: 'ကိုဟျွန်းဆူ', voice: 'ko-KR-HyunsuMultilingualNeural', color: 'purple' },
   ]);
 
@@ -118,15 +315,25 @@ export const App: React.FC = () => {
   const dialoguePlayerRef = useRef<HTMLAudioElement | null>(null);
 
   // ----------------------------------------------------
-  // Advertisement Interstitial Modal State (Appears every 2 generations)
+  // Advertisement Interstitial Modal State (Appears every 2 uses of ANY feature)
   // ----------------------------------------------------
-  const [generationCount, setGenerationCount] = useState(0);
+  const [generationCount, setGenerationCount] = useState<number>(() => {
+    try {
+      return parseInt(localStorage.getItem('vm_usage_count') || '0', 10);
+    } catch (_) {
+      return 0;
+    }
+  });
 
-  const registerGenerationAndCheckAd = () => {
+  const registerGenerationAndCheckAd = (featureName?: string) => {
     setGenerationCount(prev => {
       const nextCount = prev + 1;
-      if (nextCount % 2 === 0) {
-        setAdCountdown(20); // 20-second viewing before close
+      try {
+        localStorage.setItem('vm_usage_count', String(nextCount));
+      } catch (_) {}
+      // Any feature used 2 times (2, 4, 6, 8, ...) triggers the ad popup
+      if (nextCount > 0 && nextCount % 2 === 0) {
+        setAdCountdown(15);
         setShowInAppAdModal(true);
       }
       return nextCount;
@@ -150,6 +357,69 @@ export const App: React.FC = () => {
   const [videoResultUrl, setVideoResultUrl] = useState('');
   const [videoError, setVideoError] = useState('');
 
+  // ----------------------------------------------------
+  // New Studio State 1: Speech-To-Text / Transcribe & SRT Translate State
+  // ----------------------------------------------------
+  const [transcribeAudio, setTranscribeAudio] = useState<string>('');
+  const [selectedTranscribeFile, setSelectedTranscribeFile] = useState<File | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcribeResult, setTranscribeResult] = useState('');
+  const [transcribeSrt, setTranscribeSrt] = useState('');
+  const [transcribeError, setTranscribeError] = useState('');
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [transcribeElapsedSec, setTranscribeElapsedSec] = useState(0);
+  const [transcribeStage, setTranscribeStage] = useState<'idle' | 'uploading' | 'extracting' | 'transcribing' | 'completed'>('idle');
+  const [transcribeVideoPreviewUrl, setTranscribeVideoPreviewUrl] = useState('');
+  
+  // SRT to Myanmar Translator State
+  const [translatedSrt, setTranslatedSrt] = useState('');
+  const [translatedTranscript, setTranslatedTranscript] = useState('');
+  const [isTranslatingSrt, setIsTranslatingSrt] = useState(false);
+  const [translateSrtError, setTranslateSrtError] = useState('');
+  const [customSrtInput, setCustomSrtInput] = useState('');
+
+  // ----------------------------------------------------
+  // New Studio State 3: Audio Speed & Pitch Shifter State
+  // ----------------------------------------------------
+  const [shifterAudioData, setShifterAudioData] = useState('');
+  const [shifterSpeed, setShifterSpeed] = useState(1.0);
+  const [shifterPitch, setShifterPitch] = useState(1.0);
+  const [isShifting, setIsShifting] = useState(false);
+  const [shifterResultUrl, setShifterResultUrl] = useState('');
+  const [shifterError, setShifterError] = useState('');
+
+  // ----------------------------------------------------
+  // New Studio State 5: 1-Click Auto Video Pipeline State
+  // ----------------------------------------------------
+  const [pipelineTopic, setPipelineTopic] = useState('');
+  const [pipelineGenre, setPipelineGenre] = useState('motivation');
+  const [pipelineAspectRatio, setPipelineAspectRatio] = useState<'9:16' | '16:9' | '1:1'>('9:16');
+  const [pipelineDuration, setPipelineDuration] = useState<'short' | 'medium' | 'long' | 'epic'>('medium');
+  const [isPipelineLoading, setIsPipelineLoading] = useState(false);
+  const [pipelineResult, setPipelineResult] = useState<{
+    title: string;
+    script: string;
+    audioUrl: string;
+    imageUrl: string;
+    videoUrl: string;
+  } | null>(null);
+  const [pipelineError, setPipelineError] = useState('');
+
+  // ----------------------------------------------------
+  // New Studio State 6: Multi-Language Translator + Speech State
+  // ----------------------------------------------------
+  const [translateText, setTranslateText] = useState('');
+  const [translateTargetLang, setTranslateTargetLang] = useState('my');
+  const [isTranslateLoading, setIsTranslateLoading] = useState(false);
+  const [translateResult, setTranslateResult] = useState<{
+    originalText: string;
+    translatedText: string;
+    detectedSourceLang: string;
+    audioUrl: string;
+    characterCount: number;
+  } | null>(null);
+  const [translateError, setTranslateError] = useState('');
+
   const openVideoModalForAudio = (audioUrl: string, title?: string, subtitle?: string) => {
     setVideoAudioData(audioUrl);
     setVideoTitleText(title || '');
@@ -168,20 +438,62 @@ export const App: React.FC = () => {
     setVideoResultUrl('');
 
     try {
+      const formData = new FormData();
+
+      // Convert audio base64/dataurl or URL into file blob for streamed upload
+      if (videoAudioData.startsWith('data:audio') || videoAudioData.startsWith('data:application') || videoAudioData.includes('base64,')) {
+        const parts = videoAudioData.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'audio/mp3';
+        const bstr = atob(parts[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const audioBlob = new Blob([u8arr], { type: mime });
+        formData.append('audioFile', audioBlob, 'input_audio.mp3');
+      } else if (videoAudioData.startsWith('http') || videoAudioData.startsWith('/')) {
+        try {
+          const audioFetch = await fetch(videoAudioData);
+          const audioBlob = await audioFetch.blob();
+          formData.append('audioFile', audioBlob, 'input_audio.mp3');
+        } catch (_) {
+          formData.append('audioData', videoAudioData);
+        }
+      } else {
+        formData.append('audioData', videoAudioData);
+      }
+
+      // Convert bgImage base64 into file blob for streamed upload
+      if (videoBgImage && (videoBgImage.startsWith('data:image') || videoBgImage.includes('base64,'))) {
+        const parts = videoBgImage.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+        const bstr = atob(parts[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const imageBlob = new Blob([u8arr], { type: mime });
+        formData.append('bgImageFile', imageBlob, 'input_bg.png');
+      } else if (videoBgImage) {
+        formData.append('bgImageData', videoBgImage);
+      }
+
+      // Append standard text options
+      formData.append('titleText', videoTitleText);
+      formData.append('subtitleText', videoSubtitleText);
+      formData.append('aspectRatio', videoAspectRatio);
+      formData.append('theme', videoTheme);
+      formData.append('waveStyle', videoWaveStyle);
+      formData.append('customWaveColor', videoCustomWaveColor);
+      formData.append('waveYPercentage', String(videoWaveY));
+
       const res = await fetch('/api/audio-to-video', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioData: videoAudioData,
-          titleText: videoTitleText,
-          subtitleText: videoSubtitleText,
-          aspectRatio: videoAspectRatio,
-          theme: videoTheme,
-          waveStyle: videoWaveStyle,
-          customWaveColor: videoCustomWaveColor,
-          waveYPercentage: videoWaveY,
-          bgImageData: videoBgImage
-        })
+        body: formData
       });
 
       const responseText = await res.text();
@@ -197,6 +509,7 @@ export const App: React.FC = () => {
       }
 
       setVideoResultUrl(data.videoUrl);
+      registerGenerationAndCheckAd('mp4_video');
     } catch (err: any) {
       setVideoError(err.message || 'MP4 ဗီဒီယို ဖန်တီး၍ မရပါ။');
     } finally {
@@ -221,41 +534,40 @@ export const App: React.FC = () => {
   const [storyVideoError, setStoryVideoError] = useState('');
 
   // ----------------------------------------------------
-  // Mode 3: Audio & Story History Library State
+  // Mode 3: Audio & Story History Library State (IndexedDB + Storage Backup)
   // ----------------------------------------------------
-  const [historyItems, setHistoryItems] = useState<HistoryItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('voicemaster_history');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [historyItems, setHistoryItems] = useState<StoredHistoryItem[]>([]);
 
-  // Save history to LocalStorage
-  const saveToHistory = (item: Omit<HistoryItem, 'id' | 'timestamp'>) => {
-    const newItem: HistoryItem = {
+  // Load history from IndexedDB on mount
+  useEffect(() => {
+    getAllHistory().then(items => {
+      setHistoryItems(items);
+    }).catch(err => console.warn('Failed to load history:', err));
+  }, []);
+
+  // Save history to IndexedDB (Up to 5 items preserved reliably)
+  const saveToHistory = async (item: Omit<StoredHistoryItem, 'id' | 'timestamp'>) => {
+    const newItem: StoredHistoryItem = {
       ...item,
       id: `hist_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       timestamp: Date.now()
     };
-    setHistoryItems((prev) => {
-      const updated = [newItem, ...prev.slice(0, 49)]; // Keep up to 50 items
-      try {
-        localStorage.setItem('voicemaster_history', JSON.stringify(updated));
-      } catch (_) {}
-      return updated;
-    });
+    try {
+      const updated = await saveHistoryRecord(newItem);
+      setHistoryItems(updated);
+    } catch (err) {
+      console.warn('History save error:', err);
+      setHistoryItems(prev => [newItem, ...prev.slice(0, 4)]);
+    }
   };
 
-  const deleteHistoryItem = (id: string) => {
-    setHistoryItems((prev) => {
-      const updated = prev.filter(i => i.id !== id);
-      try {
-        localStorage.setItem('voicemaster_history', JSON.stringify(updated));
-      } catch (_) {}
-      return updated;
-    });
+  const deleteHistoryItem = async (id: string) => {
+    try {
+      const updated = await deleteHistoryRecord(id);
+      setHistoryItems(updated);
+    } catch (_) {
+      setHistoryItems(prev => prev.filter(i => i.id !== id));
+    }
   };
 
   // ----------------------------------------------------
@@ -292,12 +604,20 @@ export const App: React.FC = () => {
         })
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (_) {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု မရရှိခဲ့ပါ။ ခေတ္တစောင့်ပြီး ထပ်မံကြိုးစားပေးပါခင်ဗျာ။');
+      }
+
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'AI ရုပ်ပုံ ဖန်တီး၍ မရပါ။');
       }
 
       setImageResultUrl(data.imageUrl);
+      registerGenerationAndCheckAd('standalone_image');
     } catch (err: any) {
       setImageError(err.message || 'ရုပ်ပုံ ဖန်တီးမှု မအောင်မြင်ပါ။');
     } finally {
@@ -305,11 +625,11 @@ export const App: React.FC = () => {
     }
   };
 
-  const clearAllHistory = () => {
+  const clearAllHistory = async () => {
     if (window.confirm('သမိုင်းမှတ်တမ်း အားလုံးကို ဖျက်ပစ်ရန် သေချာပါသလားခင်ဗျာ?')) {
       setHistoryItems([]);
       try {
-        localStorage.removeItem('voicemaster_history');
+        await clearAllHistoryRecords();
       } catch (_) {}
     }
   };
@@ -362,12 +682,12 @@ export const App: React.FC = () => {
   }, []);
 
   const triggerMonetizationAd = () => {
-    setAdCountdown(20);
+    setAdCountdown(15);
     setShowInAppAdModal(true);
   };
 
   const downloadAudioFile = (audioUrl: string, filename: string) => {
-    triggerMonetizationAd();
+    registerGenerationAndCheckAd('download_audio');
     try {
       if (audioUrl.startsWith('data:')) {
         // Convert base64 data URL to Blob for 100% reliable direct browser download across all devices
@@ -485,7 +805,13 @@ export const App: React.FC = () => {
         body: JSON.stringify({ dialogue: payload, pauseDuration })
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (_) {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု မရရှိခဲ့ပါ။ ခေတ္တစောင့်ပြီး ပြန်လည် ကြိုးစားပေးပါခင်ဗျာ။');
+      }
 
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'အပြန်အလှန် စကားပြော အသံဖိုင် ဖန်တီး၍ မရပါ။');
@@ -596,7 +922,6 @@ export const App: React.FC = () => {
     setIsScriptLoading(true);
     setScriptError('');
     setGeneratedScript(null);
-    triggerMonetizationAd();
 
     try {
       const res = await fetch('/api/generate-story-script', {
@@ -660,7 +985,13 @@ export const App: React.FC = () => {
           genre: scriptGenre
         })
       });
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (_) {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု မရရှိခဲ့ပါ။ ခေတ္တစောင့်ပြီး ထပ်ကြိုးစားပေးပါခင်ဗျာ။');
+      }
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to generate story scene images');
       }
@@ -743,6 +1074,372 @@ export const App: React.FC = () => {
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
+  };
+
+  // ----------------------------------------------------
+  // New Studio Handlers 1: Speech-To-Text / Transcribe (1GB Turbo Engine with Chunked Slicing)
+  // ----------------------------------------------------
+  const handleTranscribeAudio = async () => {
+    if (!transcribeAudio && !selectedTranscribeFile) return;
+    setIsTranscribing(true);
+    setTranscribeError('');
+    setTranscribeResult('');
+    setTranscribeSrt('');
+    setUploadProgress(0);
+    setTranscribeElapsedSec(0);
+    setTranscribeStage('uploading');
+
+    let timerInterval: any = setInterval(() => {
+      setTranscribeElapsedSec(prev => prev + 1);
+    }, 1000);
+
+    try {
+      let data: any = null;
+
+      // If a file is selected and is larger than 15MB (up to 1GB), use chunked sliced upload to bypass Cloud 32MB limits
+      if (selectedTranscribeFile && selectedTranscribeFile.size > 15 * 1024 * 1024) {
+        const file = selectedTranscribeFile;
+        const CHUNK_SIZE = 15 * 1024 * 1024; // 15MB chunks
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const uploadId = `chk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(file.size, start + CHUNK_SIZE);
+          const chunkBlob = file.slice(start, end);
+
+          const chunkFormData = new FormData();
+          chunkFormData.append('chunk', chunkBlob, file.name);
+          chunkFormData.append('uploadId', uploadId);
+          chunkFormData.append('chunkIndex', String(i));
+          chunkFormData.append('totalChunks', String(totalChunks));
+          chunkFormData.append('fileName', file.name);
+          chunkFormData.append('fileSize', String(file.size));
+
+          const chunkRes: any = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/transcribe-chunk');
+            xhr.timeout = 15 * 60 * 1000;
+
+            xhr.upload.onprogress = (evt) => {
+              if (evt.lengthComputable) {
+                const chunkRatio = evt.loaded / evt.total;
+                const overallPercent = Math.min(99, Math.round(((i + chunkRatio) / totalChunks) * 100));
+                setUploadProgress(overallPercent);
+                if (i === totalChunks - 1 && chunkRatio >= 1) {
+                  setTranscribeStage('extracting');
+                  setTimeout(() => {
+                    setTranscribeStage('transcribing');
+                  }, 1200);
+                }
+              }
+            };
+
+            xhr.onload = () => {
+              let resData: any = null;
+              try {
+                resData = JSON.parse(xhr.responseText);
+              } catch (_) {
+                reject(new Error(`ဆာဗာမှ တုံ့ပြန်မှု မမှန်ကန်ပါ (Status: ${xhr.status})။ ခေတ္တစောင့်ပြီး ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။`));
+                return;
+              }
+              if (xhr.status >= 200 && xhr.status < 300 && resData.success) {
+                resolve(resData);
+              } else {
+                reject(new Error(resData?.error || `Chunk ${i + 1}/${totalChunks} တင်သွင်းရာတွင် အမှားဖြစ်ပေါ်သွားပါသည်။`));
+              }
+            };
+
+            xhr.onerror = () => reject(new Error('ကွန်ရက် ချိတ်ဆက်မှု အခက်အခဲ ဖြစ်ပေါ်သွားပါသည်။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။'));
+            xhr.ontimeout = () => reject(new Error('အချိန်ကုန်သွားပါသည် (Request Timeout)။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။'));
+
+            xhr.send(chunkFormData);
+          });
+
+          if (i === totalChunks - 1) {
+            data = chunkRes;
+          }
+        }
+      } else {
+        // Direct upload for small audio files (<= 15MB) or base64 / audio URL
+        const formData = new FormData();
+        if (selectedTranscribeFile) {
+          formData.append('mediaFile', selectedTranscribeFile, selectedTranscribeFile.name);
+        } else if (transcribeAudio.startsWith('data:') || transcribeAudio.includes('base64,')) {
+          const parts = transcribeAudio.split(',');
+          const mimeMatch = parts[0].match(/:(.*?);/);
+          const mime = mimeMatch ? mimeMatch[1] : 'audio/mp3';
+          const bstr = atob(parts[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while (n--) {
+            u8arr[n] = bstr.charCodeAt(n);
+          }
+          const audioBlob = new Blob([u8arr], { type: mime });
+          formData.append('mediaFile', audioBlob, 'input.mp3');
+        } else {
+          formData.append('audioUrl', transcribeAudio);
+        }
+
+        data = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/api/transcribe-upload');
+          xhr.timeout = 15 * 60 * 1000;
+
+          xhr.upload.onprogress = (evt) => {
+            if (evt.lengthComputable) {
+              const percent = Math.round((evt.loaded / evt.total) * 100);
+              setUploadProgress(percent);
+              if (percent >= 100) {
+                setTranscribeStage('extracting');
+                setTimeout(() => {
+                  setTranscribeStage('transcribing');
+                }, 1200);
+              }
+            }
+          };
+
+          xhr.onload = () => {
+            let resData: any = null;
+            try {
+              resData = JSON.parse(xhr.responseText);
+            } catch (_) {
+              reject(new Error(`ဆာဗာမှ တုံ့ပြန်မှု မမှန်ကန်ပါ (Status: ${xhr.status})။ ခေတ္တစောင့်ပြီး ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။`));
+              return;
+            }
+            if (xhr.status >= 200 && xhr.status < 300 && resData.success) {
+              resolve(resData);
+            } else {
+              reject(new Error(resData?.error || 'အသံဖိုင်ကို စာသားပြောင်းရာတွင် အမှားအယွင်း ရှိနေပါသည်။'));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error('ကွန်ရက် ချိတ်ဆက်မှု အခက်အခဲ ဖြစ်ပေါ်သွားပါသည်။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။'));
+          xhr.ontimeout = () => reject(new Error('အချိန်ကုန်သွားပါသည် (Request Timeout)။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။'));
+
+          xhr.send(formData);
+        });
+      }
+
+      setTranscribeStage('completed');
+      setTranscribeResult(data?.transcript || '');
+      setTranscribeSrt(data?.srt || '');
+      // Reset previous translations if new audio is transcribed
+      setTranslatedSrt('');
+      setTranslatedTranscript('');
+    } catch (err: any) {
+      setTranscribeError(err.message || 'စာသားပြောင်း၍ မရပါ။');
+      setTranscribeStage('idle');
+    } finally {
+      clearInterval(timerInterval);
+      setIsTranscribing(false);
+      setUploadProgress(null);
+    }
+  };
+
+  const handleTranslateSrt = async (inputSrt?: string) => {
+    const textToTranslate = inputSrt || transcribeSrt || customSrtInput;
+    if (!textToTranslate.trim()) return;
+    setIsTranslatingSrt(true);
+    setTranslateSrtError('');
+
+    try {
+      const res = await fetch('/api/translate-srt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ srtText: textToTranslate, targetLang: 'my' })
+      });
+
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (_) {
+        throw new Error(`ဆာဗာမှ တုံ့ပြန်မှု မမှန်ကန်ပါ (Status: ${res.status})။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။`);
+      }
+
+      if (!res.ok || !data.success) {
+        throw new Error(data?.error || 'SRT ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။');
+      }
+
+      setTranslatedSrt(data.translatedSrt);
+      setTranslatedTranscript(data.translatedTranscript);
+    } catch (err: any) {
+      setTranslateSrtError(err.message || 'SRT စာတန်းထိုး ဘာသာပြန်၍ မရပါ။');
+    } finally {
+      setIsTranslatingSrt(false);
+    }
+  };
+
+  // ----------------------------------------------------
+  // New Studio Handlers 2: Speed & Pitch Shifter
+  // ----------------------------------------------------
+  const handleShiftAudio = async () => {
+    if (!shifterAudioData) return;
+    setIsShifting(true);
+    setShifterError('');
+    setShifterResultUrl('');
+
+    try {
+      const formData = new FormData();
+      if (shifterAudioData.startsWith('data:audio') || shifterAudioData.includes('base64,')) {
+        const parts = shifterAudioData.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'audio/mp3';
+        const bstr = atob(parts[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const audioBlob = new Blob([u8arr], { type: mime });
+        formData.append('audioFile', audioBlob, 'input.mp3');
+      } else if (shifterAudioData.startsWith('http') || shifterAudioData.startsWith('/')) {
+        try {
+          const res = await fetch(shifterAudioData);
+          const audioBlob = await res.blob();
+          formData.append('audioFile', audioBlob, 'input.mp3');
+        } catch (_) {
+          formData.append('audioUrl', shifterAudioData);
+        }
+      } else {
+        formData.append('audioUrl', shifterAudioData);
+      }
+
+      formData.append('speed', String(shifterSpeed));
+      formData.append('pitch', String(shifterPitch));
+
+      const res = await fetch('/api/shift-audio', {
+        method: 'POST',
+        body: formData
+      });
+
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (_) {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု အချိန်ကုန်သွားပါသည် သို့မဟုတ် ဝန်ပိနေပါသည်။');
+      }
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'အသံဖိုင် ပြောင်းလဲရာတွင် အမှားအယွင်း ရှိနေပါသည်။');
+      }
+
+      setShifterResultUrl(data.audioUrl);
+    } catch (err: any) {
+      setShifterError(err.message || 'အသံ ပြောင်းလဲ၍ မရပါ။');
+    } finally {
+      setIsShifting(false);
+    }
+  };
+
+  // ----------------------------------------------------
+  // New Studio Handlers 4: 1-Click Auto Video Pipeline
+  // ----------------------------------------------------
+  const handleAutoPipeline = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pipelineTopic.trim()) return;
+    setIsPipelineLoading(true);
+    setPipelineError('');
+    setPipelineResult(null);
+
+    try {
+      const data: any = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/auto-video-pipeline');
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.timeout = 10 * 60 * 1000; // 10 minutes timeout
+
+        xhr.onload = () => {
+          let resData: any = null;
+          try {
+            resData = JSON.parse(xhr.responseText);
+          } catch (_) {
+            reject(new Error(`ဆာဗာမှ တုံ့ပြန်မှု မမှန်ကန်ပါ (Status: ${xhr.status})။ ခေတ္တစောင့်ပြီး ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။`));
+            return;
+          }
+          if (xhr.status >= 200 && xhr.status < 300 && resData.success) {
+            resolve(resData);
+          } else {
+            reject(new Error(resData?.error || '1-Click ဗီဒီယို ဖန်တီး၍ မရပါ။'));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error('ကွန်ရက် ချိတ်ဆက်မှု အခက်အခဲ ဖြစ်ပေါ်သွားပါသည်။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။'));
+        xhr.ontimeout = () => reject(new Error('အချိန်ကုန်သွားပါသည် (Request Timeout)။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။'));
+
+        xhr.send(JSON.stringify({
+          topic: pipelineTopic,
+          genre: pipelineGenre,
+          aspectRatio: pipelineAspectRatio,
+          voice: selectedVoice,
+          targetDuration: pipelineDuration
+        }));
+      });
+
+      setPipelineResult(data);
+      saveToHistory({
+        type: 'story',
+        title: `⚡ 1-Click: ${data.title}`,
+        content: data.script,
+        audioUrl: data.audioUrl,
+        characterCount: data.script.length
+      });
+      registerGenerationAndCheckAd('one_click_pipeline');
+    } catch (err: any) {
+      setPipelineError(err.message || '1-Click ဗီဒီယို ဖန်တီးမှု မအောင်မြင်ပါ။');
+    } finally {
+      setIsPipelineLoading(false);
+    }
+  };
+
+  // ----------------------------------------------------
+  // New Studio Handlers 5: Multi-Language Translator + Speech
+  // ----------------------------------------------------
+  const handleTranslateAndSpeak = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!translateText.trim()) return;
+    setIsTranslateLoading(true);
+    setTranslateError('');
+    setTranslateResult(null);
+
+    try {
+      const res = await fetch('/api/translate-and-speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: translateText,
+          targetLang: translateTargetLang,
+          voice: selectedVoice
+        })
+      });
+
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (_) {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု အချိန်ကုန်သွားပါသည် သို့မဟုတ် ဝန်ပိနေပါသည်။');
+      }
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'ဘာသာပြန်၍ မရပါ။');
+      }
+
+      setTranslateResult(data);
+      saveToHistory({
+        type: 'tts',
+        title: `🌐 ဘာသာပြန်: ${data.translatedText.slice(0, 30)}...`,
+        content: data.translatedText,
+        audioUrl: data.audioUrl,
+        characterCount: data.characterCount
+      });
+    } catch (err: any) {
+      setTranslateError(err.message || 'ဘာသာပြန်မှု မအောင်မြင်ပါ။');
+    } finally {
+      setIsTranslateLoading(false);
+    }
   };
 
   const predefinedGenres = [
@@ -868,6 +1565,57 @@ export const App: React.FC = () => {
           >
             <History className="w-4 h-4 shrink-0 text-emerald-400" />
             <span>📂 မှတ်တမ်း</span>
+          </button>
+        </div>
+
+        {/* Premium Tools Sub-Tabs Row */}
+        <div className="bg-[#191d30]/50 p-2.5 rounded-2xl border border-indigo-500/20 grid grid-cols-2 sm:grid-cols-4 gap-2 max-w-4xl mx-auto w-full shadow-xl">
+          <button
+            onClick={() => setMainMode('autoPipeline')}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
+              mainMode === 'autoPipeline'
+                ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 text-white shadow-md ring-2 ring-amber-400/50'
+                : 'text-amber-300 hover:text-white hover:bg-amber-500/10 bg-[#0e111a] border border-amber-500/30'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span>⚡ 1-Click ဗီဒီယို</span>
+          </button>
+
+          <button
+            onClick={() => setMainMode('translator')}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
+              mainMode === 'translator'
+                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md ring-2 ring-blue-400/40'
+                : 'text-slate-300 hover:text-white hover:bg-white/5 bg-[#0e111a] border border-white/5'
+            }`}
+          >
+            <Languages className="w-3.5 h-3.5 text-blue-400" />
+            <span>🌐 ဘာသာပြန် + အသံ</span>
+          </button>
+
+          <button
+            onClick={() => setMainMode('transcribe')}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
+              mainMode === 'transcribe'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md ring-2 ring-emerald-400/40'
+                : 'text-slate-300 hover:text-white hover:bg-white/5 bg-[#0e111a] border border-white/5'
+            }`}
+          >
+            <Subtitles className="w-3.5 h-3.5 text-emerald-400" />
+            <span>📝 အသံ ➔ စာတန်းထိုး</span>
+          </button>
+
+          <button
+            onClick={() => setMainMode('audioModifier')}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
+              mainMode === 'audioModifier'
+                ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md ring-2 ring-amber-400/40'
+                : 'text-slate-300 hover:text-white hover:bg-white/5 bg-[#0e111a] border border-white/5'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5 text-amber-400" />
+            <span>🎛️ Speed / Pitch</span>
           </button>
         </div>
 
@@ -1862,7 +2610,7 @@ export const App: React.FC = () => {
                     </div>
 
                     <button
-                      onClick={handleGenerateStoryImages}
+                      onClick={() => handleGenerateStoryImages()}
                       disabled={isStoryImagesLoading}
                       className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-600/30 active:scale-95 disabled:opacity-50 shrink-0"
                     >
@@ -2070,17 +2818,6 @@ export const App: React.FC = () => {
                 <p className="text-xs text-slate-400 mt-1">
                   သင့်အသံဖိုင်များကို Waveform Spectrum Animation နှင့် စာတန်းထိုးပါဝင်သော TikTok / Reels / Shorts အဆင်သင့် MP4 ဗီဒီယိုအဖြစ် ၁-Click ပြုလုပ်ပါ
                 </p>
-              </div>
-
-              {/* Direct 1-Click Guidance Notice */}
-              <div className="p-3.5 bg-emerald-950/40 border border-emerald-500/30 rounded-xl flex items-start gap-2.5 text-xs text-emerald-300">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <span className="font-bold text-white block">💡 Download ဆွဲစရာ လုံးဝ မလိုပါ!</span>
-                  <p className="text-[11px] text-emerald-200/90 leading-relaxed">
-                    ဖန်တီးပြီးသား အသံဖိုင်သည် ဤဗီဒီယိုဖန်တီးစက်သို့ အလိုအလျောက် ရောက်ရှိလာပြီးဖြစ်ပါသည်။ အောက်ပါ အသံလှိုင်းအရောင် (Waveform Color) ကို စိတ်ကြိုက်ရွေးချယ်ပြီး <b>"🎬 ဗီဒီယို ဖန်တီးမည်"</b> ကို နှိပ်ရုံဖြင့် အသံနှင့်ဗီဒီယိုကို တစ်ခါတည်း အလိုအလျောက် ပေါင်းစပ်ထုတ်ယူနိုင်ပါပြီ။
-                  </p>
-                </div>
               </div>
 
               {/* Step 1: Select Audio Source */}
@@ -2504,7 +3241,7 @@ export const App: React.FC = () => {
                     <span>အသံဖိုင်နှင့် ဇာတ်လမ်း သမိုင်းမှတ်တမ်းများ (History Library)</span>
                   </h2>
                   <p className="text-xs text-slate-400">
-                    ယခင် ထုတ်လုပ်ထားသော အသံဖိုင်များနှင့် ဇာတ်လမ်းများကို ပြန်လည် နားဆင်/ဒေါင်းလုဒ် ရယူနိုင်ပါသည်
+                    နောက်ဆုံး ထုတ်လုပ်ထားသော အသံဖိုင်နှင့် ဇာတ်လမ်း ၅ ခု အထိ အလိုအလျောက် သိမ်းဆည်းပေးထားပြီး ပြန်လည် နားဆင်/ဒေါင်းလုဒ် ရယူနိုင်ပါသည်
                   </p>
                 </div>
 
@@ -2638,6 +3375,880 @@ export const App: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* ========================================================================= */}
+        {/* NEW MODE 1: AI SPEECH-TO-TEXT STUDIO (Transcribe & SRT Subtitles)         */}
+        {/* ========================================================================= */}
+        {mainMode === 'transcribe' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="bg-[#151926] border border-emerald-500/30 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-6">
+              <div className="border-b border-white/10 pb-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <Languages className="w-5 h-5 text-emerald-400" />
+                    <span>📝 AI Speech-to-Text & Subtitle Generator (1GB Turbo Engine)</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    ဗီဒီယို (1GB အထိ) နှင့် အသံဖိုင်များကို ၃ မိနစ်အတွင်း အသံအတိုင်း တိကျမှန်ကန်သော CapCut / TikTok အသင့်သုံး SRT စာတန်းထိုးအဖြစ် ထုတ်ပေးပါသည်
+                  </p>
+                </div>
+                
+                {/* 1GB Turbo Engine Badges */}
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" />
+                    <span>1GB Video File Support</span>
+                  </span>
+                  <span className="px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] font-bold flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    <span>&lt; 3 မိနစ် အမြန်နှုန်း</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Feature Highlights Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-black/30 rounded-xl border border-white/5 text-xs">
+                <div className="flex items-center gap-2 text-slate-300">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                    🎬
+                  </div>
+                  <div>
+                    <div className="font-bold text-white">1GB ဖိုင်ကြီးများ လက်ခံခြင်း</div>
+                    <div className="text-[10px] text-slate-400">MP4, MKV, MOV, MP3 ဖိုင်အားလုံး</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-slate-300">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                    ⚡
+                  </div>
+                  <div>
+                    <div className="font-bold text-white">၃ မိနစ်အတွင်း အပြီးသတ်</div>
+                    <div className="text-[10px] text-slate-400">Parallel Turbo Chunking စနစ်</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-slate-300">
+                  <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                    🎯
+                  </div>
+                  <div>
+                    <div className="font-bold text-white">အသံနှင့် စာတန်းထိုး အတိအကျညီ</div>
+                    <div className="text-[10px] text-slate-400">Word-level Timestamps Sync</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {/* Input File upload box */}
+                <div className="p-5 bg-[#0d101d] rounded-xl border border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      အသံဖိုင် သို့မဟုတ် ဗီဒီယိုဖိုင် ရွေးချယ်ပါ (MP4 / MKV / MOV / MP3 / WAV - 1GB အထိ):
+                    </label>
+                    {selectedTranscribeFile && (
+                      <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
+                        {(selectedTranscribeFile.size / (1024 * 1024)).toFixed(1)} MB / 1,024 MB
+                      </span>
+                    )}
+                  </div>
+
+                  <input
+                    type="file"
+                    accept="audio/*,video/*,.mp4,.mkv,.mov,.avi,.webm,.mp3,.wav,.m4a"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setSelectedTranscribeFile(file);
+                        setTranscribeAudio(file.name);
+                        // Generate preview URL if it's a video file
+                        if (file.type.startsWith('video') || /\.(mp4|mov|webm)$/i.test(file.name)) {
+                          try {
+                            const url = URL.createObjectURL(file);
+                            setTranscribeVideoPreviewUrl(url);
+                          } catch (_) {}
+                        } else {
+                          setTranscribeVideoPreviewUrl('');
+                        }
+                      }
+                    }}
+                    className="w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-gradient-to-r file:from-emerald-600 file:to-teal-600 file:text-white hover:file:from-emerald-500 hover:file:to-teal-500 cursor-pointer"
+                  />
+
+                  {/* Video preview player if selected */}
+                  {transcribeVideoPreviewUrl && (
+                    <div className="pt-2 animate-in fade-in">
+                      <div className="bg-black/60 rounded-xl overflow-hidden border border-white/10 max-w-md mx-auto">
+                        <video
+                          src={transcribeVideoPreviewUrl}
+                          controls
+                          className="w-full max-h-56 object-contain bg-black"
+                        />
+                        <div className="p-2 text-center text-[11px] text-slate-400 bg-[#090b12] border-t border-white/5">
+                          📹 ဗီဒီယိုဖိုင် အစမ်းကြည့်ရှုမှု: <span className="text-white font-semibold">{selectedTranscribeFile?.name}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-slate-500 flex items-center gap-1">
+                    <span>💡 သင့်ဖုန်းထဲမှ ရိုက်ကူးထားသော ဗီဒီယိုဖိုင်ကြီးများ (1GB အထိ) ကို တိုက်ရိုက် ထည့်သွင်းနိုင်ပါသည်</span>
+                  </p>
+                </div>
+
+                {/* Live Turbo Progress Bar when uploading / processing */}
+                {isTranscribing && (
+                  <div className="p-4 bg-emerald-950/30 border border-emerald-500/40 rounded-xl space-y-3 animate-in fade-in">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-emerald-300 flex items-center gap-1.5">
+                        <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
+                        <span>
+                          {transcribeStage === 'uploading' && `ဗီဒီယိုဖိုင် ဆာဗာသို့ အပ်လုဒ်တင်နေသည်... (${uploadProgress || 0}%)`}
+                          {transcribeStage === 'extracting' && 'အသံဖိုင် သီးသန့် အမြန်ထုတ်ယူနေသည် (FFmpeg Extraction)...'}
+                          {transcribeStage === 'transcribing' && 'Gemini AI က စာတန်းထိုးများကို အသံအတိုင်း တိကျစွာ ထုတ်လုပ်နေပါသည်...'}
+                          {transcribeStage === 'completed' && 'အောင်မြင်စွာ စာတန်းထိုး ထုတ်ပြီးပါပြီ!'}
+                        </span>
+                      </span>
+
+                      <span className="font-mono text-slate-400 flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>{Math.floor(transcribeElapsedSec / 60).toString().padStart(2, '0')}:{(transcribeElapsedSec % 60).toString().padStart(2, '0')}</span>
+                        <span className="text-[10px] text-slate-500">(ခန့်မှန်း &lt; 3 မိနစ်)</span>
+                      </span>
+                    </div>
+
+                    {/* Visual Progress Bar */}
+                    <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 h-2.5 rounded-full transition-all duration-300"
+                        style={{ width: `${uploadProgress !== null && uploadProgress < 100 ? uploadProgress : 92}%` }}
+                      />
+                    </div>
+
+                    {/* Stage Pills */}
+                    <div className="grid grid-cols-3 gap-2 text-[10px] text-center pt-1">
+                      <div className={`p-1.5 rounded-lg border ${uploadProgress !== null && uploadProgress >= 100 ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300' : 'bg-black/30 border-white/5 text-slate-400'}`}>
+                        1. Upload File {uploadProgress !== null ? `(${uploadProgress}%)` : ''}
+                      </div>
+                      <div className={`p-1.5 rounded-lg border ${transcribeStage === 'extracting' || transcribeStage === 'transcribing' || transcribeStage === 'completed' ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300' : 'bg-black/30 border-white/5 text-slate-400'}`}>
+                        2. Fast Audio Stream
+                      </div>
+                      <div className={`p-1.5 rounded-lg border ${transcribeStage === 'transcribing' || transcribeStage === 'completed' ? 'bg-cyan-950/60 border-cyan-500/40 text-cyan-300' : 'bg-black/30 border-white/5 text-slate-400'}`}>
+                        3. AI Multimodal Sync
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Submit button */}
+                {transcribeAudio && !isTranscribing && (
+                  <button
+                    onClick={handleTranscribeAudio}
+                    className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-bold text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg shadow-emerald-600/30"
+                  >
+                    <Languages className="w-4 h-4" />
+                    <span>🚀 1GB Turbo Engine ဖြင့် အသံအညီ စာတန်းထိုး (SRT) ချက်ချင်းထုတ်မည် (&lt; 3 မိနစ်)</span>
+                  </button>
+                )}
+
+                {/* Error Banner */}
+                {transcribeError && (
+                  <p className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-xs text-rose-300">
+                    {transcribeError}
+                  </p>
+                )}
+
+                {/* Results block */}
+                {(transcribeResult || transcribeSrt) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 animate-in fade-in">
+                    {/* Plain Text Transcript */}
+                    <div className="bg-[#0c0e14] p-4 rounded-xl border border-white/10 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                          <FileText className="w-4 h-4" />
+                          <span>စာသားအပြည့်အစုံ (Plain Transcript)</span>
+                        </span>
+                        <button
+                          onClick={() => handleCopy(transcribeResult, 'transcript_raw')}
+                          className="px-2 py-1 rounded bg-slate-800 text-slate-300 text-[10px] font-bold border border-white/5 active:scale-95 flex items-center gap-1"
+                        >
+                          {copiedType === 'transcript_raw' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedType === 'transcript_raw' ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                      <textarea
+                        readOnly
+                        value={transcribeResult}
+                        className="w-full h-64 bg-black/40 border border-white/5 rounded-lg p-3 text-xs leading-relaxed text-slate-200 focus:outline-none resize-none"
+                      />
+                    </div>
+
+                    {/* Interactive SRT Timeline Inspector */}
+                    <div className="md:col-span-2">
+                      <SrtTimelineInspector
+                        srtText={transcribeSrt}
+                        title="CapCut / Premiere အသင့်သုံး စာတန်းထိုး Timeline (စက္ကန့်အလိုက်)"
+                        onCopy={handleCopy}
+                        onDownload={downloadFile}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 1-Click Translate SRT to Myanmar Button */}
+                {transcribeSrt && (
+                  <div className="p-4 bg-gradient-to-r from-indigo-950/40 via-purple-950/40 to-emerald-950/40 border border-emerald-500/30 rounded-2xl space-y-3 animate-in fade-in">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div>
+                        <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <Languages className="w-4 h-4 text-emerald-400" />
+                          <span>🇲🇲 စာတန်းထိုးများကို မြန်မာဘာသာသို့ ပြန်ဆိုမည် (Translate SRT to Myanmar)</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          အထက်ပါ စာတန်းထိုး Timestamps များကို အတိအကျ ထိန်းသိမ်းထားပြီး စာသားအားလုံးကို သဘာဝကျသော မြန်မာစကားပြော (Unicode) သို့ ၁ ချက်နှိပ်ရုံဖြင့် ပြောင်းလဲပါမည်
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => handleTranslateSrt()}
+                        disabled={isTranslatingSrt}
+                        className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95 disabled:opacity-50 shrink-0"
+                      >
+                        {isTranslatingSrt ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>မြန်မာစာသို့ ပြန်ဆိုနေပါသည်...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4 text-emerald-200" />
+                            <span>🇲🇲 မြန်မာဘာသာသို့ ပြန်ဆိုမည်</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {translateSrtError && (
+                      <p className="p-2.5 rounded-lg bg-rose-950/50 border border-rose-500/30 text-rose-300 text-xs">
+                        {translateSrtError}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Translated Myanmar SRT Display Results */}
+                {translatedSrt && (
+                  <div className="p-5 bg-[#090b12] border-2 border-emerald-500/40 rounded-2xl space-y-4 animate-in zoom-in-95 duration-300 shadow-2xl">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
+                      <div>
+                        <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>🇲🇲 မြန်မာဘာသာပြန် စာတန်းထိုး အောင်မြင်စွာ ရရှိပါပြီ (Myanmar Unicode SRT)</span>
+                        </span>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          CapCut / TikTok / Premiere Pro များတွင် အသင့်ထည့်သွင်း အသုံးပြုနိုင်ပါသည်
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => downloadFile(translatedSrt, 'VoiceMaster_Myanmar_Subtitles.srt', 'text/plain')}
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>🇲🇲 မြန်မာ SRT ဒေါင်းလုဒ်</span>
+                        </button>
+                        <button
+                          onClick={() => handleCopy(translatedSrt, 'translated_srt')}
+                          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center gap-1.5 border border-white/10 active:scale-95"
+                        >
+                          {copiedType === 'translated_srt' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedType === 'translated_srt' ? 'Copied SRT' : 'Copy SRT'}</span>
+                        </button>
+                        <button
+                          onClick={() => handleCopy(translatedTranscript, 'translated_transcript')}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 font-bold text-xs flex items-center gap-1.5 border border-indigo-500/30 active:scale-95"
+                        >
+                          {copiedType === 'translated_transcript' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <FileText className="w-3.5 h-3.5" />}
+                          <span>{copiedType === 'translated_transcript' ? 'Copied စာသား' : 'Copy စာသား'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Myanmar Plain Transcript */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                          <span>မြန်မာဘာသာပြန် စာသားအပြည့်အစုံ:</span>
+                          <span className="text-[10px] text-slate-500">Unicode Myanmar</span>
+                        </label>
+                        <textarea
+                          readOnly
+                          value={translatedTranscript}
+                          className="w-full h-64 bg-black/50 border border-white/10 rounded-xl p-3.5 text-xs leading-relaxed text-white focus:outline-none resize-none font-sans"
+                        />
+                      </div>
+
+                      {/* Interactive Myanmar SRT Timeline Inspector */}
+                      <div className="md:col-span-2 pt-2">
+                        <SrtTimelineInspector
+                          srtText={translatedSrt}
+                          title="🇲🇲 မြန်မာဘာသာပြန် စာတန်းထိုး Timeline (စက္ကန့်အလိုက်)"
+                          onCopy={handleCopy}
+                          onDownload={downloadFile}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Universal Standalone SRT Translator Box */}
+                <div className="border-t border-white/10 pt-5 mt-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-bold text-white flex items-center gap-2">
+                        <Languages className="w-4 h-4 text-blue-400" />
+                        <span>🌐 မည်သည့် SRT ဖိုင်/စာသားမဆို မြန်မာဘာသာသို့ တိုက်ရိုက်ပြောင်းလဲရန်</span>
+                      </h3>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        အင်္ဂလိပ်၊ တရုတ်၊ ထိုင်း၊ ကိုရီးယား၊ ဂျပန် သို့မဟုတ် အခြားဘာသာစကားဖြင့်ရှိသော မည်သည့် SRT ဖိုင်မဆို ထည့်သွင်းပြီး မြန်မာစာတန်းထိုးသို့ ပြောင်းလဲနိုင်ပါသည်
+                      </p>
+                    </div>
+
+                    {/* File Upload for external SRT */}
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".srt,.txt"
+                        id="external_srt_file"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              const content = reader.result as string;
+                              setCustomSrtInput(content);
+                            };
+                            reader.readAsText(file);
+                          }
+                        }}
+                      />
+                      <label
+                        htmlFor="external_srt_file"
+                        className="px-3 py-1.5 rounded-lg bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>.SRT ဖိုင် တင်သွင်းမည်</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <textarea
+                      rows={5}
+                      value={customSrtInput}
+                      onChange={(e) => setCustomSrtInput(e.target.value)}
+                      placeholder={`ဒီနေရာတွင် ပြင်ပမှ မည်သည့် .SRT စာတန်းထိုးကိုမဆို ကူးယူထည့်သွင်းပါ (ဥပမာ):\n1\n00:00:01,000 --> 00:00:04,500\nHello, welcome to this video lesson.\n\n2\n00:00:05,000 --> 00:00:08,200\nToday we are exploring artificial intelligence.`}
+                      className="w-full bg-[#080a13] border border-white/10 rounded-xl p-3.5 text-xs text-slate-200 placeholder-slate-600 font-mono focus:outline-none focus:border-blue-500 resize-none shadow-inner"
+                    />
+
+                    <div className="flex items-center justify-end">
+                      <button
+                        onClick={() => handleTranslateSrt(customSrtInput)}
+                        disabled={isTranslatingSrt || !customSrtInput.trim()}
+                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-2 active:scale-95 disabled:opacity-50 transition-all shadow-lg shadow-blue-600/30"
+                      >
+                        {isTranslatingSrt ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>မြန်မာဘာသာသို့ ပြန်ဆိုနေပါသည်...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Languages className="w-3.5 h-3.5" />
+                            <span>🇲🇲 မြန်မာ SRT သို့ ဘာသာပြန်မည်</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* NEW MODE 3: AUDIO SPEED & PITCH SHIFTER STUDIO (Pro Modifier)             */}
+        {/* ========================================================================= */}
+        {mainMode === 'audioModifier' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="bg-[#151926] border border-amber-500/20 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-6">
+              <div className="border-b border-white/10 pb-4">
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Sliders className="w-5 h-5 text-amber-400" />
+                  <span>🎛️ Audio Speed & Pitch Modifier Studio</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  အသံဖိုင်၏ မြန်နှုန်း (Speed) နှင့် အသံအနိမ့်အမြင့် (Pitch) ကို ကိုယ်တိုင်စိတ်ကြိုက် ချိန်ညှိပြီး TikTok ဟာသသံ သို့မဟုတ် စိတ်ဝင်စားဖွယ် Voice Tuning များ ပြုလုပ်နိုင်ပါသည်
+                </p>
+              </div>
+
+              <div className="space-y-5">
+                {/* Audio upload box */}
+                <div className="p-4 bg-[#0d101d] rounded-xl border border-white/5 space-y-3">
+                  <label className="text-xs font-bold text-slate-300 block">အသံဖိုင် ရွေးချယ်ပါ (MP3 / WAV သို့မဟုတ် ဖန်တီးပြီးသား အသံ):</label>
+                  
+                  {/* Quick Select from recent TTS/Dialogue */}
+                  <div className="flex flex-wrap gap-2">
+                    {ttsResult?.audioUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setShifterAudioData(ttsResult.audioUrl)}
+                        className="px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
+                      >
+                        <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>✨ လက်ရှိ TTS အသံကို ရွေးမည်</span>
+                      </button>
+                    )}
+                    {dialogueResult?.audioUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setShifterAudioData(dialogueResult.audioUrl)}
+                        className="px-3 py-1.5 rounded-lg bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
+                      >
+                        <Users className="w-3.5 h-3.5 text-amber-400" />
+                        <span>💬 စကားဝိုင်း အသံကို ရွေးမည်</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const r = new FileReader();
+                        r.onload = () => setShifterAudioData(r.result as string);
+                        r.readAsDataURL(file);
+                      }
+                    }}
+                    className="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-600 file:text-white hover:file:bg-amber-500 cursor-pointer"
+                  />
+
+                  {shifterAudioData && (
+                    <div className="p-2.5 bg-black/40 rounded-lg border border-emerald-500/30 flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>မူရင်းအသံဖိုင် ထည့်သွင်းထားပြီးပါပြီ</span>
+                      </span>
+                      <audio src={shifterAudioData} controls className="h-7 max-w-[200px]" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Slider Controls */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Speed Modifier slider */}
+                  <div className="p-4 bg-[#0c0e14] rounded-xl border border-white/5 space-y-3">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                      <span>မြန်နှုန်း multiplier (Speed Multiplier):</span>
+                      <span className="text-amber-400 font-mono">{shifterSpeed}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="2.0"
+                      step="0.05"
+                      value={shifterSpeed}
+                      onChange={(e) => setShifterSpeed(parseFloat(e.target.value))}
+                      className="w-full accent-amber-500"
+                    />
+                    <p className="text-[10px] text-slate-500 leading-normal">
+                      • 1.0x = ပုံမှန်အမြန်နှုန်း၊ 1.25x = အနည်းငယ်ပိုမြန်ပြီး သက်ဝင်၊ 0.8x = ပိုမိုနှေးကွေး
+                    </p>
+                  </div>
+
+                  {/* Pitch Modifier slider */}
+                  <div className="p-4 bg-[#0c0e14] rounded-xl border border-white/5 space-y-3">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                      <span>အသံအနိမ့်အမြင့် (Pitch Multiplier):</span>
+                      <span className="text-amber-400 font-mono">{shifterPitch}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="1.8"
+                      step="0.05"
+                      value={shifterPitch}
+                      onChange={(e) => setShifterPitch(parseFloat(e.target.value))}
+                      className="w-full accent-amber-500"
+                    />
+                    <p className="text-[10px] text-slate-500 leading-normal">
+                      • 1.3x = ရှဉ့်သံစူးစူး (Chipmunk Voice)၊ 0.8x = အောအောကြီး (Deep Monster Voice)
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action button */}
+                {shifterAudioData && (
+                  <button
+                    onClick={handleShiftAudio}
+                    disabled={isShifting}
+                    className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all shadow-lg shadow-amber-600/25"
+                  >
+                    {isShifting ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>FFmpeg က အသံလှိုင်းကို အမြန်နှုန်းနှင့် အမြင့်သံ ချိန်ညှိနေပါသည်...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sliders className="w-4 h-4" />
+                        <span>🎛️ အသံပြောင်းလဲမှု စတင်ပြုလုပ်မည် (Apply Adjustments)</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* Error Box */}
+                {shifterError && (
+                  <p className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-xs text-rose-300">
+                    {shifterError}
+                  </p>
+                )}
+
+                {/* Result Display */}
+                {shifterResultUrl && (
+                  <div className="p-4 bg-[#0a0c12] rounded-xl border border-emerald-500/35 space-y-4 animate-in fade-in">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+                      <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>အသံဖိုင်ကို စိတ်ကြိုက်ပြောင်းလဲ ပြီးပါပြီ!</span>
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setVideoAudioData(shifterResultUrl);
+                            setMainMode('video');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold flex items-center gap-1.5 shadow"
+                        >
+                          <Video className="w-3.5 h-3.5" />
+                          <span>ဗီဒီယို ပြုလုပ်မည် ➔</span>
+                        </button>
+                        <a
+                          href={shifterResultUrl}
+                          download={`VoiceMaster_Modified_${Date.now()}.mp3`}
+                          className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] flex items-center gap-1.5 shadow"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>ဒေါင်းလုဒ်ဆွဲမည် (.MP3)</span>
+                        </a>
+                      </div>
+                    </div>
+                    <audio src={shifterResultUrl} controls className="w-full" />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODE: 1-CLICK AUTO VIDEO PIPELINE (FEATURE 1)                             */}
+        {/* ========================================================================= */}
+        {mainMode === 'autoPipeline' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="bg-[#151926] border border-amber-500/30 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-6">
+              <div className="border-b border-white/10 pb-4">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold border border-amber-500/30 mb-2">
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Feature 1: 1-Click Viral Video Generator</span>
+                </div>
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>⚡ 1-Click Story to TikTok/Reels Video Engine</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  ခေါင်းစဉ် (Topic) ရိုက်ထည့်လိုက်ရုံဖြင့် AI က ဇာတ်ညွှန်းရေးဖွဲ့ခြင်း၊ လူအစစ်အသံထွက်ပြောင်းခြင်း၊ AI နောက်ခံပုံထုတ်ခြင်းနှင့် လှပသော MP4 Video အဖြစ် <b>၁ ချက်နှိပ်ရုံဖြင့် အပြီးစီး ဖန်တီးပေးပါမည်</b>
+                </p>
+              </div>
+
+              <form onSubmit={handleAutoPipeline} className="space-y-5">
+                {/* Topic Input */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-200 flex items-center justify-between">
+                    <span>ဗီဒီယို ပြုလုပ်လိုသော ခေါင်းစဉ် (Topic / Idea):</span>
+                    <span className="text-[11px] text-amber-400 font-normal">ဥပမာ - သရဲပုံပြင်၊ စိတ်ဓာတ်ခွန်အား၊ သမိုင်းဖြစ်ရပ်</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={pipelineTopic}
+                    onChange={(e) => setPipelineTopic(e.target.value)}
+                    placeholder="ဥပမာ - ညသန်းခေါင် အဝေးပြေးလမ်းမပေါ်က ထူးဆန်းသော ကားကြုံခရီးသည် (သို့မဟုတ်) စိတ်ဓာတ်ခွန်အား"
+                    className="w-full bg-[#0d101d] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all"
+                  />
+                </div>
+
+                {/* Genre, Duration & Aspect Ratio */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">ဇာတ်လမ်း အမျိုးအစား (Genre):</label>
+                    <select
+                      value={pipelineGenre}
+                      onChange={(e) => setPipelineGenre(e.target.value)}
+                      className="w-full bg-[#0d101d] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="motivation">💪 စိတ်ခွန်အားဖြည့် (Motivation)</option>
+                      <option value="horror">👻 သရဲ / ထိတ်လန့်ဖွယ် (Horror Mystery)</option>
+                      <option value="history">🏛️ သမိုင်းနှင့် ထူးခြားဖြစ်ရပ်များ (History & Facts)</option>
+                      <option value="tech">💻 နည်းပညာနှင့် အနာဂတ် AI (Tech & Future)</option>
+                      <option value="bedtime-story">🌙 ဒဏ္ဍာရီပုံပြင် (Folktale & Legend)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-amber-300">ဗီဒီယို ကြာမြင့်ချိန် (Duration):</label>
+                    <select
+                      value={pipelineDuration}
+                      onChange={(e) => setPipelineDuration(e.target.value as any)}
+                      className="w-full bg-[#0d101d] border border-amber-500/40 rounded-xl px-3 py-2.5 text-xs text-amber-200 font-bold focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="short">⚡ ၃၀ စက္ကန့် - ၁ မိနစ်တို (Shorts/Reels)</option>
+                      <option value="medium">🎬 ၂ မိနစ် - ၃ မိနစ် (Standard Story)</option>
+                      <option value="long">🎥 ၅ မိနစ် - ၈ မိနစ် (Long Narrative)</option>
+                      <option value="epic">🏆 ၁၀ မိနစ်အထိ ဇာတ်ကားရှည်အပြည့် (Up to 10 Mins)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">ဗီဒီယို အရွယ်အစား (Aspect Ratio):</label>
+                    <select
+                      value={pipelineAspectRatio}
+                      onChange={(e) => setPipelineAspectRatio(e.target.value as any)}
+                      className="w-full bg-[#0d101d] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="9:16">📱 9:16 Vertical (TikTok / Reels / Shorts)</option>
+                      <option value="16:9">💻 16:9 Horizontal (YouTube / TV)</option>
+                      <option value="1:1">📷 1:1 Square (Facebook / Instagram)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Error Banner */}
+                {pipelineError && (
+                  <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-200">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>{pipelineError}</span>
+                  </div>
+                )}
+
+                {/* Submit button */}
+                <button
+                  type="submit"
+                  disabled={isPipelineLoading || !pipelineTopic.trim()}
+                  className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-400 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-amber-600/30 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all"
+                >
+                  {isPipelineLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-amber-200" />
+                      <span>⚡ AI က ဇာတ်ညွှန်း၊ အသံနှင့် ဗီဒီယိုကို အလိုအလျောက် ပေါင်းစပ်ထုတ်လုပ်နေပါသည်...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-4 h-4 text-amber-300" />
+                      <span>⚡ 1-Click ဗီဒီယို အပြည့်အစုံ ဖန်တီးမည် (Auto-Generate MP4)</span>
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {/* Pipeline Result */}
+              {pipelineResult && (
+                <div className="p-5 bg-[#0a0c12] rounded-2xl border border-amber-500/30 space-y-5 animate-in fade-in">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+                    <div>
+                      <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>ဗီဒီယို အောင်မြင်စွာ ထုတ်လုပ်ပြီးစီးပါပြီ!</span>
+                      </span>
+                      <h3 className="text-sm font-bold text-white mt-1">{pipelineResult.title}</h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={pipelineResult.videoUrl}
+                        download={`VoiceMaster_Pipeline_${Date.now()}.mp4`}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>.MP4 Download</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Video Player */}
+                  <div className="max-w-md mx-auto aspect-[9/16] bg-black rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+                    <video src={pipelineResult.videoUrl} controls className="w-full h-full object-contain" />
+                  </div>
+
+                  {/* Script Accordion */}
+                  <div className="p-4 bg-[#121520] rounded-xl border border-white/5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-300">📖 AI ရေးဖွဲ့ထားသော ဇာတ်ညွှန်း:</span>
+                      <button
+                        onClick={() => handleCopy(pipelineResult.script, 'pipeline_script')}
+                        className="px-2.5 py-1 rounded bg-slate-800 text-slate-300 text-[10px] font-bold border border-white/5 flex items-center gap-1 active:scale-95"
+                      >
+                        {copiedType === 'pipeline_script' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedType === 'pipeline_script' ? 'Copied' : 'Copy'}</span>
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed max-h-36 overflow-y-auto whitespace-pre-line bg-black/30 p-2.5 rounded-lg">
+                      {pipelineResult.script}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODE: MULTI-LANGUAGE TRANSLATOR + SPEECH (FEATURE 4)                       */}
+        {/* ========================================================================= */}
+        {mainMode === 'translator' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="bg-[#151926] border border-blue-500/30 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-6">
+              <div className="border-b border-white/10 pb-4">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold border border-blue-500/30 mb-2">
+                  <Languages className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Feature 4: Global AI Translator & Dubbing</span>
+                </div>
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>🌐 Multi-Language AI Translator + Human Speech Studio</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  မြန်မာ၊ အင်္ဂလိပ်၊ ကိုရီးယား၊ ဂျပန်၊ တရုတ်၊ ထိုင်း ဘာသာစကားများကို တိကျမှန်ကန်စွာ ဘာသာပြန်ပြီး သက်ဆိုင်ရာ နိုင်ငံအသံထွက် လူသားစစ်စစ်ဖြင့် အသံဖိုင် ချက်ချင်း ထုတ်ယူနိုင်ပါသည်
+                </p>
+              </div>
+
+              <form onSubmit={handleTranslateAndSpeak} className="space-y-5">
+                {/* Source Text Area */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-200">ဘာသာပြန်လိုသော စာသား (Original Text):</label>
+                  <textarea
+                    rows={4}
+                    required
+                    value={translateText}
+                    onChange={(e) => setTranslateText(e.target.value)}
+                    placeholder="ဘာသာပြန်လိုသည့် စာသားများကို ရိုက်ထည့်ပါ (မြန်မာ သို့မဟုတ် မည်သည့်ဘာသာစကားမဆို)..."
+                    className="w-full bg-[#0d101d] border border-white/10 rounded-xl p-3.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none leading-relaxed"
+                  />
+                </div>
+
+                {/* Target Language Selector */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">ပြောင်းလဲလိုသော ဘာသာစကား (Target Language):</label>
+                    <select
+                      value={translateTargetLang}
+                      onChange={(e) => setTranslateTargetLang(e.target.value)}
+                      className="w-full bg-[#0d101d] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="en">🇺🇸 English (အင်္ဂလိပ်ဘာသာ)</option>
+                      <option value="my">🇲🇲 Myanmar (မြန်မာဘာသာ)</option>
+                      <option value="ko">🇰🇷 Korean (ကိုရီးယားဘာသာ)</option>
+                      <option value="ja">🇯🇵 Japanese (ဂျပန်ဘာသာ)</option>
+                      <option value="zh">🇨🇳 Chinese (တရုတ်ဘာသာ)</option>
+                      <option value="th">🇹🇭 Thai (ထိုင်းဘာသာ)</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">အသံ လေသံ (Voice Profile):</label>
+                    <select
+                      value={selectedVoice}
+                      onChange={(e) => setSelectedVoice(e.target.value)}
+                      className="w-full bg-[#0d101d] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                    >
+                      {voices.slice(0, 8).map(v => (
+                        <option key={v.id} value={v.id}>{v.name} ({v.desc})</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Error Box */}
+                {translateError && (
+                  <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-200">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>{translateError}</span>
+                  </div>
+                )}
+
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  disabled={isTranslateLoading || !translateText.trim()}
+                  className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold text-xs shadow-xl shadow-blue-600/30 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all"
+                >
+                  {isTranslateLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-blue-200" />
+                      <span>AI က ဘာသာပြန်ဆိုပြီး အသံဖိုင် ဖန်တီးနေပါသည်...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Languages className="w-4 h-4 text-blue-300" />
+                      <span>🌐 ဘာသာပြန်ပြီး အသံဖိုင် ထုတ်ယူမည် (Translate & Speak)</span>
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {/* Translation Result Display */}
+              {translateResult && (
+                <div className="p-5 bg-[#0a0c12] rounded-2xl border border-blue-500/30 space-y-4 animate-in fade-in">
+                  <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                    <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>ဘာသာပြန်နှင့် အသံဖိုင် အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!</span>
+                    </span>
+                    <button
+                      onClick={() => handleCopy(translateResult.translatedText, 'translated_text')}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold border border-white/10 flex items-center gap-1.5 active:scale-95"
+                    >
+                      {copiedType === 'translated_text' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedType === 'translated_text' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+
+                  {/* Translated Text Output */}
+                  <div className="p-4 bg-[#121520] rounded-xl border border-white/5 text-sm text-slate-100 font-medium leading-relaxed whitespace-pre-line">
+                    {translateResult.translatedText}
+                  </div>
+
+                  {/* Audio Player and Actions */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                    <audio src={translateResult.audioUrl} controls className="w-full sm:w-2/3 h-9" />
+                    <button
+                      onClick={() => downloadAudioFile(translateResult.audioUrl, `VoiceMaster_Translated_${Date.now()}.mp3`)}
+                      className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>.MP3 Download</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
       </main>
 
       {/* Footer */}
