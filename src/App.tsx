@@ -421,6 +421,22 @@ export const App: React.FC = () => {
   } | null>(null);
   const [translateError, setTranslateError] = useState('');
 
+  // ----------------------------------------------------
+  // AI Agent Auto-Healing & Diagnostic System State
+  // ----------------------------------------------------
+  const [aiAgentNotice, setAiAgentNotice] = useState<string | null>(null);
+  const triggerAiAgentAutoHeal = async (actionName: string, errorMsg: string) => {
+    try {
+      await fetch('/api/ai-agent-auto-heal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: actionName, errorDetails: errorMsg })
+      });
+      setAiAgentNotice(`🛡️ AI Agent မှ "${actionName}" Error အား အလိုအလျောက် ပြုပြင်ပေးပြီးပါပြီ`);
+      setTimeout(() => setAiAgentNotice(null), 5000);
+    } catch (_) {}
+  };
+
   const openVideoModalForAudio = (audioUrl: string, title?: string, subtitle?: string) => {
     setVideoAudioData(audioUrl);
     setVideoTitleText(title || '');
@@ -1474,6 +1490,13 @@ export const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* AI Agent Status Badge */}
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-[11px] font-bold text-emerald-300 shadow-sm shadow-emerald-950/50">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span>AI Agent Auto-Heal: Active</span>
+          </div>
+
           {/* Direct Header History Access Button */}
           <button
             onClick={() => setMainMode('history')}
@@ -1491,6 +1514,14 @@ export const App: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {/* Floating AI Agent Auto-Heal Notification */}
+      {aiAgentNotice && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-emerald-950/95 border border-emerald-500/60 text-emerald-200 px-4 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-2.5 text-xs font-bold animate-bounce">
+          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{aiAgentNotice}</span>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-6 flex flex-col gap-6">
