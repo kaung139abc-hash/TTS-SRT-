@@ -930,13 +930,38 @@ export function resolveVoiceForText(
            low.includes('jenny') || low.includes('premwadee') || low.includes('keomany') || low.includes('nanami') ||
            low.includes('sunhi') || low.includes('xiaoxiao') || low.includes('elvira') || low.includes('denise') ||
            low.includes('katja') || low.includes('svetlana') || low.includes('hoaimy') || low.includes('gadis') ||
-           low.includes('swara') || low.includes('zariyah');
+           low.includes('swara') || low.includes('zariyah') || low.includes('fatima') || low.includes('amal') ||
+           low.includes('noura') || low.includes('laila') || low.includes('aysha') || low.includes('rana') ||
+           low.includes('sana') || low.includes('layla') || low.includes('amany') || low.includes('maryam') ||
+           low.includes('hila') || low.includes('dilara') || low.includes('emel') || low.includes('banu') ||
+           low.includes('eka') || low.includes('siti') || low.includes('yesui') || low.includes('neerja') ||
+           low.includes('pallavi') || low.includes('shruti') || low.includes('nabanita') || low.includes('uzma') ||
+           low.includes('thilini') || low.includes('saranya') || low.includes('hemkala') || low.includes('latifa') ||
+           low.includes('aigul') || low.includes('madina');
   };
 
   const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(text || '');
   const hasLatin = /[a-zA-Z]/.test(text || '');
   const burmeseChars = (text.match(/[\u1000-\u109F\uAA60-\uAA7F]/g) || []).length;
   const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
+
+  // Direct neural voice pattern (e.g., th-TH-NiwatNeural, ja-JP-KeitaNeural, ar-SA-HamedNeural)
+  const isDirectNeural = /^[a-z]{2,3}-[A-Z]{2,3}-[A-Za-z]+Neural$/.test(finalVoice);
+
+  // If a specific country's neural voice was requested:
+  if (isDirectNeural) {
+    if (hasBurmese) {
+      // If text contains Burmese, ensure voice can pronounce Burmese
+      if (!BURMESE_CAPABLE_VOICES.has(finalVoice)) {
+        finalVoice = isFemale(finalVoice) ? 'my-MM-NilarNeural' : 'my-MM-ThihaNeural';
+      }
+    } else if (finalVoice.startsWith('my-MM-') && hasLatin && !hasBurmese) {
+      // Burmese voice requested but text is purely English/Latin -> switch to authentic English voice
+      finalVoice = isFemale(finalVoice) ? 'en-US-AvaMultilingualNeural' : 'en-US-AndrewMultilingualNeural';
+    }
+    // Otherwise keep the requested native neural voice (e.g. Thai, Japanese, Korean, Arabic, Hindi, etc.)
+    return { engineVoice: finalVoice, rate: finalRate, pitch: finalPitch };
+  }
 
   // 1. Pure English or predominantly English text:
   // MUST use authentic native English neural voices so English words are never slurred or broken
@@ -1227,6 +1252,76 @@ function splitIntoNaturalSentenceChunks(text: string, maxChunkLen: number = 250)
 }
 
 // -------------------------------------------------------------------------------------
+// High-Traffic Concurrency Shield (လူသုံးများချိန်တွင်လည်း Error မတက်စေရန် ကာကွယ်ပေးသော စနစ်)
+// Manages concurrent active synthesis requests to prevent network overload, rate limit spikes or WebSocket resets
+// -------------------------------------------------------------------------------------
+export class HighLoadConcurrencyLimiter {
+  private active = 0;
+  private queue: (() => void)[] = [];
+  constructor(private maxConcurrent: number = 16) {}
+
+  async acquire(timeoutMs: number = 25000): Promise<() => void> {
+    if (this.active < this.maxConcurrent) {
+      this.active++;
+      let released = false;
+      return () => {
+        if (!released) {
+          released = true;
+          this.release();
+        }
+      };
+    }
+
+    return new Promise<() => void>((resolve) => {
+      let released = false;
+      let timer: NodeJS.Timeout | null = null;
+
+      const trigger = () => {
+        if (timer) clearTimeout(timer);
+        this.active++;
+        resolve(() => {
+          if (!released) {
+            released = true;
+            this.release();
+          }
+        });
+      };
+
+      this.queue.push(trigger);
+
+      // Failsafe auto-timeout so requests NEVER hang or deadlock under heavy load
+      timer = setTimeout(() => {
+        const idx = this.queue.indexOf(trigger);
+        if (idx !== -1) {
+          this.queue.splice(idx, 1);
+          this.active++;
+          resolve(() => {
+            if (!released) {
+              released = true;
+              this.release();
+            }
+          });
+        }
+      }, timeoutMs);
+    });
+  }
+
+  private release() {
+    this.active = Math.max(0, this.active - 1);
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+
+  get stats() {
+    return { active: this.active, queued: this.queue.length };
+  }
+}
+
+export const globalSpeechConcurrencyLimiter = new HighLoadConcurrencyLimiter(16);
+
+// -------------------------------------------------------------------------------------
 // 100% Real Human Broadcast Studio Acoustic Mastering & Anti-Clipping Engine
 // EBU R128 Loudness Normalization (loudnorm) with -1.5dB True Peak Headroom ensures crystal-clear speech without any clipping, clicks, or background noise pumping
 // -------------------------------------------------------------------------------------
@@ -1236,15 +1331,8 @@ export async function applyStudioHumanMastering(rawAudioBuffer: Buffer): Promise
   const tempOut = `/tmp/master_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
   try {
     fs.writeFileSync(tempIn, rawAudioBuffer);
-    // Real Human Broadcast Studio Acoustic Mastering Chain:
-    // 1. Clean Highpass (80Hz sub-rumble cleanup)
-    // 2. Natural Neutral Vocal Body (200Hz +1.0dB, Q=1.2)
-    // 3. Mud/boxiness notch cleanup (800Hz -1.0dB, Q=1.8)
-    // 4. Syllable articulation & intelligibility (3200Hz +1.5dB, Q=1.4)
-    // 5. EBU R128 Transparent Loudness Normalization with -1.5dB True Peak Ceiling (100% Zero digital clipping, Zero clicks)
-    // 6. True Peak Safety Limiter (limit=-1.0dB)
     const masterFilter = 'highpass=f=80,equalizer=f=200:t=q:w=1.2:g=1.0,equalizer=f=800:t=q:w=1.8:g=-1.0,equalizer=f=3200:t=q:w=1.4:g=1.5,loudnorm=I=-16:TP=-1.5:LRA=9,alimiter=limit=-1.0dB';
-    await execAsync(`ffmpeg -y -i "${tempIn}" -af "${masterFilter}" -c:a libmp3lame -b:a 256k "${tempOut}"`);
+    await execAsync(`ffmpeg -y -i "${tempIn}" -af "${masterFilter}" -c:a libmp3lame -b:a 256k "${tempOut}"`, { timeout: 10000 });
     if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
       return fs.readFileSync(tempOut);
     }
@@ -2405,7 +2493,12 @@ async function translateWithGoogleEngine(
   try {
     const cleanText = text.trim();
     if (!cleanText) return { translatedText: '', detectedSourceLang: sourceLang };
-    const gtTarget = targetLang === 'zh' ? 'zh-CN' : targetLang;
+    let gtTarget = targetLang;
+    if (targetLang === 'zh') gtTarget = 'zh-CN';
+    else if (targetLang === 'zh-HK') gtTarget = 'zh-TW';
+    else if (targetLang === 'ar-AE') gtTarget = 'ar';
+    else if (targetLang === 'sg') gtTarget = 'en';
+    else if (targetLang === 'fil') gtTarget = 'tl';
 
     // Helper to translate a single URL-safe chunk (<= 600 chars to avoid HTTP 400 URI length limits)
     const translateRawChunk = async (chunk: string): Promise<string> => {
@@ -2484,104 +2577,173 @@ app.post('/api/translate-and-speak', async (req: Request, res: Response) => {
   const reqId = `${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
   const cleanInputText = text.trim();
 
+  // Protect system under heavy user traffic: queue cleanly without throwing errors
+  const releaseLock = await globalSpeechConcurrencyLimiter.acquire();
+
   try {
     const langNames: Record<string, string> = {
+      // Southeast Asia (အရှေ့တောင်အာရှ - အာဆီယံ ၁၁ နိုင်ငံ အကုန်)
       'my': 'Burmese (မြန်မာစကားပြော လေယူလေသိမ်း စစ်စစ် - Myanmar Unicode)',
-      'en': 'English (Natural fluent conversational English)',
       'th': 'Thai (ภาษาไทย - 100% authentic spoken Thai script)',
       'lo': 'Lao (လာအိုဘာသာ - ພາສາລາວ - 100% authentic spoken Lao script)',
+      'vi': 'Vietnamese (Tiếng Việt - 100% authentic natural Vietnamese)',
+      'ms': 'Malay (Bahasa Melayu - 100% authentic natural Malay)',
+      'sg': 'Singapore English (Natural Singaporean English)',
+      'id': 'Indonesian (Bahasa Indonesia - 100% authentic Indonesian)',
+      'jv': 'Javanese (Basa Jawa - 100% authentic Javanese script/language)',
+      'fil': 'Filipino / Tagalog (Wikang Filipino - 100% authentic Tagalog)',
+      'km': 'Cambodian / Khmer (ភាសាខ្មែរ - 100% authentic spoken Khmer script)',
+      'bn-BN': 'Brunei Malay (Bahasa Melayu Brunei - 100% authentic Brunei Malay)',
+      'tl': 'Timor-Leste (Tetum / Indonesian - 100% authentic East Timor language)',
+
+      // East Asia (အရှေ့အာရှ - နိုင်ငံနှင့် ဒေသများ အကုန်)
       'ja': 'Japanese (日本語 - 100% authentic natural Japanese)',
       'ko': 'Korean (한국어 - 100% authentic natural Korean Hangul)',
-      'zh': 'Chinese (Simplified Mandarin 中文)',
+      'zh': 'Chinese Simplified (简体中文 - Mandarin)',
+      'zh-TW': 'Taiwanese Traditional Chinese (繁體中文 - Traditional Mandarin)',
+      'zh-HK': 'Hong Kong Cantonese (粵語 / 廣東話 - Natural Cantonese)',
+      'mo': 'Macau Cantonese (澳門粵語 - Natural Macau Cantonese)',
+      'mn': 'Mongolian (Монгол хэл - 100% authentic Mongolian Cyrillic)',
+
+      // South Asia (တောင်အာရှ - SAARC နိုင်ငံအားလုံး)
+      'hi': 'Hindi (हिन्दी - 100% authentic spoken Hindi)',
+      'en-IN': 'Indian English (Natural fluent Indian English)',
+      'ta': 'Tamil (தமிழ் - 100% authentic spoken Tamil)',
+      'te': 'Telugu (తెలుగు - 100% authentic spoken Telugu)',
+      'bn-IN': 'Indian Bengali (বাংলা - 100% authentic Indian Bengali)',
+      'mr': 'Marathi (मराठी - 100% authentic spoken Marathi)',
+      'gu': 'Gujarati (ગુજરાતી - 100% authentic spoken Gujarati)',
+      'kn': 'Kannada (ಕನ್ನಡ - 100% authentic spoken Kannada)',
+      'ml': 'Malayalam (മലയാളം - 100% authentic spoken Malayalam)',
+      'ur-IN': 'Indian Urdu (اردو - 100% authentic Indian Urdu)',
+      'bn': 'Bangladeshi Bengali (বাংলা - 100% authentic Bangladeshi Bengali)',
+      'ur': 'Pakistani Urdu (اردو - 100% authentic Pakistani Urdu)',
+      'si': 'Sinhala (සිංහල - 100% authentic spoken Sinhala)',
+      'ta-LK': 'Sri Lankan Tamil (தமிழ் - 100% authentic Sri Lankan Tamil)',
+      'ne': 'Nepali (नेपाली - 100% authentic spoken Nepali)',
+      'bt': 'Bhutanese / Dzongkha (Bhutanese Himalayan language)',
+      'mv': 'Maldivian Dhivehi / English (Maldives natural language)',
+      'ps': 'Pashto (پښتو - 100% authentic Afghan Pashto)',
+      'fa-AF': 'Dari / Persian (دری - 100% authentic Afghan Dari / Persian)',
+
+      // Central Asia (အလယ်အာရှ - ၅ နိုင်ငံ အကုန်)
+      'kk': 'Kazakh (Қазақ тілі - 100% authentic Kazakh)',
+      'uz': 'Uzbek (O\'zbek tili - 100% authentic Uzbek)',
+      'ky': 'Kyrgyz (Кыргызча - 100% authentic Kyrgyz)',
+      'tg': 'Tajik (Тоҷикӣ - 100% authentic Tajik / Persian)',
+      'tk': 'Turkmen (Türkmençe - 100% authentic Turkmen)',
+
+      // West Asia & Middle East (အနောက်အာရှ နှင့် အရှေ့အလယ်ပိုင်း - ၁၈ နိုင်ငံ အကုန်)
+      'ar': 'Arabic (العربية - Saudi / Gulf Standard Arabic)',
+      'ar-AE': 'UAE Arabic (العربية الإماراتية - Emirati Gulf Arabic)',
+      'ar-QA': 'Qatari Arabic (العربية القطرية - Gulf Qatari Arabic)',
+      'ar-KW': 'Kuwaiti Arabic (العربية الكويتية - Gulf Kuwaiti Arabic)',
+      'ar-BH': 'Bahraini Arabic (العربية البحرينية - Gulf Bahraini Arabic)',
+      'ar-OM': 'Omani Arabic (العربية العمانية - Omani Arabic)',
+      'ar-IQ': 'Iraqi Arabic (العربية العراقية - Iraqi Arabic)',
+      'ar-JO': 'Jordanian Arabic (العربية الأردنية - Levantine Jordanian Arabic)',
+      'ar-LB': 'Lebanese Arabic (العربية اللبنانية - Levantine Lebanese Arabic)',
+      'ar-SY': 'Syrian Arabic (العربية السورية - Levantine Syrian Arabic)',
+      'ar-YE': 'Yemeni Arabic (العربية اليمنية - Yemeni Arabic)',
+      'ar-PS': 'Palestinian Arabic (العربية الفلسطينية - Levantine Arabic)',
+      'he': 'Hebrew (עברית - 100% authentic natural Hebrew)',
+      'fa': 'Persian (فارسی - 100% authentic Persian / Farsi)',
+      'tr': 'Turkish (Türkçe - 100% authentic Turkish)',
+      'az': 'Azerbaijani (Azərbaycan dili - 100% authentic Azerbaijani)',
+      'ka': 'Georgian (ქართული - 100% authentic Georgian)',
+      'hy': 'Armenian (Հայերեն - 100% authentic Armenian)',
+      'cy': 'Cypriot Greek/Turkish (Cypriot language)',
+
+      // Major Global Languages
+      'en': 'English (Natural fluent conversational English)',
       'es': 'Spanish (Español)',
       'fr': 'French (Français)',
       'de': 'German (Deutsch)',
-      'ru': 'Russian (Русский)',
-      'vi': 'Vietnamese (Tiếng Việt)',
-      'id': 'Indonesian (Bahasa Indonesia)',
-      'hi': 'Hindi (हिन्दी)',
-      'ar': 'Arabic (العربية)'
+      'ru': 'Russian (Русский)'
     };
 
     const targetLangName = langNames[targetLang] || 'English';
 
     // Native Voices Catalog for 100% authentic human accent in each country
     const nativeVoiceCatalog: Record<string, { male: string; female: string; fallbacks: string[] }> = {
-      'my': {
-        male: 'my-MM-ThihaNeural',
-        female: 'my-MM-NilarNeural',
-        fallbacks: ['my-MM-ThihaNeural', 'my-MM-NilarNeural']
-      },
-      'en': {
-        male: 'en-US-AndrewMultilingualNeural',
-        female: 'en-US-AvaMultilingualNeural',
-        fallbacks: ['en-US-AndrewMultilingualNeural', 'en-US-AvaMultilingualNeural', 'en-US-BrianMultilingualNeural', 'en-US-EmmaMultilingualNeural', 'en-AU-WilliamMultilingualNeural']
-      },
-      'th': {
-        male: 'th-TH-NiwatNeural',
-        female: 'th-TH-PremwadeeNeural',
-        fallbacks: ['th-TH-NiwatNeural', 'th-TH-PremwadeeNeural', 'th-TH-AcharaNeural']
-      },
-      'lo': {
-        male: 'lo-LA-ChanthavongNeural',
-        female: 'lo-LA-KeomanyNeural',
-        fallbacks: ['lo-LA-ChanthavongNeural', 'lo-LA-KeomanyNeural']
-      },
-      'ja': {
-        male: 'ja-JP-KeitaNeural',
-        female: 'ja-JP-NanamiNeural',
-        fallbacks: ['ja-JP-KeitaNeural', 'ja-JP-NanamiNeural', 'ja-JP-AoiNeural']
-      },
-      'ko': {
-        male: 'ko-KR-InJoonNeural',
-        female: 'ko-KR-SunHiNeural',
-        fallbacks: ['ko-KR-InJoonNeural', 'ko-KR-SunHiNeural', 'ko-KR-HyunsuMultilingualNeural']
-      },
-      'zh': {
-        male: 'zh-CN-YunxiNeural',
-        female: 'zh-CN-XiaoxiaoNeural',
-        fallbacks: ['zh-CN-YunxiNeural', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunjianNeural']
-      },
-      'es': {
-        male: 'es-ES-AlvaroNeural',
-        female: 'es-ES-ElviraNeural',
-        fallbacks: ['es-ES-AlvaroNeural', 'es-ES-ElviraNeural', 'es-MX-JorgeNeural']
-      },
-      'fr': {
-        male: 'fr-FR-HenriNeural',
-        female: 'fr-FR-DeniseNeural',
-        fallbacks: ['fr-FR-HenriNeural', 'fr-FR-DeniseNeural', 'fr-FR-VivienneMultilingualNeural']
-      },
-      'de': {
-        male: 'de-DE-ConradNeural',
-        female: 'de-DE-KatjaNeural',
-        fallbacks: ['de-DE-ConradNeural', 'de-DE-KatjaNeural', 'de-DE-FlorianMultilingualNeural']
-      },
-      'ru': {
-        male: 'ru-RU-DmitryNeural',
-        female: 'ru-RU-SvetlanaNeural',
-        fallbacks: ['ru-RU-DmitryNeural', 'ru-RU-SvetlanaNeural']
-      },
-      'vi': {
-        male: 'vi-VN-NamMinhNeural',
-        female: 'vi-VN-HoaiMyNeural',
-        fallbacks: ['vi-VN-NamMinhNeural', 'vi-VN-HoaiMyNeural']
-      },
-      'id': {
-        male: 'id-ID-ArdiNeural',
-        female: 'id-ID-GadisNeural',
-        fallbacks: ['id-ID-ArdiNeural', 'id-ID-GadisNeural']
-      },
-      'hi': {
-        male: 'hi-IN-MadhurNeural',
-        female: 'hi-IN-SwaraNeural',
-        fallbacks: ['hi-IN-MadhurNeural', 'hi-IN-SwaraNeural']
-      },
-      'ar': {
-        male: 'ar-SA-HamedNeural',
-        female: 'ar-SA-ZariyahNeural',
-        fallbacks: ['ar-SA-HamedNeural', 'ar-SA-ZariyahNeural']
-      }
+      // Southeast Asia (အရှေ့တောင်အာရှ)
+      'my': { male: 'my-MM-ThihaNeural', female: 'my-MM-NilarNeural', fallbacks: ['my-MM-ThihaNeural', 'my-MM-NilarNeural', 'en-AU-WilliamMultilingualNeural'] },
+      'th': { male: 'th-TH-NiwatNeural', female: 'th-TH-PremwadeeNeural', fallbacks: ['th-TH-NiwatNeural', 'th-TH-PremwadeeNeural', 'th-TH-AcharaNeural'] },
+      'lo': { male: 'lo-LA-ChanthavongNeural', female: 'lo-LA-KeomanyNeural', fallbacks: ['lo-LA-ChanthavongNeural', 'lo-LA-KeomanyNeural'] },
+      'vi': { male: 'vi-VN-NamMinhNeural', female: 'vi-VN-HoaiMyNeural', fallbacks: ['vi-VN-NamMinhNeural', 'vi-VN-HoaiMyNeural'] },
+      'ms': { male: 'ms-MY-OsmanNeural', female: 'ms-MY-YasminNeural', fallbacks: ['ms-MY-OsmanNeural', 'ms-MY-YasminNeural'] },
+      'sg': { male: 'en-SG-WayneNeural', female: 'en-SG-LunaNeural', fallbacks: ['en-SG-WayneNeural', 'en-SG-LunaNeural', 'en-US-AndrewMultilingualNeural'] },
+      'id': { male: 'id-ID-ArdiNeural', female: 'id-ID-GadisNeural', fallbacks: ['id-ID-ArdiNeural', 'id-ID-GadisNeural'] },
+      'jv': { male: 'jv-ID-DimasNeural', female: 'jv-ID-SitiNeural', fallbacks: ['jv-ID-DimasNeural', 'jv-ID-SitiNeural', 'id-ID-ArdiNeural'] },
+      'fil': { male: 'fil-PH-AngeloNeural', female: 'fil-PH-BlessicaNeural', fallbacks: ['fil-PH-AngeloNeural', 'fil-PH-BlessicaNeural', 'en-PH-JamesNeural'] },
+      'km': { male: 'km-KH-PisethNeural', female: 'km-KH-SreymomNeural', fallbacks: ['km-KH-PisethNeural', 'km-KH-SreymomNeural'] },
+      'bn-BN': { male: 'ms-MY-OsmanNeural', female: 'ms-MY-YasminNeural', fallbacks: ['ms-MY-OsmanNeural', 'ms-MY-YasminNeural'] },
+      'tl': { male: 'id-ID-ArdiNeural', female: 'id-ID-GadisNeural', fallbacks: ['id-ID-ArdiNeural', 'id-ID-GadisNeural'] },
+
+      // East Asia (အရှေ့အာရှ)
+      'ja': { male: 'ja-JP-KeitaNeural', female: 'ja-JP-NanamiNeural', fallbacks: ['ja-JP-KeitaNeural', 'ja-JP-NanamiNeural', 'ja-JP-AoiNeural'] },
+      'ko': { male: 'ko-KR-InJoonNeural', female: 'ko-KR-SunHiNeural', fallbacks: ['ko-KR-InJoonNeural', 'ko-KR-SunHiNeural', 'ko-KR-HyunsuMultilingualNeural'] },
+      'zh': { male: 'zh-CN-YunxiNeural', female: 'zh-CN-XiaoxiaoNeural', fallbacks: ['zh-CN-YunxiNeural', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunjianNeural'] },
+      'zh-TW': { male: 'zh-TW-YunJheNeural', female: 'zh-TW-HsiaoChenNeural', fallbacks: ['zh-TW-YunJheNeural', 'zh-TW-HsiaoChenNeural'] },
+      'zh-HK': { male: 'zh-HK-WanLungNeural', female: 'zh-HK-HiuMaanNeural', fallbacks: ['zh-HK-WanLungNeural', 'zh-HK-HiuMaanNeural', 'zh-HK-HiuGaaiNeural'] },
+      'mo': { male: 'zh-HK-WanLungNeural', female: 'zh-HK-HiuMaanNeural', fallbacks: ['zh-HK-WanLungNeural', 'zh-HK-HiuMaanNeural'] },
+      'mn': { male: 'mn-MN-BataaNeural', female: 'mn-MN-YesuiNeural', fallbacks: ['mn-MN-BataaNeural', 'mn-MN-YesuiNeural'] },
+
+      // South Asia (တောင်အာရှ)
+      'hi': { male: 'hi-IN-MadhurNeural', female: 'hi-IN-SwaraNeural', fallbacks: ['hi-IN-MadhurNeural', 'hi-IN-SwaraNeural'] },
+      'en-IN': { male: 'en-IN-PrabhatNeural', female: 'en-IN-NeerjaExpressiveNeural', fallbacks: ['en-IN-PrabhatNeural', 'en-IN-NeerjaNeural'] },
+      'ta': { male: 'ta-IN-ValluvarNeural', female: 'ta-IN-PallaviNeural', fallbacks: ['ta-IN-ValluvarNeural', 'ta-IN-PallaviNeural'] },
+      'te': { male: 'te-IN-MohanNeural', female: 'te-IN-ShrutiNeural', fallbacks: ['te-IN-MohanNeural', 'te-IN-ShrutiNeural'] },
+      'bn-IN': { male: 'bn-IN-BashkarNeural', female: 'bn-IN-TanishaaNeural', fallbacks: ['bn-IN-BashkarNeural', 'bn-IN-TanishaaNeural'] },
+      'mr': { male: 'mr-IN-ManoharNeural', female: 'mr-IN-AarohiNeural', fallbacks: ['mr-IN-ManoharNeural', 'mr-IN-AarohiNeural'] },
+      'gu': { male: 'gu-IN-NiranjanNeural', female: 'gu-IN-DhwaniNeural', fallbacks: ['gu-IN-NiranjanNeural', 'gu-IN-DhwaniNeural'] },
+      'kn': { male: 'kn-IN-GaganNeural', female: 'kn-IN-SapnaNeural', fallbacks: ['kn-IN-GaganNeural', 'kn-IN-SapnaNeural'] },
+      'ml': { male: 'ml-IN-MidhunNeural', female: 'ml-IN-SobhanaNeural', fallbacks: ['ml-IN-MidhunNeural', 'ml-IN-SobhanaNeural'] },
+      'ur-IN': { male: 'ur-IN-SalmanNeural', female: 'ur-IN-GulNeural', fallbacks: ['ur-IN-SalmanNeural', 'ur-IN-GulNeural'] },
+      'bn': { male: 'bn-BD-PradeepNeural', female: 'bn-BD-NabanitaNeural', fallbacks: ['bn-BD-PradeepNeural', 'bn-BD-NabanitaNeural'] },
+      'ur': { male: 'ur-PK-AsadNeural', female: 'ur-PK-UzmaNeural', fallbacks: ['ur-PK-AsadNeural', 'ur-PK-UzmaNeural'] },
+      'si': { male: 'si-LK-SameeraNeural', female: 'si-LK-ThiliniNeural', fallbacks: ['si-LK-SameeraNeural', 'si-LK-ThiliniNeural'] },
+      'ta-LK': { male: 'ta-LK-KumarNeural', female: 'ta-LK-SaranyaNeural', fallbacks: ['ta-LK-KumarNeural', 'ta-LK-SaranyaNeural'] },
+      'ne': { male: 'ne-NP-SagarNeural', female: 'ne-NP-HemkalaNeural', fallbacks: ['ne-NP-SagarNeural', 'ne-NP-HemkalaNeural'] },
+      'bt': { male: 'ne-NP-SagarNeural', female: 'ne-NP-HemkalaNeural', fallbacks: ['ne-NP-SagarNeural', 'ne-NP-HemkalaNeural'] },
+      'mv': { male: 'en-IN-PrabhatNeural', female: 'en-IN-NeerjaExpressiveNeural', fallbacks: ['en-IN-PrabhatNeural', 'en-IN-NeerjaNeural'] },
+      'ps': { male: 'ps-AF-GulNawazNeural', female: 'ps-AF-LatifaNeural', fallbacks: ['ps-AF-GulNawazNeural', 'ps-AF-LatifaNeural'] },
+      'fa-AF': { male: 'fa-IR-FaridNeural', female: 'fa-IR-DilaraNeural', fallbacks: ['fa-IR-FaridNeural', 'fa-IR-DilaraNeural'] },
+
+      // Central Asia (အလယ်အာရှ)
+      'kk': { male: 'kk-KZ-DauletNeural', female: 'kk-KZ-AigulNeural', fallbacks: ['kk-KZ-DauletNeural', 'kk-KZ-AigulNeural'] },
+      'uz': { male: 'uz-UZ-SardorNeural', female: 'uz-UZ-MadinaNeural', fallbacks: ['uz-UZ-SardorNeural', 'uz-UZ-MadinaNeural'] },
+      'ky': { male: 'kk-KZ-DauletNeural', female: 'kk-KZ-AigulNeural', fallbacks: ['kk-KZ-DauletNeural', 'kk-KZ-AigulNeural'] },
+      'tg': { male: 'fa-IR-FaridNeural', female: 'fa-IR-DilaraNeural', fallbacks: ['fa-IR-FaridNeural', 'fa-IR-DilaraNeural'] },
+      'tk': { male: 'tr-TR-AhmetNeural', female: 'tr-TR-EmelNeural', fallbacks: ['tr-TR-AhmetNeural', 'tr-TR-EmelNeural'] },
+
+      // West Asia & Middle East (အနောက်အာရှ နှင့် အရှေ့အလယ်ပိုင်း)
+      'ar': { male: 'ar-SA-HamedNeural', female: 'ar-SA-ZariyahNeural', fallbacks: ['ar-SA-HamedNeural', 'ar-SA-ZariyahNeural'] },
+      'ar-AE': { male: 'ar-AE-HamdanNeural', female: 'ar-AE-FatimaNeural', fallbacks: ['ar-AE-HamdanNeural', 'ar-AE-FatimaNeural'] },
+      'ar-QA': { male: 'ar-QA-MoazNeural', female: 'ar-QA-AmalNeural', fallbacks: ['ar-QA-MoazNeural', 'ar-QA-AmalNeural'] },
+      'ar-KW': { male: 'ar-KW-FahedNeural', female: 'ar-KW-NouraNeural', fallbacks: ['ar-KW-FahedNeural', 'ar-KW-NouraNeural'] },
+      'ar-BH': { male: 'ar-BH-AliNeural', female: 'ar-BH-LailaNeural', fallbacks: ['ar-BH-AliNeural', 'ar-BH-LailaNeural'] },
+      'ar-OM': { male: 'ar-OM-AbdullahNeural', female: 'ar-OM-AyshaNeural', fallbacks: ['ar-OM-AbdullahNeural', 'ar-OM-AyshaNeural'] },
+      'ar-IQ': { male: 'ar-IQ-BasselNeural', female: 'ar-IQ-RanaNeural', fallbacks: ['ar-IQ-BasselNeural', 'ar-IQ-RanaNeural'] },
+      'ar-JO': { male: 'ar-JO-TaimNeural', female: 'ar-JO-SanaNeural', fallbacks: ['ar-JO-TaimNeural', 'ar-JO-SanaNeural'] },
+      'ar-LB': { male: 'ar-LB-RamiNeural', female: 'ar-LB-LaylaNeural', fallbacks: ['ar-LB-RamiNeural', 'ar-LB-LaylaNeural'] },
+      'ar-SY': { male: 'ar-SY-LaithNeural', female: 'ar-SY-AmanyNeural', fallbacks: ['ar-SY-LaithNeural', 'ar-SY-AmanyNeural'] },
+      'ar-YE': { male: 'ar-YE-SalehNeural', female: 'ar-YE-MaryamNeural', fallbacks: ['ar-YE-SalehNeural', 'ar-YE-MaryamNeural'] },
+      'ar-PS': { male: 'ar-JO-TaimNeural', female: 'ar-JO-SanaNeural', fallbacks: ['ar-JO-TaimNeural', 'ar-JO-SanaNeural'] },
+      'he': { male: 'he-IL-AvriNeural', female: 'he-IL-HilaNeural', fallbacks: ['he-IL-AvriNeural', 'he-IL-HilaNeural'] },
+      'fa': { male: 'fa-IR-FaridNeural', female: 'fa-IR-DilaraNeural', fallbacks: ['fa-IR-FaridNeural', 'fa-IR-DilaraNeural'] },
+      'tr': { male: 'tr-TR-AhmetNeural', female: 'tr-TR-EmelNeural', fallbacks: ['tr-TR-AhmetNeural', 'tr-TR-EmelNeural'] },
+      'az': { male: 'az-AZ-BabekNeural', female: 'az-AZ-BanuNeural', fallbacks: ['az-AZ-BabekNeural', 'az-AZ-BanuNeural'] },
+      'ka': { male: 'ka-GE-GiorgiNeural', female: 'ka-GE-EkaNeural', fallbacks: ['ka-GE-GiorgiNeural', 'ka-GE-EkaNeural'] },
+      'hy': { male: 'ru-RU-DmitryNeural', female: 'ru-RU-SvetlanaNeural', fallbacks: ['ru-RU-DmitryNeural', 'ru-RU-SvetlanaNeural'] },
+      'cy': { male: 'tr-TR-AhmetNeural', female: 'tr-TR-EmelNeural', fallbacks: ['tr-TR-AhmetNeural', 'tr-TR-EmelNeural'] },
+
+      // Global
+      'en': { male: 'en-US-AndrewMultilingualNeural', female: 'en-US-AvaMultilingualNeural', fallbacks: ['en-US-AndrewMultilingualNeural', 'en-US-AvaMultilingualNeural', 'en-US-BrianMultilingualNeural', 'en-US-EmmaMultilingualNeural', 'en-AU-WilliamMultilingualNeural'] },
+      'es': { male: 'es-ES-AlvaroNeural', female: 'es-ES-ElviraNeural', fallbacks: ['es-ES-AlvaroNeural', 'es-ES-ElviraNeural', 'es-MX-JorgeNeural'] },
+      'fr': { male: 'fr-FR-HenriNeural', female: 'fr-FR-DeniseNeural', fallbacks: ['fr-FR-HenriNeural', 'fr-FR-DeniseNeural', 'fr-FR-VivienneMultilingualNeural'] },
+      'de': { male: 'de-DE-ConradNeural', female: 'de-DE-KatjaNeural', fallbacks: ['de-DE-ConradNeural', 'de-DE-KatjaNeural', 'de-DE-FlorianMultilingualNeural'] },
+      'ru': { male: 'ru-RU-DmitryNeural', female: 'ru-RU-SvetlanaNeural', fallbacks: ['ru-RU-DmitryNeural', 'ru-RU-SvetlanaNeural'] }
     };
 
     const langCatalog = nativeVoiceCatalog[targetLang] || nativeVoiceCatalog['en'];
@@ -2624,22 +2786,47 @@ app.post('/api/translate-and-speak', async (req: Request, res: Response) => {
     console.log(`[Translate ${reqId}] Translating ${cleanInputText.length} chars in ${translationChunks.length} chunks to target [${targetLang}: ${targetLangName}] with voice: ${selectedVoiceToUse}...`);
 
     const isBurmeseTarget = targetLang === 'my';
-    const burmeseStyleInstruction = isBurmeseTarget
-      ? `CRITICAL FOR BURMESE: Translate into 100% natural, colloquial spoken Burmese (မြန်မာစကားပြော လေယူလေသိမ်း "တယ်/ပါ/မှာ/တဲ့" သုံးပါ - "သည်/၏/၌/၍" အသုံးမပြုရ)။`
-      : `CRITICAL FOR TARGET LANGUAGE (${targetLangName.toUpperCase()}):
+    
+    // Comprehensive native localization rules for flawless comprehension by native speakers
+    const targetLanguageSpecificRules: Record<string, string> = {
+      'my': 'CRITICAL FOR BURMESE: Translate into 100% natural, colloquial spoken Burmese (မြန်မာစကားပြော လေယူလေသိမ်း "တယ်/ပါ/မှာ/တဲ့/နော်/ခင်ဗျာ/ရှင့်" သုံးပါ - စာအုပ်ဆန်သော "သည်/၏/၌/၍/သော်လည်း" လုံးဝ မသုံးရ)။ လူချင်းတိုက်ရိုက် စကားပြောသကဲ့သို့ သဘာဝကျကျ အတိအကျ ဘာသာပြန်ပါ။',
+      'en': 'CRITICAL FOR ENGLISH: Translate into 100% fluent, idiomatic, natural native English (US/International). Avoid rigid direct literal translation; use natural phrasing that native speakers actually say.',
+      'ja': 'CRITICAL FOR JAPANESE (日本語): Translate into 100% natural, authentic standard Japanese using polite form (丁寧語 - です/ます). Use natural particle collocations (は/が/を/に) and phrasing so native Japanese speakers immediately understand effortlessly.',
+      'ko': 'CRITICAL FOR KOREAN (한국어): Translate into 100% natural, polite standard Korean (존댓말 - 해요체/하십시오체). Use natural Korean idioms and correct particles (은/는, 이/가).',
+      'zh': 'CRITICAL FOR CHINESE (简体中文): Translate into 100% authentic, idiomatic modern Chinese (普通话). Use standard native sentence structure and natural everyday phrasing.',
+      'zh-TW': 'CRITICAL FOR TAIWANESE (繁體中文): Translate into authentic Traditional Chinese as used in Taiwan with proper cultural vocabulary.',
+      'zh-HK': 'CRITICAL FOR CANTONESE (粵語): Translate into natural colloquial Hong Kong Cantonese (廣東話) phrasing.',
+      'th': 'CRITICAL FOR THAI (ภาษาไทย): Translate into 100% natural, authentic spoken Thai with polite particles (ครับ/ค่ะ). Avoid awkward transliterated English word orders.',
+      'lo': 'CRITICAL FOR LAO (ພາສາລາວ): Translate into 100% authentic, respectful Lao language (ສະບາຍດີ, ໂດຍ, ເຈົ້າ) in standard Lao script.',
+      'vi': 'CRITICAL FOR VIETNAMESE (Tiếng Việt): Translate into natural, fluent Vietnamese with standard tones and polite conversational particles.',
+      'id': 'CRITICAL FOR INDONESIAN (Bahasa Indonesia): Translate into fluent, standard, and natural Indonesian as understood across Indonesia.',
+      'es': 'CRITICAL FOR SPANISH (Español): Translate into natural, idiomatic Spanish with correct grammatical gender and verb conjugations.',
+      'ru': 'CRITICAL FOR RUSSIAN (Русский): Translate into grammatically flawless, natural native Russian with proper cases and aspects.',
+      'ar': 'CRITICAL FOR ARABIC (العربية): Translate into clear, high-quality Modern Standard Arabic with natural syntax and correct grammatical agreement.',
+      'hi': 'CRITICAL FOR HINDI (हिन्दी): Translate into natural, respectful spoken Hindi (आप form) with authentic vocabulary.',
+      'ur': 'CRITICAL FOR URDU (اردو): Translate into natural, polite Urdu with authentic phrasing.'
+    };
+
+    const specificRule = targetLanguageSpecificRules[targetLang] || `CRITICAL FOR TARGET LANGUAGE (${targetLangName.toUpperCase()}):
 The output MUST be 100% translated into ${targetLangName}.
+Translate accurately and idiomatically into 100% authentic, fluent ${targetLangName}. The phrasing must sound completely natural to native speakers, avoiding word-for-word translation.
 DO NOT OUTPUT BURMESE, DO NOT REPEAT SOURCE TEXT, AND DO NOT INCLUDE ANY BURMESE CHARACTERS.`;
 
     const translateSingleChunk = async (chunkText: string) => {
-      const prompt = `You are a master native localization expert specializing in ${targetLangName}.
-Translate the following source text accurately, naturally, and culturally into 100% authentic ${targetLangName}.
-${burmeseStyleInstruction}
-Preserve all formatting and paragraph breaks.
+      const prompt = `You are a certified master native localization expert and bilingual translator specializing in ${targetLangName}.
+Your objective is to translate the source text with 100% absolute accuracy, semantic fidelity, and native fluency so that native speakers of ${targetLangName} will understand it clearly, naturally, and comfortably without any awkwardness or misunderstanding.
+
+GUIDELINES FOR NATIVE EXCELLENCE:
+1. Native Fluency & Nuance: Do not perform stiff word-for-word machine translation. Convey the exact meaning, tone, emotion, and context in phrasing that native speakers actually speak and write.
+2. Accuracy & Completeness: Preserve all names, dates, numbers, facts, technical terms, and paragraph structures accurately.
+3. Target Language Specific Directive:
+${specificRule}
+4. Clean Output: The translated text must be STRICTLY in ${targetLangName}. Do NOT include explanations, romanization, notes, or source characters.
 
 Return strictly a valid JSON object matching:
 {
   "detectedSourceLang": "string",
-  "translatedText": "string (the complete translated text strictly in ${targetLangName})"
+  "translatedText": "string (the complete, flawless translated text strictly in ${targetLangName})"
 }
 
 Source text to translate:
@@ -2647,7 +2834,7 @@ Source text to translate:
 ${chunkText}
 """`;
 
-      const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-flash-lite-latest', 'gemini-3.8-flash'];
+      const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
       for (const m of candidateModels) {
         if (depletedDailyModels.has(m)) continue;
         try {
@@ -2799,6 +2986,8 @@ ${chunkText}
   } catch (err: any) {
     console.error(`[Translate ${reqId}] Error:`, err);
     return res.status(500).json({ error: err.message || 'ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။' });
+  } finally {
+    releaseLock();
   }
 });
 
@@ -2822,23 +3011,84 @@ app.post('/api/live-voice-interpret', upload.single('audioFile'), async (req: Re
   const reqId = `${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
   let tempAudioPath = file ? file.path : '';
 
+  // Protect system under heavy user traffic: queue cleanly without dropping audio
+  const releaseLock = await globalSpeechConcurrencyLimiter.acquire();
+
   try {
     const langNames: Record<string, string> = {
+      // Southeast Asia
       'my': 'Burmese (မြန်မာစကားပြော)',
-      'lo': 'Lao (လာအိုဘာသာ - ພາສາລາວ)',
       'th': 'Thai (ภาษาไทย)',
-      'en': 'English',
-      'zh': 'Chinese (Mandarin 中文)',
+      'lo': 'Lao (လာအိုဘာသာ - ພາສາລາວ)',
+      'vi': 'Vietnamese (Tiếng Việt)',
+      'ms': 'Malay (Bahasa Melayu)',
+      'sg': 'Singapore English',
+      'id': 'Indonesian (Bahasa Indonesia)',
+      'jv': 'Javanese (Basa Jawa)',
+      'fil': 'Filipino / Tagalog (Wikang Filipino)',
+      'km': 'Cambodian / Khmer (ភាសាខ្មែរ)',
+      'bn-BN': 'Brunei Malay',
+      'tl': 'Timor-Leste',
+      // East Asia
       'ja': 'Japanese (日本語)',
       'ko': 'Korean (한국어)',
+      'zh': 'Chinese (Mandarin 中文)',
+      'zh-TW': 'Taiwanese Mandarin (繁體中文)',
+      'zh-HK': 'Hong Kong Cantonese (粵語)',
+      'mo': 'Macau Cantonese',
+      'mn': 'Mongolian (Монгол хэл)',
+      // South Asia
+      'hi': 'Hindi (हिन्दी)',
+      'en-IN': 'Indian English',
+      'ta': 'Tamil (தமிழ்)',
+      'te': 'Telugu (తెలుగు)',
+      'bn-IN': 'Indian Bengali (বাংলা)',
+      'mr': 'Marathi (मराठी)',
+      'gu': 'Gujarati (ગુજરાતી)',
+      'kn': 'Kannada (ಕನ್ನಡ)',
+      'ml': 'Malayalam (മലയാളം)',
+      'ur-IN': 'Indian Urdu (اردو)',
+      'bn': 'Bangladeshi Bengali (বাংলা)',
+      'ur': 'Pakistani Urdu (اردو)',
+      'si': 'Sinhala (සිංහල)',
+      'ta-LK': 'Sri Lankan Tamil (தமிழ்)',
+      'ne': 'Nepali (नेपाली)',
+      'bt': 'Bhutanese',
+      'mv': 'Maldivian Dhivehi',
+      'ps': 'Pashto (پښتو)',
+      'fa-AF': 'Dari / Persian (دری)',
+      // Central Asia
+      'kk': 'Kazakh (Қазақ тілі)',
+      'uz': 'Uzbek (O\'zbek tili)',
+      'ky': 'Kyrgyz (Кыргызча)',
+      'tg': 'Tajik (Тоҷикӣ)',
+      'tk': 'Turkmen (Türkmençe)',
+      // West Asia & Middle East
+      'ar': 'Arabic (العربية)',
+      'ar-AE': 'UAE Arabic (العربية)',
+      'ar-QA': 'Qatari Arabic (العربية)',
+      'ar-KW': 'Kuwaiti Arabic (العربية)',
+      'ar-BH': 'Bahraini Arabic (العربية)',
+      'ar-OM': 'Omani Arabic (العربية)',
+      'ar-IQ': 'Iraqi Arabic (العربية)',
+      'ar-JO': 'Jordanian Arabic (العربية)',
+      'ar-LB': 'Lebanese Arabic (العربية)',
+      'ar-SY': 'Syrian Arabic (العربية)',
+      'ar-YE': 'Yemeni Arabic (العربية)',
+      'ar-PS': 'Palestinian Arabic (العربية)',
+      'he': 'Hebrew (עברית)',
+      'fa': 'Persian (فارسی)',
+      'tr': 'Turkish (Türkçe)',
+      'az': 'Azerbaijani (Azərbaycan)',
+      'ka': 'Georgian (ქართული)',
+      'hy': 'Armenian (Հայերեն)',
+      'cy': 'Cypriot',
+      // Global
+      'en': 'English',
       'es': 'Spanish (Español)',
       'fr': 'French (Français)',
       'de': 'German (Deutsch)',
-      'ru': 'Russian (Русский)',
-      'vi': 'Vietnamese (Tiếng Việt)',
-      'id': 'Indonesian (Bahasa Indonesia)',
-      'hi': 'Hindi (हिन्दी)',
-      'ar': 'Arabic (العربية)'
+      'ru': 'Russian (Русский)'
     };
 
     const sourceLangName = langNames[sourceLang] || sourceLang;
@@ -2874,7 +3124,7 @@ Listen to this audio carefully and transcribe exactly what was spoken with 100% 
 - Primary spoken language expected: ${sourceLangName}.
 Return ONLY the exact transcribed spoken words without quotes, formatting, or commentary.`;
 
-        const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-flash-lite-latest'];
+        const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
         for (const m of modelsToTry) {
           if (depletedDailyModels.has(m)) continue;
           try {
@@ -2908,19 +3158,23 @@ Return ONLY the exact transcribed spoken words without quotes, formatting, or co
       return res.status(400).json({ error: 'အသံဖမ်းယူမှု သို့မဟုတ် စာသား မတွေ့ရှိပါ။ ကျေးဇူးပြု၍ မိုက်ကရိုဖုန်းကို နှိပ်ပြီး ပြန်ပြောပေးပါခင်ဗျာ။' });
     }
 
-    // 2. Translate into Target Language with Native Precision
+    // 2. Translate into Target Language with 100% Native Precision
     let translatedText = '';
-    const transPrompt = `You are a world-class professional live simultaneous interpreter and native linguist.
-Translate the following real-time conversational speech from ${sourceLangName} into ${targetLangName} with 100% native authenticity, accuracy, and natural everyday conversational fluency.
+    const transPrompt = `You are a world-class professional certified simultaneous interpreter and native linguist.
+Translate the following real-time conversational speech from ${sourceLangName} into ${targetLangName} with 100% native authenticity, accuracy, and natural everyday conversational fluency so that any native speaker of ${targetLangName} understands it immediately, accurately, and naturally.
 
 CORE RULES FOR NATIVE EXCELLENCE:
-1. Native Fluency: Translate into the natural, idiomatic spoken phrasing that native locals actually use in real-life conversations (avoid robotic, formal, or literal word-for-word machine translation).
+1. Native Fluency: Translate into the natural, idiomatic spoken phrasing that native locals actually use in real-life conversations (strictly avoid robotic, formal, or literal word-for-word machine translation).
 2. Cultural Tone & Nuance: Preserve the exact intent, politeness level, question structure, friendly greetings, and emotional nuance.
 3. Language-Specific Guidelines:
+   - When translating to Japanese (日本語): Use natural standard polite Japanese (丁寧語 - です/ます), natural phrasing, and natural particles so native Japanese speakers understand effortlessly.
+   - When translating to Korean (한국어): Use standard polite Korean (존댓말 - 해요체/하십시오체) and natural Korean idioms.
+   - When translating to Chinese (中文): Use standard natural modern colloquial Chinese (普通话) and authentic word order.
+   - When translating to Thai (ภาษาไทย): Use natural conversational Thai with appropriate polite endings (ครับ/ค่ะ).
    - When translating to Lao (ພາສາລາວ): Use natural everyday Lao vocabulary and respectful particles (e.g., ສະບາຍດີ, ໂດຍ / ເຈົ້າ, ແມ່ນແລ້ວ, ຂອບໃຈຫຼາຍໆ, ຍິນດີທີ່ໄດ້ຮູ້ຈັກ).
    - When translating to Burmese (မြန်မာစကား): Use natural everyday spoken Myanmar phrases (e.g., မင်္ဂလာပါ, ဟုတ်ကဲ့ပါ, နေကောင်းရဲ့လား, ဘယ်လောက်ကျပါသလဲ, ကျေးဇူးအများကြီးတင်ပါတယ်).
-   - When translating to Thai (ภาษาไทย): Use natural conversational Thai with appropriate polite endings (ครับ/ค่ะ).
-   - When translating to other languages (English, Chinese, Japanese, Korean, Vietnamese, Russian, etc.): Ensure fluent, natural native phrasing.
+   - When translating to English: Use 100% natural, fluent conversational English without awkward literal phrasing.
+   - When translating to other languages (Spanish, Russian, Vietnamese, Arabic, Hindi, etc.): Ensure fluent, natural native phrasing.
 4. Completeness: Never omit key numbers, names, locations, prices, or questions.
 
 Spoken input (${sourceLangName}): "${originalTranscript}"
@@ -2928,7 +3182,7 @@ Target language: ${targetLangName}
 
 Return ONLY the final translated sentence in ${targetLangName} script. Do NOT add notes, quotes, romanization, or explanation.`;
 
-    const transModels = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-flash-lite-latest'];
+    const transModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
     for (const m of transModels) {
       if (depletedDailyModels.has(m)) continue;
       try {
@@ -2966,21 +3220,84 @@ Return ONLY the final translated sentence in ${targetLangName} script. Do NOT ad
 
     // 3. Synthesize Spoken Audio in Target Language's Native Neural Voice
     const nativeVoices: Record<string, { male: string; female: string }> = {
+      // Southeast Asia (အရှေ့တောင်အာရှ)
       'my': { male: 'my-MM-ThihaNeural', female: 'my-MM-NilarNeural' },
-      'lo': { male: 'lo-LA-ChanthavongNeural', female: 'lo-LA-KeomanyNeural' },
       'th': { male: 'th-TH-NiwatNeural', female: 'th-TH-PremwadeeNeural' },
-      'en': { male: 'en-US-AndrewMultilingualNeural', female: 'en-US-AvaMultilingualNeural' },
-      'zh': { male: 'zh-CN-YunxiNeural', female: 'zh-CN-XiaoxiaoNeural' },
+      'lo': { male: 'lo-LA-ChanthavongNeural', female: 'lo-LA-KeomanyNeural' },
+      'vi': { male: 'vi-VN-NamMinhNeural', female: 'vi-VN-HoaiMyNeural' },
+      'ms': { male: 'ms-MY-OsmanNeural', female: 'ms-MY-YasminNeural' },
+      'sg': { male: 'en-SG-WayneNeural', female: 'en-SG-LunaNeural' },
+      'id': { male: 'id-ID-ArdiNeural', female: 'id-ID-GadisNeural' },
+      'jv': { male: 'jv-ID-DimasNeural', female: 'jv-ID-SitiNeural' },
+      'fil': { male: 'fil-PH-AngeloNeural', female: 'fil-PH-BlessicaNeural' },
+      'km': { male: 'km-KH-PisethNeural', female: 'km-KH-SreymomNeural' },
+      'bn-BN': { male: 'ms-MY-OsmanNeural', female: 'ms-MY-YasminNeural' },
+      'tl': { male: 'id-ID-ArdiNeural', female: 'id-ID-GadisNeural' },
+
+      // East Asia (အရှေ့အာရှ)
       'ja': { male: 'ja-JP-KeitaNeural', female: 'ja-JP-NanamiNeural' },
       'ko': { male: 'ko-KR-InJoonNeural', female: 'ko-KR-SunHiNeural' },
+      'zh': { male: 'zh-CN-YunxiNeural', female: 'zh-CN-XiaoxiaoNeural' },
+      'zh-TW': { male: 'zh-TW-YunJheNeural', female: 'zh-TW-HsiaoChenNeural' },
+      'zh-HK': { male: 'zh-HK-WanLungNeural', female: 'zh-HK-HiuMaanNeural' },
+      'mo': { male: 'zh-HK-WanLungNeural', female: 'zh-HK-HiuMaanNeural' },
+      'mn': { male: 'mn-MN-BataaNeural', female: 'mn-MN-YesuiNeural' },
+
+      // South Asia (တောင်အာရှ)
+      'hi': { male: 'hi-IN-MadhurNeural', female: 'hi-IN-SwaraNeural' },
+      'en-IN': { male: 'en-IN-PrabhatNeural', female: 'en-IN-NeerjaExpressiveNeural' },
+      'ta': { male: 'ta-IN-ValluvarNeural', female: 'ta-IN-PallaviNeural' },
+      'te': { male: 'te-IN-MohanNeural', female: 'te-IN-ShrutiNeural' },
+      'bn-IN': { male: 'bn-IN-BashkarNeural', female: 'bn-IN-TanishaaNeural' },
+      'mr': { male: 'mr-IN-ManoharNeural', female: 'mr-IN-AarohiNeural' },
+      'gu': { male: 'gu-IN-NiranjanNeural', female: 'gu-IN-DhwaniNeural' },
+      'kn': { male: 'kn-IN-GaganNeural', female: 'kn-IN-SapnaNeural' },
+      'ml': { male: 'ml-IN-MidhunNeural', female: 'ml-IN-SobhanaNeural' },
+      'ur-IN': { male: 'ur-IN-SalmanNeural', female: 'ur-IN-GulNeural' },
+      'bn': { male: 'bn-BD-PradeepNeural', female: 'bn-BD-NabanitaNeural' },
+      'ur': { male: 'ur-PK-AsadNeural', female: 'ur-PK-UzmaNeural' },
+      'si': { male: 'si-LK-SameeraNeural', female: 'si-LK-ThiliniNeural' },
+      'ta-LK': { male: 'ta-LK-KumarNeural', female: 'ta-LK-SaranyaNeural' },
+      'ne': { male: 'ne-NP-SagarNeural', female: 'ne-NP-HemkalaNeural' },
+      'bt': { male: 'ne-NP-SagarNeural', female: 'ne-NP-HemkalaNeural' },
+      'mv': { male: 'en-IN-PrabhatNeural', female: 'en-IN-NeerjaExpressiveNeural' },
+      'ps': { male: 'ps-AF-GulNawazNeural', female: 'ps-AF-LatifaNeural' },
+      'fa-AF': { male: 'fa-IR-FaridNeural', female: 'fa-IR-DilaraNeural' },
+
+      // Central Asia (အလယ်အာရှ)
+      'kk': { male: 'kk-KZ-DauletNeural', female: 'kk-KZ-AigulNeural' },
+      'uz': { male: 'uz-UZ-SardorNeural', female: 'uz-UZ-MadinaNeural' },
+      'ky': { male: 'kk-KZ-DauletNeural', female: 'kk-KZ-AigulNeural' },
+      'tg': { male: 'fa-IR-FaridNeural', female: 'fa-IR-DilaraNeural' },
+      'tk': { male: 'tr-TR-AhmetNeural', female: 'tr-TR-EmelNeural' },
+
+      // West Asia & Middle East (အနောက်အာရှ နှင့် အရှေ့အလယ်ပိုင်း)
+      'ar': { male: 'ar-SA-HamedNeural', female: 'ar-SA-ZariyahNeural' },
+      'ar-AE': { male: 'ar-AE-HamdanNeural', female: 'ar-AE-FatimaNeural' },
+      'ar-QA': { male: 'ar-QA-MoazNeural', female: 'ar-QA-AmalNeural' },
+      'ar-KW': { male: 'ar-KW-FahedNeural', female: 'ar-KW-NouraNeural' },
+      'ar-BH': { male: 'ar-BH-AliNeural', female: 'ar-BH-LailaNeural' },
+      'ar-OM': { male: 'ar-OM-AbdullahNeural', female: 'ar-OM-AyshaNeural' },
+      'ar-IQ': { male: 'ar-IQ-BasselNeural', female: 'ar-IQ-RanaNeural' },
+      'ar-JO': { male: 'ar-JO-TaimNeural', female: 'ar-JO-SanaNeural' },
+      'ar-LB': { male: 'ar-LB-RamiNeural', female: 'ar-LB-LaylaNeural' },
+      'ar-SY': { male: 'ar-SY-LaithNeural', female: 'ar-SY-AmanyNeural' },
+      'ar-YE': { male: 'ar-YE-SalehNeural', female: 'ar-YE-MaryamNeural' },
+      'ar-PS': { male: 'ar-JO-TaimNeural', female: 'ar-JO-SanaNeural' },
+      'he': { male: 'he-IL-AvriNeural', female: 'he-IL-HilaNeural' },
+      'fa': { male: 'fa-IR-FaridNeural', female: 'fa-IR-DilaraNeural' },
+      'tr': { male: 'tr-TR-AhmetNeural', female: 'tr-TR-EmelNeural' },
+      'az': { male: 'az-AZ-BabekNeural', female: 'az-AZ-BanuNeural' },
+      'ka': { male: 'ka-GE-GiorgiNeural', female: 'ka-GE-EkaNeural' },
+      'hy': { male: 'ru-RU-DmitryNeural', female: 'ru-RU-SvetlanaNeural' },
+      'cy': { male: 'tr-TR-AhmetNeural', female: 'tr-TR-EmelNeural' },
+
+      // Global
+      'en': { male: 'en-US-AndrewMultilingualNeural', female: 'en-US-AvaMultilingualNeural' },
       'es': { male: 'es-ES-AlvaroNeural', female: 'es-ES-ElviraNeural' },
       'fr': { male: 'fr-FR-HenriNeural', female: 'fr-FR-DeniseNeural' },
       'de': { male: 'de-DE-ConradNeural', female: 'de-DE-KatjaNeural' },
-      'ru': { male: 'ru-RU-DmitryNeural', female: 'ru-RU-SvetlanaNeural' },
-      'vi': { male: 'vi-VN-NamMinhNeural', female: 'vi-VN-HoaiMyNeural' },
-      'id': { male: 'id-ID-ArdiNeural', female: 'id-ID-GadisNeural' },
-      'hi': { male: 'hi-IN-MadhurNeural', female: 'hi-IN-SwaraNeural' },
-      'ar': { male: 'ar-SA-HamedNeural', female: 'ar-SA-ZariyahNeural' }
+      'ru': { male: 'ru-RU-DmitryNeural', female: 'ru-RU-SvetlanaNeural' }
     };
 
     const targetVoiceMap = nativeVoices[targetLang] || nativeVoices['en'];
@@ -3011,6 +3328,7 @@ Return ONLY the final translated sentence in ${targetLangName} script. Do NOT ad
     console.error(`[Live Interpret ${reqId}] Error:`, err);
     return res.status(500).json({ error: err.message || 'စကားပြန် အသံဖမ်းယူ ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။' });
   } finally {
+    releaseLock();
     if (tempAudioPath && fs.existsSync(tempAudioPath)) {
       try { fs.unlinkSync(tempAudioPath); } catch (_) {}
     }
@@ -3177,7 +3495,7 @@ Return strictly a valid JSON array matching this schema:
 Input Subtitles:
 ${JSON.stringify(batchCues)}`;
 
-      const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-flash-lite-latest', 'gemini-3.8-flash'];
+      const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
       for (const m of modelsToTry) {
         if (depletedDailyModels.has(m)) continue;
         try {

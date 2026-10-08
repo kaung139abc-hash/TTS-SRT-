@@ -6,9 +6,10 @@ import {
   ExternalLink, Layers, ArrowRight, Settings2, Sliders, UserCheck,
   FileAudio, Info, Mic, X, BookOpen, Wand2, Lightbulb, History, Trash2, RotateCcw, Music, Music2, Disc,
   Users, Plus, ArrowUp, ArrowDown, MessageSquare, Users2, Megaphone, Zap, ShieldCheck, MoveVertical, Search, Square, Scissors, Gauge,
-  Radio, ArrowLeftRight, MessageSquareQuote, Send, MicOff, VolumeX
+  Radio, ArrowLeftRight, MessageSquareQuote, Send, MicOff, VolumeX, Globe
 } from 'lucide-react';
 import { getAllHistory, saveHistoryRecord, deleteHistoryRecord, clearAllHistoryRecords, StoredHistoryItem } from './historyDb';
+import { APP_LANGUAGES, APP_TRANSLATIONS, AppLanguage } from './translations/appTranslations';
 
 export interface InterpretMessage {
   id: string;
@@ -320,60 +321,360 @@ export function convertBookishToSpokenBurmese(text: string): string {
 }
 
 export const TARGET_LANGUAGES = [
+  // --- အရှေ့တောင်အာရှ (Southeast Asia - အာဆီယံ ၁၁ နိုင်ငံ အကုန်) ---
+  { id: 'my', flag: '🇲🇲', name: 'Myanmar (မြန်မာ)', nativeName: 'မြန်မာစကားပြော' },
+  { id: 'th', flag: '🇹🇭', name: 'Thailand (ထိုင်း)', nativeName: 'ภาษาไทย' },
+  { id: 'lo', flag: '🇱🇦', name: 'Laos (လာအို)', nativeName: 'ພາສາລາວ' },
+  { id: 'vi', flag: '🇻🇳', name: 'Vietnam (ဗီယက်နမ်)', nativeName: 'Tiếng Việt' },
+  { id: 'ms', flag: '🇲🇾', name: 'Malaysia (မလေးရှား)', nativeName: 'Bahasa Melayu' },
+  { id: 'sg', flag: '🇸🇬', name: 'Singapore (စင်ကာပူ)', nativeName: 'Singapore English' },
+  { id: 'id', flag: '🇮🇩', name: 'Indonesia (အင်ဒိုနီးရှား)', nativeName: 'Bahasa Indonesia' },
+  { id: 'jv', flag: '🇮🇩', name: 'Indonesia - Java (အင်ဒိုနီးရှား ဂျာဗား)', nativeName: 'Basa Jawa' },
+  { id: 'fil', flag: '🇵🇭', name: 'Philippines (ဖိလစ်ပိုင် / တာဂါလော့)', nativeName: 'Filipino / Tagalog' },
+  { id: 'km', flag: '🇰🇭', name: 'Cambodia (ကမ္ဘောဒီးယား / ခမာ)', nativeName: 'ភាសាខ្មែរ (Khmer)' },
+  { id: 'bn-BN', flag: '🇧🇳', name: 'Brunei (ဘရူနိုင်း)', nativeName: 'Melayu Brunei' },
+  { id: 'tl', flag: '🇹🇱', name: 'Timor-Leste (အရှေ့တီမော / တီမောလက်စ်တီ)', nativeName: 'Timor-Leste' },
+
+  // --- အရှေ့အာရှ (East Asia - နိုင်ငံနှင့် ဒေသများ အကုန်) ---
+  { id: 'ja', flag: '🇯🇵', name: 'Japan (ဂျပန်)', nativeName: '日本語' },
+  { id: 'ko', flag: '🇰🇷', name: 'South Korea (တောင်ကိုရီးယား)', nativeName: '한국어' },
+  { id: 'zh', flag: '🇨🇳', name: 'China (တရုတ်ပြည်မ မန်ဒရင်း)', nativeName: '简体中文' },
+  { id: 'zh-TW', flag: '🇹🇼', name: 'Taiwan (ထိုင်ဝမ်)', nativeName: '繁體中文' },
+  { id: 'zh-HK', flag: '🇭🇰', name: 'Hong Kong (ဟောင်ကောင် ကန်တုံ)', nativeName: '粵語 / 廣東話' },
+  { id: 'mo', flag: '🇲🇴', name: 'Macau (မကာအို ကန်တုံ)', nativeName: '澳門粵語' },
+  { id: 'mn', flag: '🇲🇳', name: 'Mongolia (မွန်ဂိုလီးယား)', nativeName: 'Монгол хэл' },
+
+  // --- တောင်အာရှ (South Asia - SAARC နိုင်ငံအားလုံး) ---
+  { id: 'hi', flag: '🇮🇳', name: 'India (အိန္ဒိယ ဟိန္ဒီ)', nativeName: 'हिन्दी' },
+  { id: 'en-IN', flag: '🇮🇳', name: 'India English (အိန္ဒိယ အင်္ဂလိပ်)', nativeName: 'Indian English' },
+  { id: 'ta', flag: '🇮🇳', name: 'India Tamil (အိန္ဒိယ တမီးလ်)', nativeName: 'தமிழ்' },
+  { id: 'te', flag: '🇮🇳', name: 'India Telugu (အိန္ဒိယ တီလီဂူ)', nativeName: 'తెలుగు' },
+  { id: 'bn-IN', flag: '🇮🇳', name: 'India Bengali (အိန္ဒိယ ဘင်္ဂါလီ)', nativeName: 'বাংলা (ভারত)' },
+  { id: 'mr', flag: '🇮🇳', name: 'India Marathi (အိန္ဒိယ မာရသီ)', nativeName: 'मराठी' },
+  { id: 'gu', flag: '🇮🇳', name: 'India Gujarati (အိန္ဒိယ ဂူဂျာရတ်)', nativeName: 'ગુજરાતી' },
+  { id: 'kn', flag: '🇮🇳', name: 'India Kannada (အိန္ဒိယ ကန်နာဒါ)', nativeName: 'ಕನ್ನಡ' },
+  { id: 'ml', flag: '🇮🇳', name: 'India Malayalam (အိန္ဒိယ မလေးယာလမ်)', nativeName: 'മലയാളം' },
+  { id: 'ur-IN', flag: '🇮🇳', name: 'India Urdu (အိန္ဒိယ အူရဒူ)', nativeName: 'اردو (بھارت)' },
+  { id: 'bn', flag: '🇧🇩', name: 'Bangladesh (ဘင်္ဂလားဒေ့ရှ် / ဘင်္ဂါလီ)', nativeName: 'বাংলা (বাংলাদেশ)' },
+  { id: 'ur', flag: '🇵🇰', name: 'Pakistan (ပါကစ္စတန် / အူရဒူ)', nativeName: 'اردو (پاکستان)' },
+  { id: 'si', flag: '🇱🇰', name: 'Sri Lanka Sinhala (သီရိလင်္ကာ ဆင်ဟာလာ)', nativeName: 'සිංහල' },
+  { id: 'ta-LK', flag: '🇱🇰', name: 'Sri Lanka Tamil (သီရိလင်္ကာ တမီးလ်)', nativeName: 'தமிழ் (இலங்கை)' },
+  { id: 'ne', flag: '🇳🇵', name: 'Nepal (နီပေါ)', nativeName: 'नेपाली' },
+  { id: 'bt', flag: '🇧🇹', name: 'Bhutan (ဘူတန်)', nativeName: 'འབྲུག་ཡུལ (Bhutan)' },
+  { id: 'mv', flag: '🇲🇻', name: 'Maldives (မော်လ်ဒိုက်)', nativeName: 'ދިވެހި (Maldives)' },
+  { id: 'ps', flag: '🇦🇫', name: 'Afghanistan Pashto (အာဖဂန်နစ္စတန် ပါရှတို)', nativeName: 'پښتو' },
+  { id: 'fa-AF', flag: '🇦🇫', name: 'Afghanistan Dari (အာဖဂန်နစ္စတန် ဒါရီ / ပါရှန်း)', nativeName: 'دری' },
+
+  // --- အလယ်အာရှ (Central Asia - ၅ နိုင်ငံ အကုန်) ---
+  { id: 'kk', flag: '🇰🇿', name: 'Kazakhstan (ကာဇက်စတန်)', nativeName: 'Қазақ тілі' },
+  { id: 'uz', flag: '🇺🇿', name: 'Uzbekistan (ဥဇဘက်ကစ္စတန်)', nativeName: "O'zbek tili" },
+  { id: 'ky', flag: '🇰🇬', name: 'Kyrgyzstan (ကာဂျစ္စတန်)', nativeName: 'Кыргызча' },
+  { id: 'tg', flag: '🇹🇯', name: 'Tajikistan (တာဂျစ်ကစ္စတန်)', nativeName: 'Тоҷикӣ' },
+  { id: 'tk', flag: '🇹🇲', name: 'Turkmenistan (တာ့ခ်မင်နစ္စတန်)', nativeName: 'Türkmençe' },
+
+  // --- အနောက်အာရှ နှင့် အရှေ့အလယ်ပိုင်း (West Asia & Middle East - ၁၈ နိုင်ငံ အကုန်) ---
+  { id: 'ar', flag: '🇸🇦', name: 'Saudi Arabia (ဆော်ဒီအာရေဗျ / အာရပ်)', nativeName: 'العربية (السعودية)' },
+  { id: 'ar-AE', flag: '🇦🇪', name: 'UAE (ယူအေအီး ဒူဘိုင်း)', nativeName: 'العربية (الإمارات)' },
+  { id: 'ar-QA', flag: '🇶🇦', name: 'Qatar (ကာတာ)', nativeName: 'العربية (قطر)' },
+  { id: 'ar-KW', flag: '🇰🇼', name: 'Kuwait (ကူဝိတ်)', nativeName: 'العربية (الكويت)' },
+  { id: 'ar-BH', flag: '🇧🇭', name: 'Bahrain (ဘာရိန်း)', nativeName: 'العربية (البحرين)' },
+  { id: 'ar-OM', flag: '🇴🇲', name: 'Oman (အိုမန်)', nativeName: 'العربية (عمان)' },
+  { id: 'ar-IQ', flag: '🇮🇶', name: 'Iraq (အီရတ်)', nativeName: 'العربية (العراق)' },
+  { id: 'ar-JO', flag: '🇯🇴', name: 'Jordan (ဂျော်ဒန်)', nativeName: 'العربية (الأردن)' },
+  { id: 'ar-LB', flag: '🇱🇧', name: 'Lebanon (လက်ဘနွန်)', nativeName: 'العربية (لبنان)' },
+  { id: 'ar-SY', flag: '🇸🇾', name: 'Syria (ဆီးရီးယား)', nativeName: 'العربية (سوريا)' },
+  { id: 'ar-YE', flag: '🇾🇪', name: 'Yemen (ယီမင်)', nativeName: 'العربية (اليمن)' },
+  { id: 'ar-PS', flag: '🇵🇸', name: 'Palestine (ပါလက်စတိုင်း)', nativeName: 'العربية (فلسطين)' },
+  { id: 'he', flag: '🇮🇱', name: 'Israel (အစ္စရေး / ဟီဘရူး)', nativeName: 'עברית' },
+  { id: 'fa', flag: '🇮🇷', name: 'Iran (အီရန် / ပါရှန်း)', nativeName: 'فارسی' },
+  { id: 'tr', flag: '🇹🇷', name: 'Turkey (တူရကီ)', nativeName: 'Türkçe' },
+  { id: 'az', flag: '🇦🇿', name: 'Azerbaijan (အဇာဘိုင်ဂျန်)', nativeName: 'Azərbaycan dili' },
+  { id: 'ka', flag: '🇬🇪', name: 'Georgia (ဂျော်ဂျီယာ)', nativeName: 'ქართული' },
+  { id: 'hy', flag: '🇦🇲', name: 'Armenia (အာမေးနီးယား)', nativeName: 'Հայերեն' },
+  { id: 'cy', flag: '🇨🇾', name: 'Cyprus (ဆိုက်ပရပ်စ်)', nativeName: 'Κυπριακά / Kıbrıs' },
+
+  // --- အခြား အဓိက နိုင်ငံတကာ ဘာသာစကားများ (Other Global Major Languages) ---
   { id: 'en', flag: '🇺🇸', name: 'English (အမေရိကန် / အင်္ဂလိပ်)', nativeName: 'English' },
-  { id: 'my', flag: '🇲🇲', name: 'Myanmar (မြန်မာဘာသာ Unicode)', nativeName: 'မြန်မာစကားပြော' },
-  { id: 'lo', flag: '🇱🇦', name: 'Lao (လာအိုဘာသာ - ພາສາລາວ)', nativeName: 'ພາສາລາວ' },
-  { id: 'th', flag: '🇹🇭', name: 'Thai (ထိုင်းဘာသာ - ภาษาไทย)', nativeName: 'ภาษาไทย' },
-  { id: 'ja', flag: '🇯🇵', name: 'Japanese (ဂျပန်ဘာသာ - 日本語)', nativeName: '日本語' },
-  { id: 'ko', flag: '🇰🇷', name: 'Korean (ကိုရီးယားဘာသာ - 한국어)', nativeName: '한국어' },
-  { id: 'zh', flag: '🇨🇳', name: 'Chinese (တရုတ် မန်ဒရင်း - 中文)', nativeName: '中文' },
-  { id: 'es', flag: '🇪🇸', name: 'Spanish (စပိန်ဘာသာ - Español)', nativeName: 'Español' },
-  { id: 'fr', flag: '🇫🇷', name: 'French (ပြင်သစ်ဘာသာ - Français)', nativeName: 'Français' },
-  { id: 'de', flag: '🇩🇪', name: 'German (ဂျာမန်ဘာသာ - Deutsch)', nativeName: 'Deutsch' },
-  { id: 'ru', flag: '🇷🇺', name: 'Russian (ရုရှားဘာသာ - Русский)', nativeName: 'Русский' },
-  { id: 'vi', flag: '🇻🇳', name: 'Vietnamese (ဗီယက်နမ်ဘာသာ - Tiếng Việt)', nativeName: 'Tiếng Việt' },
-  { id: 'id', flag: '🇮🇩', name: 'Indonesian (အင်ဒိုနီးရှားဘာသာ)', nativeName: 'Bahasa Indonesia' },
-  { id: 'hi', flag: '🇮🇳', name: 'Hindi (ဟိန္ဒီဘာသာ - हिन्दी)', nativeName: 'हिन्दी' },
-  { id: 'ar', flag: '🇸🇦', name: 'Arabic (အာရဗီဘာသာ - العربية)', nativeName: 'العربية' }
+  { id: 'es', flag: '🇪🇸', name: 'Spain (စပိန်)', nativeName: 'Español' },
+  { id: 'fr', flag: '🇫🇷', name: 'France (ပြင်သစ်)', nativeName: 'Français' },
+  { id: 'de', flag: '🇩🇪', name: 'Germany (ဂျာမနီ)', nativeName: 'Deutsch' },
+  { id: 'ru', flag: '🇷🇺', name: 'Russia (ရုရှား)', nativeName: 'Русский' }
 ];
 
 export const TARGET_LANG_VOICES: Record<string, { id: string; name: string; desc: string; country: string }[]> = {
-  en: [
-    { id: 'en-US-AndrewMultilingualNeural', name: 'Andrew (အမျိုးသားအသံ - US Native)', desc: 'သဘာဝကျပြီး ဆွဲဆောင်မှုရှိသော အမေရိကန် အသံထွက်', country: '🇺🇸' },
-    { id: 'en-US-AvaMultilingualNeural', name: 'Ava (အမျိုးသမီးအသံ - US Native)', desc: 'ချိုသာကြည်လင်သော အမေရိကန် အမျိုးသမီး အသံထွက်', country: '🇺🇸' },
-    { id: 'en-US-BrianMultilingualNeural', name: 'Brian (အမျိုးသားအသံ - Deep & Professional)', desc: 'ရုပ်သံသံဟန် တည်ကြည်သောအသံ', country: '🇺🇸' },
-    { id: 'en-US-EmmaMultilingualNeural', name: 'Emma (အမျိုးသမီးအသံ - Warm & Clear)', desc: 'စာဖတ်သံနှင့် ရှင်းပြသံအတွက် အထူးကောင်းမွန်', country: '🇺🇸' },
-    { id: 'en-AU-WilliamMultilingualNeural', name: 'William (ဩစတြေးလျ အမျိုးသား)', desc: 'သဘာဝကျသော ဩစတြေးလျ အသံဟန်', country: '🇦🇺' }
-  ],
+  // Southeast Asia (အရှေ့တောင်အာရှ)
   my: [
     { id: 'my-MM-ThihaNeural', name: 'သီဟ (Thiha - Pure Human Cinema Male)', desc: '၁၀၀% စံမြန်မာ လူသားစစ်စစ် ရုပ်ရှင်ဆန်ဆန် တည်ကြည်ပြတ်သားသော အမျိုးသားအသံ', country: '🇲🇲' },
     { id: 'my-MM-NilarNeural', name: 'နီလာ (Nilar - Pure Human Cinema Female)', desc: '၁၀၀% စံမြန်မာ လူသားစစ်စစ် ချိုသာကြည်လင်သော အမျိုးသမီးအသံ', country: '🇲🇲' },
     { id: 'en-AU-WilliamMultilingualNeural', name: 'ဝီလျံ (William - Pure Human Cinema Deep)', desc: 'တည်ကြည်လေးနက်ပြီး အလွန်သဘာဝကျသော ၁၀၀% လူသားစစ်စစ် Deep Voice', country: '🇲🇲' },
     { id: 'en-US-AndrewMultilingualNeural', name: 'အင်ဒရူး (Andrew - Fast Storyteller)', desc: 'သွက်လက်ရွှင်လန်းသော လူသားစစ်စစ် အမျိုးသားအသံ', country: '🇲🇲' }
   ],
-  lo: [
-    { id: 'lo-LA-KeomanyNeural', name: 'Keomany (ကီယိုမာနီ - လာအို အမျိုးသမီးအသံ)', desc: 'ချိုသာကြည်လင်သော သဘာဝလာအိုစကားပြော အမျိုးသမီးအသံ (၁၀၀% Authentic Lao)', country: '🇱🇦' },
-    { id: 'lo-LA-ChanthavongNeural', name: 'Chanthavong (ချန်သာဗွန် - လာအို အမျိုးသားအသံ)', desc: '၁၀၀% သဘာဝကျသော လာအိုစကားပြော အမျိုးသားလေသံ', country: '🇱🇦' }
-  ],
   th: [
-    { id: 'th-TH-NiwatNeural', name: 'Niwat (နိဝတ် - ထိုင်းအမျိုးသားအသံ)', desc: '၁၀၀% သဘာဝကျသော ထိုင်းစကားပြော လေသံစစ်စစ်', country: '🇹🇭' },
-    { id: 'th-TH-PremwadeeNeural', name: 'Premwadee (ပရမ်ဝတီ - ထိုင်းအမျိုးသမီးအသံ)', desc: 'ချိုသာသော ထိုင်းစကားပြော အမျိုးသမီးအသံ', country: '🇹🇭' },
+    { id: 'th-TH-NiwatNeural', name: 'Niwat (နိဝတ် - ထိုင်းအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ထိုင်းစကားပြော လေသံစစ်စစ်', country: '🇹🇭' },
+    { id: 'th-TH-PremwadeeNeural', name: 'Premwadee (ပရမ်ဝတီ - ထိုင်းအမျိုးသမီး)', desc: 'ချိုသာသော ထိုင်းစကားပြော အမျိုးသမီးအသံ', country: '🇹🇭' },
     { id: 'th-TH-AcharaNeural', name: 'Achara (အာချာရာ - သဘာဝထိုင်းအသံ)', desc: 'ကြည်လင်ရှင်းလင်းသော ထိုင်းအသံ', country: '🇹🇭' }
   ],
+  lo: [
+    { id: 'lo-LA-ChanthavongNeural', name: 'Chanthavong (ချန်သာဗွန် - လာအို အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော လာအိုစကားပြော အမျိုးသားလေသံ', country: '🇱🇦' },
+    { id: 'lo-LA-KeomanyNeural', name: 'Keomany (ကီယိုမာနီ - လာအို အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော သဘာဝလာအိုစကားပြော အမျိုးသမီးအသံ', country: '🇱🇦' }
+  ],
+  vi: [
+    { id: 'vi-VN-NamMinhNeural', name: 'NamMinh (နမ်မင်း - ဗီယက်နမ်အမျိုးသား)', desc: 'ဗီယက်နမ်စကားပြော သဘာဝအသံ', country: '🇻🇳' },
+    { id: 'vi-VN-HoaiMyNeural', name: 'HoaiMy (ဟွိုင်မီ - ဗီယက်နမ်အမျိုးသမီး)', desc: 'ချိုသာသော ဗီယက်နမ်အမျိုးသမီးအသံ', country: '🇻🇳' }
+  ],
+  ms: [
+    { id: 'ms-MY-OsmanNeural', name: 'Osman (အော့စ်မန် - မလေးရှားအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော မလေးစကားပြော အမျိုးသားအသံ', country: '🇲🇾' },
+    { id: 'ms-MY-YasminNeural', name: 'Yasmin (ယက်စ်မင် - မလေးရှားအမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော မလေးအမျိုးသမီးအသံ', country: '🇲🇾' }
+  ],
+  sg: [
+    { id: 'en-SG-WayneNeural', name: 'Wayne (ဝိန်း - စင်ကာပူအမျိုးသား)', desc: 'သဘာဝကျသော စင်ကာပူ အင်္ဂလိပ်စကားပြော အသံ', country: '🇸🇬' },
+    { id: 'en-SG-LunaNeural', name: 'Luna (လူနာ - စင်ကာပူအမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော စင်ကာပူ အမျိုးသမီးအသံ', country: '🇸🇬' }
+  ],
+  id: [
+    { id: 'id-ID-ArdiNeural', name: 'Ardi (အာဒီ - အင်ဒိုနီးရှားအမျိုးသား)', desc: 'အင်ဒိုနီးရှားစကားပြော သဘာဝအသံ', country: '🇮🇩' },
+    { id: 'id-ID-GadisNeural', name: 'Gadis (ဂါဒစ် - အင်ဒိုနီးရှားအမျိုးသမီး)', desc: 'ချိုသာသော အင်ဒိုနီးရှားအမျိုးသမီးအသံ', country: '🇮🇩' }
+  ],
+  jv: [
+    { id: 'jv-ID-DimasNeural', name: 'Dimas (ဒီမတ်စ် - ဂျာဗား အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဂျာဗား (Javanese) အမျိုးသားအသံ', country: '🇮🇩' },
+    { id: 'jv-ID-SitiNeural', name: 'Siti (စီတီ - ဂျာဗား အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဂျာဗား အမျိုးသမီးအသံ', country: '🇮🇩' }
+  ],
+  fil: [
+    { id: 'fil-PH-AngeloNeural', name: 'Angelo (အန်ဂျလို - ဖိလစ်ပိုင်အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော တာဂါလော့/ဖိလစ်ပိုင် အသံစစ်စစ်', country: '🇵🇭' },
+    { id: 'fil-PH-BlessicaNeural', name: 'Blessica (ဘလက်စီကာ - ဖိလစ်ပိုင်အမျိုးသမီး)', desc: 'ချိုသာသော တာဂါလော့ အမျိုးသမီး သဘာဝအသံ', country: '🇵🇭' },
+    { id: 'en-PH-JamesNeural', name: 'James (ဂျိမ်းစ် - ဖိလစ်ပိုင် အင်္ဂလိပ်အသံ)', desc: 'ဖိလစ်ပိုင် အင်္ဂလိပ်စကားပြော သဘာဝအသံ', country: '🇵🇭' }
+  ],
+  km: [
+    { id: 'km-KH-PisethNeural', name: 'Piseth (ပီဆက် - ခမာ/ကမ္ဘောဒီးယား အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ခမာစကားပြော အမျိုးသားအသံ', country: '🇰🇭' },
+    { id: 'km-KH-SreymomNeural', name: 'Sreymom (ဆရီးမွန် - ခမာ/ကမ္ဘောဒီးယား အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ခမာ အမျိုးသမီးအသံ', country: '🇰🇭' }
+  ],
+  'bn-BN': [
+    { id: 'ms-MY-OsmanNeural', name: 'Osman (အော့စ်မန် - ဘရူနိုင်း မလေးအသံ)', desc: '၁၀၀% သဘာဝကျသော ဘရူနိုင်း မလေးစကားပြော အမျိုးသားအသံ', country: '🇧🇳' },
+    { id: 'ms-MY-YasminNeural', name: 'Yasmin (ယက်စ်မင် - ဘရူနိုင်း မလေးအသံ)', desc: 'ချိုသာကြည်လင်သော ဘရူနိုင်း မလေးစကားပြော အမျိုးသမီးအသံ', country: '🇧🇳' }
+  ],
+  tl: [
+    { id: 'id-ID-ArdiNeural', name: 'Ardi (အာဒီ - တီမောလက်စ်တီ အသံ)', desc: '၁၀၀% သဘာဝကျသော အရှေ့တီမော စကားပြော အမျိုးသားအသံ', country: '🇹🇱' },
+    { id: 'id-ID-GadisNeural', name: 'Gadis (ဂါဒစ် - တီမောလက်စ်တီ အသံ)', desc: 'ချိုသာသော အရှေ့တီမော စကားပြော အမျိုးသမီးအသံ', country: '🇹🇱' }
+  ],
+
+  // East Asia (အရှေ့အာရှ)
   ja: [
-    { id: 'ja-JP-KeitaNeural', name: 'Keita (ကေအိတ - ဂျပန်အမျိုးသားအသံ)', desc: 'ဂျပန်စကားပြော သဘာဝအသံစစ်စစ်', country: '🇯🇵' },
-    { id: 'ja-JP-NanamiNeural', name: 'Nanami (နာနာမိ - ဂျပန်အမျိုးသမီးအသံ)', desc: 'ချိုသာကြည်လင်သော ဂျပန်အမျိုးသမီးအသံ', country: '🇯🇵' },
+    { id: 'ja-JP-KeitaNeural', name: 'Keita (ကေအိတ - ဂျပန်အမျိုးသား)', desc: 'ဂျပန်စကားပြော သဘာဝအသံစစ်စစ်', country: '🇯🇵' },
+    { id: 'ja-JP-NanamiNeural', name: 'Nanami (နာနာမိ - ဂျပန်အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဂျပန်အမျိုးသမီးအသံ', country: '🇯🇵' },
     { id: 'ja-JP-AoiNeural', name: 'Aoi (အိုအိ - သဘာဝဂျပန်လေသံ)', desc: 'ယဉ်ကျေးနူးညံ့သော ဂျပန်အသံ', country: '🇯🇵' }
   ],
   ko: [
-    { id: 'ko-KR-InJoonNeural', name: 'InJoon (အင်ဂျွန်း - ကိုရီးယားအမျိုးသားအသံ)', desc: 'ကိုရီးယား ဇာတ်လမ်းတွဲသံဟန် အမျိုးသားအသံ', country: '🇰🇷' },
-    { id: 'ko-KR-SunHiNeural', name: 'SunHi (ဆန်းဟီး - ကိုရီးယားအမျိုးသမီးအသံ)', desc: 'ချစ်စဖွယ် ကိုရီးယားအမျိုးသမီး သဘာဝအသံ', country: '🇰🇷' },
+    { id: 'ko-KR-InJoonNeural', name: 'InJoon (အင်ဂျွန်း - ကိုရီးယားအမျိုးသား)', desc: 'ကိုရီးယား ဇာတ်လမ်းတွဲသံဟန် အမျိုးသားအသံ', country: '🇰🇷' },
+    { id: 'ko-KR-SunHiNeural', name: 'SunHi (ဆန်းဟီး - ကိုရီးယားအမျိုးသမီး)', desc: 'ချစ်စဖွယ် ကိုရီးယားအမျိုးသမီး သဘာဝအသံ', country: '🇰🇷' },
     { id: 'ko-KR-HyunsuMultilingualNeural', name: 'Hyunsu (ဟွန်းဆူ - ကိုရီးယားအသံ)', desc: 'ကြည်လင်ပြတ်သားသော ကိုရီးယားအသံ', country: '🇰🇷' }
   ],
   zh: [
-    { id: 'zh-CN-YunxiNeural', name: 'Yunxi (ယွန်းရှီး - တရုတ်အမျိုးသားအသံ)', desc: 'မန်ဒရင်း တရုတ်စကားပြော သဘာဝအသံ', country: '🇨🇳' },
-    { id: 'zh-CN-XiaoxiaoNeural', name: 'Xiaoxiao (ရှောင်ရှောင် - တရုတ်အမျိုးသမီးအသံ)', desc: 'ချိုမြိန်ကြည်လင်သော တရုတ်အမျိုးသမီးအသံ', country: '🇨🇳' },
+    { id: 'zh-CN-YunxiNeural', name: 'Yunxi (ယွန်းရှီး - တရုတ် မန်ဒရင်းအမျိုးသား)', desc: 'မန်ဒရင်း တရုတ်စကားပြော သဘာဝအသံ', country: '🇨🇳' },
+    { id: 'zh-CN-XiaoxiaoNeural', name: 'Xiaoxiao (ရှောင်ရှောင် - တရုတ် မန်ဒရင်းအမျိုးသမီး)', desc: 'ချိုမြိန်ကြည်လင်သော တရုတ်အမျိုးသမီးအသံ', country: '🇨🇳' },
     { id: 'zh-CN-YunjianNeural', name: 'Yunjian (ယွန်းကျန်း - တရုတ်သတင်းသံဟန်)', desc: 'သတင်းကြေညာဟန် တည်ကြည်သောအသံ', country: '🇨🇳' }
+  ],
+  'zh-TW': [
+    { id: 'zh-TW-YunJheNeural', name: 'YunJhe (ယွန်းကျယ် - ထိုင်ဝမ်အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ထိုင်ဝမ် တရုတ်စကားပြောအသံ', country: '🇹🇼' },
+    { id: 'zh-TW-HsiaoChenNeural', name: 'HsiaoChen (ရှောင်ချန် - ထိုင်ဝမ်အမျိုးသမီး)', desc: 'ချိုသာသော ထိုင်ဝမ် အမျိုးသမီး သဘာဝအသံ', country: '🇹🇼' }
+  ],
+  'zh-HK': [
+    { id: 'zh-HK-WanLungNeural', name: 'WanLung (ဝမ်လုံ - ဟောင်ကောင် ကန်တုံအမျိုးသား)', desc: '၁၀၀% စံ ကန်တုံစကားပြော (Cantonese) အမျိုးသားအသံ', country: '🇭🇰' },
+    { id: 'zh-HK-HiuMaanNeural', name: 'HiuMaan (ဟျူမန်း - ဟောင်ကောင် ကန်တုံအမျိုးသမီး)', desc: 'ချိုသာသော ကန်တုံ အမျိုးသမီး သဘာဝအသံ', country: '🇭🇰' },
+    { id: 'zh-HK-HiuGaaiNeural', name: 'HiuGaai (ဟျူဂိုင် - ဟောင်ကောင် သဘာဝအသံ)', desc: 'ကြည်လင်သော ကန်တုံ အမျိုးသမီးအသံ', country: '🇭🇰' }
+  ],
+  mo: [
+    { id: 'zh-HK-WanLungNeural', name: 'WanLung (ဝမ်လုံ - မကာအို ကန်တုံအမျိုးသား)', desc: '၁၀၀% စံ မကာအို ကန်တုံစကားပြော အမျိုးသားအသံ', country: '🇲🇴' },
+    { id: 'zh-HK-HiuMaanNeural', name: 'HiuMaan (ဟျူမန်း - မကာအို ကန်တုံအမျိုးသမီး)', desc: 'ချိုသာသော မကာအို ကန်တုံ အမျိုးသမီးအသံ', country: '🇲🇴' }
+  ],
+  mn: [
+    { id: 'mn-MN-BataaNeural', name: 'Bataa (ဘာတာ - မွန်ဂိုလီးယား အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော မွန်ဂိုစကားပြော အမျိုးသားအသံ', country: '🇲🇳' },
+    { id: 'mn-MN-YesuiNeural', name: 'Yesui (ယဲဆွီ - မွန်ဂိုလီးယား အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော မွန်ဂို အမျိုးသမီးအသံ', country: '🇲🇳' }
+  ],
+
+  // South Asia (တောင်အာရှ)
+  hi: [
+    { id: 'hi-IN-MadhurNeural', name: 'Madhur (မဒူးရ် - ဟိန္ဒီအမျိုးသား)', desc: 'ဟိန္ဒီစကားပြော သဘာဝအသံစစ်စစ်', country: '🇮🇳' },
+    { id: 'hi-IN-SwaraNeural', name: 'Swara (ဆွာရာ - ဟိန္ဒီအမျိုးသမီး)', desc: 'ကြည်လင်သော ဟိန္ဒီအမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  'en-IN': [
+    { id: 'en-IN-PrabhatNeural', name: 'Prabhat (ပရာဗတ် - အိန္ဒိယ အင်္ဂလိပ်အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော အိန္ဒိယ အင်္ဂလိပ်အသံ', country: '🇮🇳' },
+    { id: 'en-IN-NeerjaExpressiveNeural', name: 'Neerja (နီယာဂျာ - အိန္ဒိယ အင်္ဂလိပ်အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော အိန္ဒိယ အင်္ဂလိပ်အသံ', country: '🇮🇳' }
+  ],
+  ta: [
+    { id: 'ta-IN-ValluvarNeural', name: 'Valluvar (ဗလုဗာ - တမီးလ်အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော တမီးလ် (Tamil) စကားပြောအသံ', country: '🇮🇳' },
+    { id: 'ta-IN-PallaviNeural', name: 'Pallavi (ပလ္လဝီ - တမီးလ်အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော တမီးလ် အမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  te: [
+    { id: 'te-IN-MohanNeural', name: 'Mohan (မိုဟန် - တီလီဂူအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော တီလီဂူ (Telugu) စကားပြောအသံ', country: '🇮🇳' },
+    { id: 'te-IN-ShrutiNeural', name: 'Shruti (ရှရူတီ - တီလီဂူအမျိုးသမီး)', desc: 'ချိုသာသော တီလီဂူ အမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  'bn-IN': [
+    { id: 'bn-IN-BashkarNeural', name: 'Bashkar (ဘတ်ရှ်ကာ - အိန္ဒိယ ဘင်္ဂါလီအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော အိန္ဒိယ ဘင်္ဂါလီစကားပြောအသံ', country: '🇮🇳' },
+    { id: 'bn-IN-TanishaaNeural', name: 'Tanishaa (တနီရှာ - အိန္ဒိယ ဘင်္ဂါလီအမျိုးသမီး)', desc: 'ချိုသာသော အိန္ဒိယ ဘင်္ဂါလီ အမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  mr: [
+    { id: 'mr-IN-ManoharNeural', name: 'Manohar (မနိုဟာ - မာရသီအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော မာရသီ (Marathi) အမျိုးသားအသံ', country: '🇮🇳' },
+    { id: 'mr-IN-AarohiNeural', name: 'Aarohi (အာရိုဟီ - မာရသီအမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော မာရသီ အမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  gu: [
+    { id: 'gu-IN-NiranjanNeural', name: 'Niranjan (နီရန်ဂျန် - ဂူဂျာရတ်အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဂူဂျာရတ် (Gujarati) အမျိုးသားအသံ', country: '🇮🇳' },
+    { id: 'gu-IN-DhwaniNeural', name: 'Dhwani (ဒွာနီ - ဂူဂျာရတ်အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဂူဂျာရတ် အမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  kn: [
+    { id: 'kn-IN-GaganNeural', name: 'Gagan (ဂါဂန် - ကန်နာဒါအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ကန်နာဒါ (Kannada) အမျိုးသားအသံ', country: '🇮🇳' },
+    { id: 'kn-IN-SapnaNeural', name: 'Sapna (ဆပ်ပနာ - ကန်နာဒါအမျိုးသမီး)', desc: 'ချိုသာသော ကန်နာဒါ အမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  ml: [
+    { id: 'ml-IN-MidhunNeural', name: 'Midhun (မီဒွန် - မလေးယာလမ်အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော မလေးယာလမ် (Malayalam) အမျိုးသားအသံ', country: '🇮🇳' },
+    { id: 'ml-IN-SobhanaNeural', name: 'Sobhana (ဆိုဘာနာ - မလေးယာလမ်အမျိုးသမီး)', desc: 'ချိုသာသော မလေးယာလမ် အမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  'ur-IN': [
+    { id: 'ur-IN-SalmanNeural', name: 'Salman (ဆဲလ်မန် - အိန္ဒိယ အူရဒူအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော အိန္ဒိယ အူရဒူစကားပြောအသံ', country: '🇮🇳' },
+    { id: 'ur-IN-GulNeural', name: 'Gul (ဂူးလ် - အိန္ဒိယ အူရဒူအမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော အိန္ဒိယ အူရဒူ အမျိုးသမီးအသံ', country: '🇮🇳' }
+  ],
+  bn: [
+    { id: 'bn-BD-PradeepNeural', name: 'Pradeep (ပရာဒိပ် - ဘင်္ဂလားဒေ့ရှ်/ဘင်္ဂါလီ အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဘင်္ဂါလီ (Bengali) စကားပြောအသံ', country: '🇧🇩' },
+    { id: 'bn-BD-NabanitaNeural', name: 'Nabanita (နဗနီတာ - ဘင်္ဂလားဒေ့ရှ်/ဘင်္ဂါလီ အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဘင်္ဂါလီ အမျိုးသမီးအသံ', country: '🇧🇩' }
+  ],
+  ur: [
+    { id: 'ur-PK-AsadNeural', name: 'Asad (အာဆတ် - ပါကစ္စတန်/အူရဒူ အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော အူရဒူ (Urdu) စကားပြောအသံ', country: '🇵🇰' },
+    { id: 'ur-PK-UzmaNeural', name: 'Uzma (ဥဇ်မာ - ပါကစ္စတန်/အူရဒူ အမျိုးသမီး)', desc: 'ချိုသာသော အူရဒူ အမျိုးသမီး သဘာဝအသံ', country: '🇵🇰' }
+  ],
+  si: [
+    { id: 'si-LK-SameeraNeural', name: 'Sameera (ဆာမီရာ - သီရိလင်္ကာ/ဆင်ဟာလာ အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဆင်ဟာလာ (Sinhala) စကားပြောအသံ', country: '🇱🇰' },
+    { id: 'si-LK-ThiliniNeural', name: 'Thilini (သီလီနီ - သီရိလင်္ကာ/ဆင်ဟာလာ အမျိုးသမီး)', desc: 'ချိုသာသော ဆင်ဟာလာ အမျိုးသမီး သဘာဝအသံ', country: '🇱🇰' }
+  ],
+  'ta-LK': [
+    { id: 'ta-LK-KumarNeural', name: 'Kumar (ကူးမား - သီရိလင်္ကာ တမီးလ်အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော သီရိလင်္ကာ တမီးလ်စကားပြောအသံ', country: '🇱🇰' },
+    { id: 'ta-LK-SaranyaNeural', name: 'Saranya (ဆာရန်ယာ - သီရိလင်္ကာ တမီးလ်အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော သီရိလင်္ကာ တမီးလ် အမျိုးသမီးအသံ', country: '🇱🇰' }
+  ],
+  ne: [
+    { id: 'ne-NP-SagarNeural', name: 'Sagar (ဆာဂါ - နီပေါ အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော နီပေါ (Nepali) စကားပြောအသံ', country: '🇳🇵' },
+    { id: 'ne-NP-HemkalaNeural', name: 'Hemkala (ဟမ်ကာလာ - နီပေါ အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော နီပေါ အမျိုးသမီးအသံ', country: '🇳🇵' }
+  ],
+  bt: [
+    { id: 'ne-NP-SagarNeural', name: 'Sagar (ဆာဂါ - ဘူတန် အသံ)', desc: '၁၀၀% သဘာဝကျသော ဘူတန်/ဟိမဝန္တာ စကားပြော အမျိုးသားအသံ', country: '🇧🇹' },
+    { id: 'ne-NP-HemkalaNeural', name: 'Hemkala (ဟမ်ကာလာ - ဘူတန် အသံ)', desc: 'ချိုသာကြည်လင်သော ဘူတန် အမျိုးသမီးအသံ', country: '🇧🇹' }
+  ],
+  mv: [
+    { id: 'en-IN-PrabhatNeural', name: 'Prabhat (ပရာဗတ် - မော်လ်ဒိုက် အသံ)', desc: '၁၀၀% သဘာဝကျသော မော်လ်ဒိုက် အသံထွက်', country: '🇲🇻' },
+    { id: 'en-IN-NeerjaExpressiveNeural', name: 'Neerja (နီယာဂျာ - မော်လ်ဒိုက် အသံ)', desc: 'ချိုသာကြည်လင်သော မော်လ်ဒိုက် အမျိုးသမီးအသံ', country: '🇲🇻' }
+  ],
+  ps: [
+    { id: 'ps-AF-GulNawazNeural', name: 'GulNawaz (ဂူလ်နာဝါ့ဇ် - အာဖဂန် ပါရှတိုအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ပါရှတို (Pashto) စကားပြော အမျိုးသားအသံ', country: '🇦🇫' },
+    { id: 'ps-AF-LatifaNeural', name: 'Latifa (လတီဖာ - အာဖဂန် ပါရှတိုအမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ပါရှတို အမျိုးသမီးအသံ', country: '🇦🇫' }
+  ],
+  'fa-AF': [
+    { id: 'fa-IR-FaridNeural', name: 'Farid (ဖာရစ် - အာဖဂန် ဒါရီ/ပါရှန်း အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဒါရီ/ပါရှန်း (Dari/Farsi) အမျိုးသားအသံ', country: '🇦🇫' },
+    { id: 'fa-IR-DilaraNeural', name: 'Dilara (ဒီလာရာ - အာဖဂန် ဒါရီ/ပါရှန်း အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဒါရီ/ပါရှန်း အမျိုးသမီးအသံ', country: '🇦🇫' }
+  ],
+
+  // Central Asia (အလယ်အာရှ)
+  kk: [
+    { id: 'kk-KZ-DauletNeural', name: 'Daulet (ဒါးလက် - ကာဇက်စတန် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ကာဇက် (Kazakh) စကားပြောအသံ', country: '🇰🇿' },
+    { id: 'kk-KZ-AigulNeural', name: 'Aigul (အိုင်ဂူလ် - ကာဇက်စတန် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ကာဇက် အမျိုးသမီးအသံ', country: '🇰🇿' }
+  ],
+  uz: [
+    { id: 'uz-UZ-SardorNeural', name: 'Sardor (ဆာဒေါ - ဥဇဘက်ကစ္စတန် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဥဇဘက် (Uzbek) စကားပြောအသံ', country: '🇺🇿' },
+    { id: 'uz-UZ-MadinaNeural', name: 'Madina (မဒီနာ - ဥဇဘက်ကစ္စတန် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဥဇဘက် အမျိုးသမီးအသံ', country: '🇺🇿' }
+  ],
+  ky: [
+    { id: 'kk-KZ-DauletNeural', name: 'Daulet (ဒါးလက် - ကာဂျစ္စတန် အသံ)', desc: '၁၀၀% သဘာဝကျသော ကာဂျစ်စကားပြော အမျိုးသားအသံ', country: '🇰🇬' },
+    { id: 'kk-KZ-AigulNeural', name: 'Aigul (အိုင်ဂူလ် - ကာဂျစ္စတန် အသံ)', desc: 'ချိုသာကြည်လင်သော ကာဂျစ် အမျိုးသမီးအသံ', country: '🇰🇬' }
+  ],
+  tg: [
+    { id: 'fa-IR-FaridNeural', name: 'Farid (ဖာရစ် - တာဂျစ်ကစ္စတန် အသံ)', desc: '၁၀၀% သဘာဝကျသော တာဂျစ်စကားပြော အမျိုးသားအသံ', country: '🇹🇯' },
+    { id: 'fa-IR-DilaraNeural', name: 'Dilara (ဒီလာရာ - တာဂျစ်ကစ္စတန် အသံ)', desc: 'ချိုသာကြည်လင်သော တာဂျစ် အမျိုးသမီးအသံ', country: '🇹🇯' }
+  ],
+  tk: [
+    { id: 'tr-TR-AhmetNeural', name: 'Ahmet (အာမက် - တာ့ခ်မင်နစ္စတန် အသံ)', desc: '၁၀၀% သဘာဝကျသော တာ့ခ်မင်စကားပြော အမျိုးသားအသံ', country: '🇹🇲' },
+    { id: 'tr-TR-EmelNeural', name: 'Emel (အီမယ် - တာ့ခ်မင်နစ္စတန် အသံ)', desc: 'ချိုသာကြည်လင်သော တာ့ခ်မင် အမျိုးသမီးအသံ', country: '🇹🇲' }
+  ],
+
+  // West Asia & Middle East (အနောက်အာရှ နှင့် အရှေ့အလယ်ပိုင်း)
+  ar: [
+    { id: 'ar-SA-HamedNeural', name: 'Hamed (ဟာမက် - ဆော်ဒီ/အာရပ် အမျိုးသား)', desc: 'အာရဗီစကားပြော သဘာဝအသံစစ်စစ်', country: '🇸🇦' },
+    { id: 'ar-SA-ZariyahNeural', name: 'Zariyah (ဇာရီယာ - ဆော်ဒီ/အာရပ် အမျိုးသမီး)', desc: 'ကြည်လင်သော အာရဗီအမျိုးသမီးအသံ', country: '🇸🇦' }
+  ],
+  'ar-AE': [
+    { id: 'ar-AE-HamdanNeural', name: 'Hamdan (ဟမ်ဒန် - ယူအေအီး/ဒူဘိုင်း အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ယူအေအီး/ဒူဘိုင်း အာရပ်အသံ', country: '🇦🇪' },
+    { id: 'ar-AE-FatimaNeural', name: 'Fatima (ဖာတီမာ - ယူအေအီး/ဒူဘိုင်း အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဒူဘိုင်း အာရပ်အမျိုးသမီးအသံ', country: '🇦🇪' }
+  ],
+  'ar-QA': [
+    { id: 'ar-QA-MoazNeural', name: 'Moaz (မိုအက်ဇ် - ကာတာ အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ကာတာ အာရပ်စကားပြောအသံ', country: '🇶🇦' },
+    { id: 'ar-QA-AmalNeural', name: 'Amal (အာမယ်လ် - ကာတာ အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ကာတာ အမျိုးသမီးအသံ', country: '🇶🇦' }
+  ],
+  'ar-KW': [
+    { id: 'ar-KW-FahedNeural', name: 'Fahed (ဖာဟက်ဒ် - ကူဝိတ် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ကူဝိတ် အာရပ်စကားပြောအသံ', country: '🇰🇼' },
+    { id: 'ar-KW-NouraNeural', name: 'Noura (နူရာ - ကူဝိတ် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ကူဝိတ် အမျိုးသမီးအသံ', country: '🇰🇼' }
+  ],
+  'ar-BH': [
+    { id: 'ar-BH-AliNeural', name: 'Ali (အလီ - ဘာရိန်း အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဘာရိန်း အာရပ်စကားပြောအသံ', country: '🇧🇭' },
+    { id: 'ar-BH-LailaNeural', name: 'Laila (လိုင်လာ - ဘာရိန်း အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဘာရိန်း အမျိုးသမီးအသံ', country: '🇧🇭' }
+  ],
+  'ar-OM': [
+    { id: 'ar-OM-AbdullahNeural', name: 'Abdullah (အဗ္ဗဒူလာ - အိုမန် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော အိုမန် အာရပ်စကားပြောအသံ', country: '🇴🇲' },
+    { id: 'ar-OM-AyshaNeural', name: 'Aysha (အိုင်ရှာ - အိုမန် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော အိုမန် အမျိုးသမီးအသံ', country: '🇴🇲' }
+  ],
+  'ar-IQ': [
+    { id: 'ar-IQ-BasselNeural', name: 'Bassel (ဘာဆယ်လ် - အီရတ် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော အီရတ် အာရပ်စကားပြောအသံ', country: '🇮🇶' },
+    { id: 'ar-IQ-RanaNeural', name: 'Rana (ရာနာ - အီရတ် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော အီရတ် အမျိုးသမီးအသံ', country: '🇮🇶' }
+  ],
+  'ar-JO': [
+    { id: 'ar-JO-TaimNeural', name: 'Taim (တိုင်းမ် - ဂျော်ဒန် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဂျော်ဒန် အာရပ်စကားပြောအသံ', country: '🇯🇴' },
+    { id: 'ar-JO-SanaNeural', name: 'Sana (ဆာနာ - ဂျော်ဒန် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဂျော်ဒန် အမျိုးသမီးအသံ', country: '🇯🇴' }
+  ],
+  'ar-LB': [
+    { id: 'ar-LB-RamiNeural', name: 'Rami (ရာမီ - လက်ဘနွန် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော လက်ဘနွန် အာရပ်စကားပြောအသံ', country: '🇱🇧' },
+    { id: 'ar-LB-LaylaNeural', name: 'Layla (လိုင်လာ - လက်ဘနွန် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော လက်ဘနွန် အမျိုးသမီးအသံ', country: '🇱🇧' }
+  ],
+  'ar-SY': [
+    { id: 'ar-SY-LaithNeural', name: 'Laith (လိတ်သ် - ဆီးရီးယား အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဆီးရီးယား အာရပ်စကားပြောအသံ', country: '🇸🇾' },
+    { id: 'ar-SY-AmanyNeural', name: 'Amany (အမာနီ - ဆီးရီးယား အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဆီးရီးယား အမျိုးသမီးအသံ', country: '🇸🇾' }
+  ],
+  'ar-YE': [
+    { id: 'ar-YE-SalehNeural', name: 'Saleh (ဆာလေးဟ် - ယီမင် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ယီမင် အာရပ်စကားပြောအသံ', country: '🇾🇪' },
+    { id: 'ar-YE-MaryamNeural', name: 'Maryam (မာရ်ယမ် - ယီမင် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ယီမင် အမျိုးသမီးအသံ', country: '🇾🇪' }
+  ],
+  'ar-PS': [
+    { id: 'ar-JO-TaimNeural', name: 'Taim (တိုင်းမ် - ပါလက်စတိုင်း အာရပ်အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ပါလက်စတိုင်း အာရပ်စကားပြောအသံ', country: '🇵🇸' },
+    { id: 'ar-JO-SanaNeural', name: 'Sana (ဆာနာ - ပါလက်စတိုင်း အာရပ်အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ပါလက်စတိုင်း အမျိုးသမီးအသံ', country: '🇵🇸' }
+  ],
+  he: [
+    { id: 'he-IL-AvriNeural', name: 'Avri (အဗ်ရီ - အစ္စရေး/ဟီဘရူး အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဟီဘရူး (Hebrew) စကားပြောအသံ', country: '🇮🇱' },
+    { id: 'he-IL-HilaNeural', name: 'Hila (ဟီလာ - အစ္စရေး/ဟီဘရူး အမျိုးသမီး)', desc: 'ချိုသာသော ဟီဘရူး အမျိုးသမီး သဘာဝအသံ', country: '🇮🇱' }
+  ],
+  fa: [
+    { id: 'fa-IR-FaridNeural', name: 'Farid (ဖာရစ် - အီရန်/ပါရှန်း အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ပါရှန်း (Persian/Farsi) စကားပြောအသံ', country: '🇮🇷' },
+    { id: 'fa-IR-DilaraNeural', name: 'Dilara (ဒီလာရာ - အီရန်/ပါရှန်း အမျိုးသမီး)', desc: 'ချိုသာသော ပါရှန်း အမျိုးသမီး သဘာဝအသံ', country: '🇮🇷' }
+  ],
+  tr: [
+    { id: 'tr-TR-AhmetNeural', name: 'Ahmet (အာမက် - တူရကီအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော တူရကီစကားပြော အမျိုးသားအသံ', country: '🇹🇷' },
+    { id: 'tr-TR-EmelNeural', name: 'Emel (အီမယ် - တူရကီအမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော တူရကီအမျိုးသမီးအသံ', country: '🇹🇷' }
+  ],
+  az: [
+    { id: 'az-AZ-BabekNeural', name: 'Babek (ဘာဘက်ခ် - အဇာဘိုင်ဂျန် အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော အဇာဘိုင်ဂျန် စကားပြော အမျိုးသားအသံ', country: '🇦🇿' },
+    { id: 'az-AZ-BanuNeural', name: 'Banu (ဘာနူ - အဇာဘိုင်ဂျန် အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော အဇာဘိုင်ဂျန် အမျိုးသမီးအသံ', country: '🇦🇿' }
+  ],
+  ka: [
+    { id: 'ka-GE-GiorgiNeural', name: 'Giorgi (ဂျော်ဂျီ - ဂျော်ဂျီယာ အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ဂျော်ဂျီယာ (Georgian) အမျိုးသားအသံ', country: '🇬🇪' },
+    { id: 'ka-GE-EkaNeural', name: 'Eka (အီကာ - ဂျော်ဂျီယာ အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဂျော်ဂျီယာ အမျိုးသမီးအသံ', country: '🇬🇪' }
+  ],
+  hy: [
+    { id: 'ru-RU-DmitryNeural', name: 'Dmitry (ဒီမီထရီ - အာမေးနီးယား အသံ)', desc: '၁၀၀% သဘာဝကျသော အာမေးနီးယား စကားပြော အမျိုးသားအသံ', country: '🇦🇲' },
+    { id: 'ru-RU-SvetlanaNeural', name: 'Svetlana (ဆဗက်လန်နာ - အာမေးနီးယား အသံ)', desc: 'ချိုသာကြည်လင်သော အာမေးနီးယား အမျိုးသမီးအသံ', country: '🇦🇲' }
+  ],
+  cy: [
+    { id: 'tr-TR-AhmetNeural', name: 'Ahmet (အာမက် - ဆိုက်ပရပ်စ် အသံ)', desc: '၁၀၀% သဘာဝကျသော ဆိုက်ပရပ်စ် စကားပြော အမျိုးသားအသံ', country: '🇨🇾' },
+    { id: 'tr-TR-EmelNeural', name: 'Emel (အီမယ် - ဆိုက်ပရပ်စ် အသံ)', desc: 'ချိုသာကြည်လင်သော ဆိုက်ပရပ်စ် အမျိုးသမီးအသံ', country: '🇨🇾' }
+  ],
+
+  // Major Global Languages
+  en: [
+    { id: 'en-US-AndrewMultilingualNeural', name: 'Andrew (အမျိုးသားအသံ - US Native)', desc: 'သဘာဝကျပြီး ဆွဲဆောင်မှုရှိသော အမေရိကန် အသံထွက်', country: '🇺🇸' },
+    { id: 'en-US-AvaMultilingualNeural', name: 'Ava (အမျိုးသမီးအသံ - US Native)', desc: 'ချိုသာကြည်လင်သော အမေရိကန် အမျိုးသမီး အသံထွက်', country: '🇺🇸' },
+    { id: 'en-US-BrianMultilingualNeural', name: 'Brian (အမျိုးသားအသံ - Deep & Professional)', desc: 'ရုပ်သံသံဟန် တည်ကြည်သောအသံ', country: '🇺🇸' },
+    { id: 'en-US-EmmaMultilingualNeural', name: 'Emma (အမျိုးသမီးအသံ - Warm & Clear)', desc: 'စာဖတ်သံနှင့် ရှင်းပြသံအတွက် အထူးကောင်းမွန်', country: '🇺🇸' },
+    { id: 'en-AU-WilliamMultilingualNeural', name: 'William (ဩစတြေးလျ အမျိုးသား)', desc: 'သဘာဝကျသော ဩစတြေးလျ အသံဟန်', country: '🇦🇺' }
   ],
   es: [
     { id: 'es-ES-AlvaroNeural', name: 'Alvaro (အယ်လ်ဗာရို - စပိန်အမျိုးသား)', desc: 'စပိန်စကားပြော သဘာဝအသံ', country: '🇪🇸' },
@@ -390,26 +691,29 @@ export const TARGET_LANG_VOICES: Record<string, { id: string; name: string; desc
   ru: [
     { id: 'ru-RU-DmitryNeural', name: 'Dmitry (ဒီမီထရီ - ရုရှားအမျိုးသား)', desc: 'ရုရှားစကားပြော သဘာဝအသံ', country: '🇷🇺' },
     { id: 'ru-RU-SvetlanaNeural', name: 'Svetlana (ဆဗက်လန်နာ - ရုရှားအမျိုးသမီး)', desc: 'ကြည်လင်သော ရုရှားအမျိုးသမီးအသံ', country: '🇷🇺' }
-  ],
-  vi: [
-    { id: 'vi-VN-NamMinhNeural', name: 'NamMinh (နမ်မင်း - ဗီယက်နမ်အမျိုးသား)', desc: 'ဗီယက်နမ်စကားပြော သဘာဝအသံ', country: '🇻🇳' },
-    { id: 'vi-VN-HoaiMyNeural', name: 'HoaiMy (ဟွိုင်မီ - ဗီယက်နမ်အမျိုးသမီး)', desc: 'ချိုသာသော ဗီယက်နမ်အမျိုးသမီးအသံ', country: '🇻🇳' }
-  ],
-  id: [
-    { id: 'id-ID-ArdiNeural', name: 'Ardi (အာဒီ - အင်ဒိုနီးရှားအမျိုးသား)', desc: 'အင်ဒိုနီးရှားစကားပြော သဘာဝအသံ', country: '🇮🇩' },
-    { id: 'id-ID-GadisNeural', name: 'Gadis (ဂါဒစ် - အင်ဒိုနီးရှားအမျိုးသမီး)', desc: 'ချိုသာသော အင်ဒိုနီးရှားအမျိုးသမီးအသံ', country: '🇮🇩' }
-  ],
-  hi: [
-    { id: 'hi-IN-MadhurNeural', name: 'Madhur (မဒူးရ် - ဟိန္ဒီအမျိုးသား)', desc: 'ဟိန္ဒီစကားပြော သဘာဝအသံစစ်စစ်', country: '🇮🇳' },
-    { id: 'hi-IN-SwaraNeural', name: 'Swara (ဆွာရာ - ဟိန္ဒီအမျိုးသမီး)', desc: 'ကြည်လင်သော ဟိန္ဒီအမျိုးသမီးအသံ', country: '🇮🇳' }
-  ],
-  ar: [
-    { id: 'ar-SA-HamedNeural', name: 'Hamed (ဟာမက် - အာရဗီအမျိုးသား)', desc: 'အာရဗီစကားပြော သဘာဝအသံ', country: '🇸🇦' },
-    { id: 'ar-SA-ZariyahNeural', name: 'Zariyah (ဇာရီယာ - အာရဗီအမျိုးသမီး)', desc: 'ကြည်လင်သော အာရဗီအမျိုးသမီးအသံ', country: '🇸🇦' }
   ]
 };
 
 export const App: React.FC = () => {
+  // Global Interface Localization
+  const [uiLang, setUiLang] = useState<AppLanguage>(() => {
+    try {
+      const saved = localStorage.getItem('voicemaster_ui_lang');
+      return (saved as AppLanguage) || 'my';
+    } catch (_) {
+      return 'my';
+    }
+  });
+
+  const t = APP_TRANSLATIONS[uiLang] || APP_TRANSLATIONS['my'];
+
+  const handleUiLangChange = (newLang: AppLanguage) => {
+    setUiLang(newLang);
+    try {
+      localStorage.setItem('voicemaster_ui_lang', newLang);
+    } catch (_) {}
+  };
+
   // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator' | 'silenceRemover' | 'subtitleBurner'
   const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator' | 'silenceRemover' | 'subtitleBurner'>('tts');
 
@@ -2578,23 +2882,40 @@ export const App: React.FC = () => {
           </div>
           <div>
             <h1 className="text-base lg:text-lg font-bold tracking-tight text-white flex items-center gap-2">
-              VoiceMaster Studio
+              {t.appName}
               <span className="text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                Unlimited TTS & Story Engine
+                {t.appBadge}
               </span>
             </h1>
             <p className="text-xs text-slate-400 hidden sm:block">
-              လူအစစ်အသံ Text-to-Speech (စာလုံးရေ အကန့်အသတ်မရှိ) + YouTube/TikTok ဇာတ်လမ်းစက်
+              {t.appDescription}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Global UI Multi-Language Selector Dropdown */}
+          <div className="flex items-center gap-1.5 bg-[#181d2e] border border-indigo-500/40 hover:border-indigo-400 rounded-xl px-2.5 py-1.5 transition-all text-xs font-bold text-slate-200 shadow-md">
+            <Globe className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <select
+              value={uiLang}
+              onChange={(e) => handleUiLangChange(e.target.value as AppLanguage)}
+              aria-label={t.uiLangSelectorLabel}
+              className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer pr-1"
+            >
+              {APP_LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code} className="bg-[#121520] text-slate-200">
+                  {l.flag} {l.nativeName} ({l.name})
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* AI Agent Status Badge */}
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-[11px] font-bold text-emerald-300 shadow-sm shadow-emerald-950/50">
+          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-[11px] font-bold text-emerald-300 shadow-sm shadow-emerald-950/50">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>AI Agent Auto-Heal: Active</span>
+            <span>{t.autoHealActive}</span>
           </div>
 
           {/* Direct Header History Access Button */}
@@ -2607,7 +2928,7 @@ export const App: React.FC = () => {
             }`}
           >
             <History className="w-4 h-4 text-purple-400" />
-            <span>မှတ်တမ်း ({historyItems.length})</span>
+            <span>{t.historyBtn} ({historyItems.length})</span>
             {historyItems.length > 0 && (
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
             )}
@@ -2636,7 +2957,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Volume2 className="w-4 h-4 shrink-0 text-indigo-400" />
-            <span>လူအစစ် TTS</span>
+            <span>{t.tabTts}</span>
           </button>
 
           <button
@@ -2648,7 +2969,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Subtitles className="w-4 h-4 shrink-0 text-emerald-400" />
-            <span>🎬 စာတန်းထိုးကပ်စက်</span>
+            <span>{t.tabSubtitle}</span>
           </button>
 
           <button
@@ -2660,7 +2981,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Image className="w-4 h-4 shrink-0 text-cyan-400" />
-            <span>🖼️ ပုံထုတ်စက်</span>
+            <span>{t.tabImager}</span>
           </button>
 
           <button
@@ -2672,7 +2993,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Zap className="w-4 h-4 shrink-0 text-purple-400" />
-            <span>⚡ 1-Click ဗီဒီယို</span>
+            <span>{t.tabAutoPipeline}</span>
           </button>
 
           <button
@@ -2684,7 +3005,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Wand2 className="w-4 h-4 shrink-0 text-pink-400" />
-            <span>AI ဇာတ်လမ်း</span>
+            <span>{t.tabWriter}</span>
           </button>
 
           <button
@@ -2696,7 +3017,7 @@ export const App: React.FC = () => {
             }`}
           >
             <History className="w-4 h-4 shrink-0 text-emerald-400" />
-            <span>📂 မှတ်တမ်း</span>
+            <span>{t.tabHistory}</span>
           </button>
         </div>
 
@@ -2711,7 +3032,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Users className="w-3.5 h-3.5 text-amber-400" />
-            <span>💬 စကားဝိုင်း</span>
+            <span>{t.tabDialogue}</span>
           </button>
 
           <button
@@ -2735,7 +3056,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>🎭 အသံပြောင်းစက်</span>
+            <span>{t.tabVoiceChanger}</span>
           </button>
 
           <button
@@ -2747,7 +3068,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Scissors className="w-3.5 h-3.5 text-rose-400" />
-            <span>✂️ Silence Remover</span>
+            <span>{t.tabSilenceRemover}</span>
           </button>
 
           <button
@@ -2762,7 +3083,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Mic className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            <span>🎙️ Live စကားပြန်</span>
+            <span>{t.tabInterp}</span>
           </button>
 
           <button
@@ -2777,7 +3098,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Languages className="w-3.5 h-3.5 text-blue-400" />
-            <span>🌐 စာသား ဘာသာပြန်</span>
+            <span>{t.tabTranslator}</span>
           </button>
 
           <button
@@ -2789,7 +3110,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Subtitles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>📝 အသံ ➔ စာတန်းထိုး</span>
+            <span>{t.tabTranscribe}</span>
           </button>
 
           <button
@@ -2801,7 +3122,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Sliders className="w-3.5 h-3.5 text-orange-400" />
-            <span>🎛️ Speed / Pitch</span>
+            <span>{t.tabAudioModifier}</span>
           </button>
         </div>
 
@@ -3054,7 +3375,7 @@ export const App: React.FC = () => {
                     required
                     value={ttsText}
                     onChange={(e) => setTtsText(e.target.value)}
-                    placeholder="ဒီနေရာတွင် ဖတ်ပြစေလိုသော စာများကို ရိုက်ထည့်ပါ သို့မဟုတ် ကူးယူထည့်သွင်းပါ (စာလုံးရေ ၁၀,၀၀၀ အထိ အပြည့်အစုံ ဖတ်ပြပေးပါမည်)..."
+                    placeholder={t.textInputPlaceholder}
                     className="w-full bg-[#0d0f17] border border-white/10 rounded-2xl p-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 leading-relaxed font-sans resize-y"
                   />
 
@@ -3162,12 +3483,12 @@ export const App: React.FC = () => {
                   {isTtsLoading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>လူအစစ်အသံ ထုတ်လုပ်နေပါသည် (စာသားအပြည့်အစုံ)...</span>
+                      <span>{t.generatingVoice}</span>
                     </>
                   ) : (
                     <>
                       <Volume2 className="w-4 h-4" />
-                      <span>လူအစစ်အသံဖြင့် အသံထွက်ပြောင်းမည် (MP3 အသံဖိုင် ရယူမည်)</span>
+                      <span>{t.generateVoice}</span>
                     </>
                   )}
                 </button>
@@ -6525,14 +6846,24 @@ export const App: React.FC = () => {
                 <div>
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold border border-blue-500/30 mb-2">
                     <Radio className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
-                    <span>Feature 4: Global Live Voice Interpreter & Translator</span>
+                    <span>Global Live Voice Interpreter & Translator</span>
                   </div>
                   <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                    <span>🌐 Real-Time Live 2-Way Voice-to-Voice Interpreter & Translation Studio</span>
+                    <span>🌐 {t.translateTabTitle}</span>
                   </h2>
                   <p className="text-xs text-slate-400 mt-1">
-                    မြန်မာ၊ လာအို (Lao)၊ ထိုင်း၊ အင်္ဂလိပ်နှင့် ကမ္ဘာ့ဘာသာစကားများအကြား အသံဖြင့်ပြောဆို၍ အပြန်အလှန် စကားပြန်အဖြစ် အသံထွက် ချက်ချင်း ပြန်ဆိုပေးပါသည်
+                    {t.translateTabDesc}
                   </p>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/70 border border-emerald-500/40 text-[11px] font-bold text-emerald-300 shadow-sm">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>{t.highLoadShield}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-950/70 border border-blue-500/40 text-[11px] font-bold text-blue-300 shadow-sm">
+                      <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                      <span>{t.naturalVoiceNotice}</span>
+                    </span>
+                  </div>
                 </div>
 
                 {/* Subtab Navigation */}
@@ -7177,7 +7508,7 @@ export const App: React.FC = () => {
                     {/* Target Language Selector */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
-                        <span>ပြောင်းလဲလိုသော နိုင်ငံ ဘာသာစကား (Target Country / Language):</span>
+                        <span>{t.targetLangLabel}</span>
                       </label>
                       <select
                         value={translateTargetLang}
@@ -7202,8 +7533,8 @@ export const App: React.FC = () => {
                     {/* Target Country Native Voice Profile */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
-                        <span>နိုင်ငံအလိုက် သဘာဝလူသားအသံ (Native Spoken Voice):</span>
-                        <span className="text-[10px] text-blue-400 font-mono">100% Native Accent</span>
+                        <span>{t.targetVoiceLabel}</span>
+                        <span className="text-[10px] text-blue-400 font-mono">{t.nativeAccentBadge}</span>
                       </label>
                       <select
                         value={translateVoice}
@@ -7236,12 +7567,12 @@ export const App: React.FC = () => {
                     {isTranslateLoading ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin text-blue-200" />
-                        <span>ရွေးချယ်ထားသော နိုင်ငံဘာသာစကားသို့ တိကျစွာ ဘာသာပြန်ပြီး သဘာဝအသံဖိုင် ဖန်တီးနေပါသည်...</span>
+                        <span>{t.translatingBtn}</span>
                       </>
                     ) : (
                       <>
                         <Languages className="w-4 h-4 text-blue-300" />
-                        <span>🌐 နိုင်ငံဘာသာစကားသို့ တိုက်ရိုက် ဘာသာပြန်ပြီး အသံဖိုင် ထုတ်ယူမည် (Translate & Speak)</span>
+                        <span>{t.translateBtn}</span>
                       </>
                     )}
                   </button>
@@ -7253,10 +7584,10 @@ export const App: React.FC = () => {
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
                             <CheckCircle2 className="w-4 h-4" />
-                            <span>ဘာသာပြန်နှင့် နိုင်ငံအလိုက် အသံဖိုင် အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!</span>
+                            <span>{t.translationOutputTitle}</span>
                           </span>
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-500/30">
-                            {translateResult.characterCount} စာလုံး
+                            {translateResult.characterCount} {t.charCount}
                           </span>
                         </div>
 
