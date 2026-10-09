@@ -719,9 +719,6 @@ export const App: React.FC = () => {
   // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator' | 'silenceRemover' | 'subtitleBurner'
   const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator' | 'silenceRemover' | 'subtitleBurner'>('tts');
 
-  // Cloned Voice Profiles State
-  // getAllClonedProfiles was removed as part of voice cloning removal.
-
   // ----------------------------------------------------
   // Mode 1: Text-to-Speech (TTS) State
   // ----------------------------------------------------
@@ -1051,6 +1048,8 @@ export const App: React.FC = () => {
   const [translateAudioSpeed, setTranslateAudioSpeed] = useState<number>(1.0);
   const translateAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const [translateError, setTranslateError] = useState('');
+  const [isTranslateImageLoading, setIsTranslateImageLoading] = useState(false);
+  const [translateImagePreview, setTranslateImagePreview] = useState<string>('');
 
   // ----------------------------------------------------
   // Voice Character Effects Studio State
@@ -1338,6 +1337,7 @@ export const App: React.FC = () => {
   const [storyImagesError, setStoryImagesError] = useState('');
   const [isStoryVideoLoading, setIsStoryVideoLoading] = useState(false);
   const [storyVideoUrl, setStoryVideoUrl] = useState('');
+  const [storyVideoDownloadUrl, setStoryVideoDownloadUrl] = useState('');
   const [storyVideoSrtText, setStoryVideoSrtText] = useState('');
   const [storyVideoError, setStoryVideoError] = useState('');
 
@@ -1467,7 +1467,7 @@ export const App: React.FC = () => {
     };
   }, [showInAppAdModal, adCountdown]);
 
-  // Load voices and BGM tracks on mount
+  // Load voices, BGM tracks and Cloned Voice profiles on mount
   useEffect(() => {
     fetch('/api/tts-voices')
       .then(async (res) => {
@@ -1547,6 +1547,47 @@ export const App: React.FC = () => {
     } catch (err) {
       console.error('Turbo Download error:', err);
       window.open(audioUrl, '_blank');
+    }
+  };
+
+  const downloadVideoFile = (videoUrl: string, filename: string) => {
+    registerGenerationAndCheckAd('mp4_video');
+    try {
+      if (videoUrl.startsWith('data:')) {
+        const arr = videoUrl.split(',');
+        const mimeMatch = arr[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'video/mp4';
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const blob = new Blob([u8arr], { type: mime });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+        }, 100);
+      } else {
+        // Direct stream download URL
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = videoUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => document.body.removeChild(a), 100);
+      }
+    } catch (err) {
+      console.error('Turbo Video Download error:', err);
+      window.open(videoUrl, '_blank');
     }
   };
 
@@ -1691,9 +1732,20 @@ export const App: React.FC = () => {
     setTtsResult(null);
 
     try {
+      let postUrl = '/api/text-to-speech';
+      let postPayload: any = {
+        text: ttsText.trim(),
+        voice: selectedVoice,
+        rate: speechRate,
+        pitch: speechPitch,
+        bgm: selectedBgm,
+        bgmVolume: bgmVolume,
+        voiceEffect: voiceEffect
+      };
+
       const data: any = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/text-to-speech');
+        xhr.open('POST', postUrl);
         xhr.setRequestHeader('Content-Type', 'application/json');
         xhr.timeout = 10 * 60 * 1000;
 
@@ -1724,15 +1776,7 @@ export const App: React.FC = () => {
         xhr.onerror = () => reject(new Error('ကွန်ရက် ချိတ်ဆက်မှု အခက်အခဲ ဖြစ်ပေါ်သွားပါသည်။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။'));
         xhr.ontimeout = () => reject(new Error('အချိန်ကုန်သွားပါသည် (Request Timeout)။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။'));
 
-        xhr.send(JSON.stringify({
-          text: ttsText.trim(),
-          voice: selectedVoice,
-          rate: speechRate,
-          pitch: speechPitch,
-          bgm: selectedBgm,
-          bgmVolume: bgmVolume,
-          voiceEffect: voiceEffect
-        }));
+        xhr.send(JSON.stringify(postPayload));
       });
 
       setTtsResult(data);
@@ -1889,6 +1933,7 @@ export const App: React.FC = () => {
       }
 
       setStoryVideoUrl(data.videoUrl);
+      setStoryVideoDownloadUrl(data.downloadUrl || data.streamUrl || data.videoUrl);
       if (data.srtText) setStoryVideoSrtText(data.srtText);
     } catch (err: any) {
       setStoryVideoError(err.message || 'ဗီဒီယို ဖန်တီးမှု မအောင်မြင်ပါ။');
@@ -2632,6 +2677,78 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleTranslateImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsTranslateImageLoading(true);
+    setTranslateError('');
+    setTranslateResult(null);
+
+    // Create local preview
+    const reader = new FileReader();
+    reader.onload = () => {
+      setTranslateImagePreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    try {
+      const formData = new FormData();
+      formData.append('imageFile', file);
+      formData.append('targetLang', translateTargetLang);
+      formData.append('voice', translateVoice);
+
+      const res = await fetch('/api/translate-image', {
+        method: 'POST',
+        body: formData
+      });
+
+      const responseText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch (_) {
+        throw new Error('ဆာဗာ တုံ့ပြန်မှု အချိန်ကုန်သွားပါသည် သို့မဟုတ် ပုံဖိုင် ကြီးလွန်းနေပါသည်။');
+      }
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'ပုံထဲမှ စာသားကို ဖတ်ရှုဘာသာပြန်၍ မရပါ။');
+      }
+
+      if (data.extractedText) {
+        setTranslateText(data.extractedText);
+      }
+
+      setTranslateResult({
+        originalText: data.extractedText || '',
+        translatedText: data.translatedText || '',
+        phoneticGuide: data.phoneticGuide || '',
+        speakingTip: data.speakingTip || '',
+        detectedSourceLang: data.detectedLanguage || 'auto',
+        targetLang: data.targetLang || translateTargetLang,
+        voiceUsed: translateVoice,
+        audioUrl: data.audioUrl || '',
+        characterCount: (data.translatedText || '').length
+      });
+
+      saveToHistory({
+        type: 'tts',
+        title: `📸 Screenshot ဘာသာပြန်: ${(data.translatedText || '').slice(0, 30)}...`,
+        content: data.translatedText || '',
+        audioUrl: data.audioUrl || '',
+        characterCount: (data.translatedText || '').length
+      });
+
+      registerGenerationAndCheckAd('text_translation');
+    } catch (err: any) {
+      setTranslateError(err.message || 'Screenshot ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။');
+    } finally {
+      setIsTranslateImageLoading(false);
+      // Reset input value so same image can be re-uploaded if needed
+      e.target.value = '';
+    }
+  };
+
   // ----------------------------------------------------
   // Live 2-Way Voice-to-Voice Interpreter Handlers
   // ----------------------------------------------------
@@ -3201,7 +3318,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* Secondary Tools Grid */}
-        <div className="bg-[#191d30]/50 p-2.5 rounded-2xl border border-indigo-500/20 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 gap-2 max-w-6xl mx-auto w-full shadow-xl">
+        <div className="bg-[#191d30]/50 p-2.5 rounded-2xl border border-indigo-500/20 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 max-w-6xl mx-auto w-full shadow-xl">
           <button
             onClick={() => setMainMode('dialogue')}
             className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
@@ -4506,14 +4623,14 @@ export const App: React.FC = () => {
                               <span>SRT Download</span>
                             </button>
                           )}
-                          <a
-                            href={storyVideoUrl}
-                            download={`AI_Story_Video_${Date.now()}.mp4`}
+                          <button
+                            type="button"
+                            onClick={() => downloadVideoFile(storyVideoDownloadUrl || storyVideoUrl, `AI_Story_Video_${Date.now()}.mp4`)}
                             className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95 transition-all"
                           >
                             <Download className="w-4 h-4" />
                             <span>10x Turbo Download (.MP4)</span>
-                          </a>
+                          </button>
                         </div>
                       </div>
 
@@ -7762,13 +7879,16 @@ export const App: React.FC = () => {
                       </button>
                     </div>
 
-                    {/* Acoustic Speech Speed Resilience Banner */}
-                    <div className="mt-2.5 p-2 rounded-xl bg-gradient-to-r from-emerald-950/40 via-blue-950/30 to-purple-950/40 border border-emerald-500/20 text-[11px] text-emerald-300 flex items-center justify-between gap-2">
+                    {/* Direct Multimodal Acoustic AI & Zero-Error Precision Banner */}
+                    <div className="mt-2.5 p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/60 via-blue-950/50 to-cyan-950/60 border border-emerald-500/30 text-[11px] text-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-lg">
                       <div className="flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span><strong>Fast & Slow Speech Acoustic AI:</strong> တစ်ဖက်လူက မြန်မြန်ပြောသည်ဖြစ်စေ၊ နှေးနှေးပြောသည်ဖြစ်စေ စကားသံကို အတိအကျ နားလည်ပြီး ဘာသာပြန်ဆိုပေးပါသည်</span>
+                        <span><strong>Direct Multimodal Acoustic AI:</strong> အသံလှိုင်း၊ လေသံနှင့် စကားပြောဟန်များကို တိုက်ရိုက်နားထောင်ပြီး တစ်လုံးတစ်လေမှ မမှားစေဘဲ နှစ်ဖက်စလုံး အတိအကျ နားလည်အောင် ဘာသာပြန်ဆိုပေးပါသည်</span>
                       </div>
-                      <span className="hidden sm:inline-block px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] border border-emerald-500/30">100% Native Precision</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] border border-emerald-500/30">🎯 100% Zero-Error Precision</span>
+                        <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono text-[10px] border border-cyan-500/30">🎙️ Direct Audio AI</span>
+                      </div>
                     </div>
                   </div>
 
@@ -8212,7 +8332,24 @@ export const App: React.FC = () => {
                           title="အသံဖိုင် (MP3/WAV/WebM) တင်သွင်းပြီး စာသားပြောင်းလဲ ဘာသာပြန်မည်"
                         >
                           <Volume2 className="w-3.5 h-3.5" />
-                          <span>🎧 အသံဖိုင် တင်သွင်းမည်</span>
+                          <span>🎧 အသံဖိုင်</span>
+                        </label>
+
+                        {/* Screenshot / Image OCR Translation Button */}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          id="translate_image_file_input"
+                          className="hidden"
+                          onChange={handleTranslateImageUpload}
+                        />
+                        <label
+                          htmlFor="translate_image_file_input"
+                          className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-purple-950/80 to-pink-950/80 hover:from-purple-900 hover:to-pink-900 border border-pink-500/40 text-pink-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer active:scale-95 transition-all shadow-sm"
+                          title="Screenshot သို့မဟုတ် ပုံဖိုင်ထည့်သွင်းပြီး ပုံထဲက စာသားများကို အလိုအလျောက် ဖတ်ရှုဘာသာပြန်မည်"
+                        >
+                          <Image className="w-3.5 h-3.5 text-pink-400" />
+                          <span>📸 Screenshot / ပုံထဲက ဘာသာပြန်မည်</span>
                         </label>
 
                         {/* File Import Button */}
@@ -8258,6 +8395,38 @@ export const App: React.FC = () => {
                       <div className="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-500/40 text-indigo-200 text-xs font-bold flex items-center gap-2 animate-pulse shadow-md">
                         <RefreshCw className="w-4 h-4 animate-spin text-indigo-300" />
                         <span>⚡ စကားသံ (မြန်မြန် သို့မဟုတ် နှေးနှေးပြောဆိုမှု) ကို AI ဖြင့် စာသားအဖြစ် တိကျစွာ ပြောင်းလဲနေပါသည်...</span>
+                      </div>
+                    )}
+
+                    {/* Screenshot OCR Translating Indicator */}
+                    {isTranslateImageLoading && (
+                      <div className="p-3 rounded-xl bg-gradient-to-r from-purple-950/80 to-pink-950/80 border border-pink-500/50 text-pink-200 text-xs font-bold flex items-center gap-2.5 animate-pulse shadow-md">
+                        <RefreshCw className="w-4 h-4 animate-spin text-pink-300 shrink-0" />
+                        <span>📸 Screenshot / ပုံထဲမှ စာသားအားလုံးကို AI ဖြင့် ရှာဖွေဖတ်ရှု၍ အတိအကျ ဘာသာပြန်ဆိုနေပါသည်...</span>
+                      </div>
+                    )}
+
+                    {/* Image Preview if uploaded */}
+                    {translateImagePreview && (
+                      <div className="p-2.5 bg-[#0a0d16] border border-pink-500/30 rounded-xl flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 overflow-hidden">
+                          <img
+                            src={translateImagePreview}
+                            alt="Screenshot preview"
+                            className="w-12 h-12 object-cover rounded-lg border border-white/20 shrink-0"
+                          />
+                          <div className="text-[11px] truncate">
+                            <span className="text-pink-300 font-bold block">📸 တင်သွင်းထားသော Screenshot / ပုံ</span>
+                            <span className="text-slate-400 text-[10px]">ပုံထဲမှ စာသားကို ဖတ်ရှုဘာသာပြန်ထားပါသည်</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setTranslateImagePreview('')}
+                          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-[10px] font-bold shrink-0"
+                        >
+                          ဖယ်ရှားမည်
+                        </button>
                       </div>
                     )}
 

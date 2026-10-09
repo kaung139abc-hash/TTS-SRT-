@@ -50,6 +50,7 @@ export interface AppTranslationStrings {
   tabWriter: string;
   tabHistory: string;
   tabDialogue: string;
+  tabVoiceClone: string;
   tabTranslator: string;
   tabVoiceChanger: string;
   tabTranscribe: string;
@@ -113,6 +114,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI ဇာတ်လမ်း",
     tabHistory: "📂 မှတ်တမ်း",
     tabDialogue: "💬 စကားဝိုင်း",
+    tabVoiceClone: "🧬 Voice Clone (မူရင်းအသံ)",
     tabTranslator: "🌐 ဘာသာပြန် & Native အသံ",
     tabVoiceChanger: "🎭 အသံပြောင်းစက်",
     tabTranscribe: "🎙️ အသံမှ စာသားဖတ်ယူစက်",
@@ -171,6 +173,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI Storyteller",
     tabHistory: "📂 History",
     tabDialogue: "💬 Multi-Speaker",
+    tabVoiceClone: "🧬 1:1 Voice Clone",
     tabTranslator: "🌐 Translator & Voice",
     tabVoiceChanger: "🎭 Voice Changer",
     tabTranscribe: "🎙️ Speech-to-Text",
@@ -229,6 +232,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI ストーリー",
     tabHistory: "📂 生成履歴",
     tabDialogue: "💬 会話スタジオ",
+    tabVoiceClone: "🧬 音声クローン",
     tabTranslator: "🌐 翻訳 & ネイティブ音声",
     tabVoiceChanger: "🎭 ボイスチェンジャー",
     tabTranscribe: "🎙️ 音声文字起こし",
@@ -287,6 +291,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI 스토리텔러",
     tabHistory: "📂 작업 기록",
     tabDialogue: "💬 다중 화자 대화",
+    tabVoiceClone: "🧬 음성 복제 (Clone)",
     tabTranslator: "🌐 번역 & 네이티브 음성",
     tabVoiceChanger: "🎭 음성 변조기",
     tabTranscribe: "🎙️ 음성 인식 (STT)",
@@ -345,6 +350,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI 故事编剧",
     tabHistory: "📂 生成记录",
     tabDialogue: "💬 多角色对话",
+    tabVoiceClone: "🧬 1:1 声音克隆",
     tabTranslator: "🌐 智能翻译与母语朗读",
     tabVoiceChanger: "🎭 声音变声器",
     tabTranscribe: "🎙️ 语音转文字",
@@ -403,6 +409,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI เขียนสตอรี่",
     tabHistory: "📂 ประวัติการสร้าง",
     tabDialogue: "💬 สนทนาหลายเสียง",
+    tabVoiceClone: "🧬 โคลนเสียง 1:1",
     tabTranslator: "🌐 แปลภาษา & เสียงเนทีฟ",
     tabVoiceChanger: "🎭 เปลี่ยนโทนเสียง",
     tabTranscribe: "🎙️ ถอดเสียงเป็นข้อความ",
@@ -461,6 +468,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI ແຕ່ງເລື່ອງ",
     tabHistory: "📂 ປະຫວັດ",
     tabDialogue: "💬 ບົດສົນທະນາ",
+    tabVoiceClone: "🧬 ໂຄລນສຽງ 1:1",
     tabTranslator: "🌐 ແປພາສາ & ສຽງທ້ອງຖິ່ນ",
     tabVoiceChanger: "🎭 ປ່ຽນສຽງ",
     tabTranscribe: "🎙️ ປ່ຽນສຽງເປັນຂໍ້ຄວາມ",
@@ -519,6 +527,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI Kể chuyện",
     tabHistory: "📂 Lịch sử tạo",
     tabDialogue: "💬 Đối thoại nhiều giọng",
+    tabVoiceClone: "🧬 Nhân bản giọng nói",
     tabTranslator: "🌐 Dịch thuật & Giọng bản xứ",
     tabVoiceChanger: "🎭 Đổi tông giọng",
     tabTranscribe: "🎙️ Chuyển âm thanh thành văn bản",
@@ -577,6 +586,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "AI Pendongeng",
     tabHistory: "📂 Riwayat",
     tabDialogue: "💬 Percakapan Multi-Suara",
+    tabVoiceClone: "🧬 Kloning Suara 1:1",
     tabTranslator: "🌐 Penerjemah & Suara Asli",
     tabVoiceChanger: "🎭 Pengubah Suara",
     tabTranscribe: "🎙️ Suara ke Teks",
@@ -635,6 +645,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "Guionista IA",
     tabHistory: "📂 Historial",
     tabDialogue: "💬 Diálogo Multi-Voz",
+    tabVoiceClone: "🧬 Clonación de Voz 1:1",
     tabTranslator: "🌐 Traductor & Voz Nativa",
     tabVoiceChanger: "🎭 Modulador de Voz",
     tabTranscribe: "🎙️ Voz a Texto",
@@ -693,6 +704,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "ИИ-Сценарист",
     tabHistory: "📂 История записей",
     tabDialogue: "💬 Диалог нескольких голосов",
+    tabVoiceClone: "🧬 Клонирование голоса 1:1",
     tabTranslator: "🌐 Переводчик и нативная речь",
     tabVoiceChanger: "🎭 Изменение голоса",
     tabTranscribe: "🎙️ Распознавание речи",
@@ -751,6 +763,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     tabWriter: "كاتب القصص بالذكاء الاصطناعي",
     tabHistory: "📂 السجل",
     tabDialogue: "💬 محادثة متعددة الأصوات",
+    tabVoiceClone: "🧬 استنساخ الصوت 1:1",
     tabTranslator: "🌐 ترجمة وصوت ناطق أصلي",
     tabVoiceChanger: "🎭 تغيير طبقة الصوت",
     tabTranscribe: "🎙️ تحويل الصوت إلى نص",

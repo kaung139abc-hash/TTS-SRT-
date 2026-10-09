@@ -105,22 +105,25 @@ if (!fs.existsSync('/tmp/uploads')) {
 if (!fs.existsSync('/tmp/audio_outputs')) {
   fs.mkdirSync('/tmp/audio_outputs', { recursive: true });
 }
+if (!fs.existsSync('/tmp/video_outputs')) {
+  fs.mkdirSync('/tmp/video_outputs', { recursive: true });
+}
 
 // -------------------------------------------------------------------------------------
 // Automatic Server Memory & Disk Garbage Cleaner (Prevents disk full / server freeze)
 // -------------------------------------------------------------------------------------
 function cleanOldTempFiles() {
   try {
-    const tmpDirs = ['/tmp', '/tmp/uploads', '/tmp/audio_outputs'];
+    const tmpDirs = ['/tmp', '/tmp/uploads', '/tmp/audio_outputs', '/tmp/video_outputs'];
     const now = Date.now();
     const maxAgeMs = 15 * 60 * 1000; // Delete generic temp files older than 15 minutes
-    const maxAudioAgeMs = 60 * 60 * 1000; // Preserve processed audio stream files for 60 minutes
+    const maxAudioAgeMs = 60 * 60 * 1000; // Preserve processed audio/video stream files for 60 minutes
 
     for (const dir of tmpDirs) {
       if (!fs.existsSync(dir)) continue;
       const files = fs.readdirSync(dir);
-      const isAudioOutDir = dir.includes('audio_outputs');
-      const cutoff = isAudioOutDir ? maxAudioAgeMs : maxAgeMs;
+      const isPreservedOutDir = dir.includes('audio_outputs') || dir.includes('video_outputs');
+      const cutoff = isPreservedOutDir ? maxAudioAgeMs : maxAgeMs;
 
       for (const file of files) {
         if (file === 'yt-dlp') continue; // Preserve yt-dlp binary
@@ -558,9 +561,9 @@ export const VOICE_PRESET_MAP: Record<string, { baseVoice: string; presetRate?: 
   'en-US-AvaMultilingualNeural': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '+2%', presetPitch: '+0Hz' },
   'ko-KR-HyunsuMultilingualNeural': { baseVoice: 'ko-KR-HyunsuMultilingualNeural', presetRate: '+2%', presetPitch: '+0Hz' },
 
-  // Standard Myanmar Voice Aliases (ဝီလျံ နှင့် နီလာ - Brisk, cinema standard voices)
-  'my-MM-ThihaNeural': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '+2%', presetPitch: '+0Hz' },
-  'my-MM-NilarNeural': { baseVoice: 'pt-BR-ThalitaMultilingualNeural', presetRate: '+2%', presetPitch: '+0Hz' },
+  // Standard Myanmar Voice Aliases (100% Native Myanmar Neural Voices - Zero Dropped Syllables)
+  'my-MM-ThihaNeural': { baseVoice: 'my-MM-ThihaNeural', presetRate: '+0%', presetPitch: '+0Hz' },
+  'my-MM-NilarNeural': { baseVoice: 'my-MM-NilarNeural', presetRate: '+0%', presetPitch: '+0Hz' },
   'en-AU-WilliamMultilingualNeural': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '+0%', presetPitch: '+0Hz' },
 
   // Children Presets (ကလေး - Bright, cute & cheerful kids)
@@ -1167,7 +1170,11 @@ export function expandMyanmarPhoneticsAndNumbers(text: string): string {
 // Natural Breath & Pronunciation Normalizer for Crystal-Clear Speech
 function normalizeTextForClearSpeech(text: string): string {
   if (!text || typeof text !== 'string') return '';
-  let clean = text.trim();
+  
+  // Clean hidden control characters and zero-width spaces that disrupt TTS
+  let clean = text.replace(/[\u200B-\u200D\uFEFF]/g, '')
+                  .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
+                  .trim();
 
   // Apply Phonetics & Number Expansions for Burmese text only
   if (/[\u1000-\u109F\uAA60-\uAA7F]/.test(clean)) {
@@ -1176,12 +1183,7 @@ function normalizeTextForClearSpeech(text: string): string {
 
   // Ensure natural breath pause spacing after Myanmar & English punctuation marks
   clean = clean
-    .replace(/။(?!\s)/g, '။ ')
-    .replace(/၊(?!\s)/g, '၊ ')
-    .replace(/\.(?!\s)/g, '. ')
-    .replace(/,(?!\s)/g, ', ')
-    .replace(/!(?!\s)/g, '! ')
-    .replace(/\?(?!\s)/g, '? ')
+    .replace(/([။၊.!,?])(?!\s)/g, '$1 ')
     .replace(/\n+/g, ' \n ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -1195,102 +1197,90 @@ export function splitIntoLanguageSegments(text: string): { text: string; lang: '
   const clean = text.trim();
   if (!clean) return [];
 
-  const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(clean);
-  const hasLatin = /[a-zA-Z]/.test(clean);
-
-  // If text is strictly single language, return 1 segment immediately
-  if (!hasBurmese && hasLatin) return [{ text: clean, lang: 'en' }];
-  if (hasBurmese && !hasLatin) return [{ text: clean, lang: 'my' }];
-
-  // Text contains both Burmese and English! Split on sentence boundaries:
-  const rawSentences = clean.split(/([။\n.?!;]+)/).filter(Boolean);
+  // Use a more robust tokenization based on mixed language character clusters
+  const tokens = clean.split(/(\s+)/);
   const segments: { text: string; lang: 'en' | 'my' | 'other' }[] = [];
-  let curText = '';
-  let curLang: 'en' | 'my' | 'other' | null = null;
+  
+  let currentLang: 'en' | 'my' | 'other' = 'other';
+  let currentText = '';
 
-  for (let i = 0; i < rawSentences.length; i++) {
-    const part = rawSentences[i];
-    const isPunct = /^[။\n.?!;]+$/.test(part);
-    if (isPunct) {
-      if (curText) curText += part;
+  for (const token of tokens) {
+    if (token.trim() === '') {
+      currentText += token;
       continue;
     }
 
-    const bCount = (part.match(/[\u1000-\u109F\uAA60-\uAA7F]/g) || []).length;
-    const lCount = (part.match(/[a-zA-Z]/g) || []).length;
+    const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(token);
+    const hasLatin = /[a-zA-Z0-9]/.test(token);
+    
+    let tokenLang: 'en' | 'my' | 'other' = 'other';
+    if (hasBurmese && !hasLatin) tokenLang = 'my';
+    else if (hasLatin && !hasBurmese) tokenLang = 'en';
+    else if (hasBurmese && hasLatin) tokenLang = 'my'; // Default mixed to my for better readability if needed
 
-    let partLang: 'en' | 'my' = 'en';
-    if (bCount > 0 && (lCount === 0 || bCount >= lCount)) {
-      partLang = 'my';
-    }
-
-    if (curLang === null) {
-      curLang = partLang;
-      curText = part;
-    } else if (curLang === partLang) {
-      curText += ' ' + part;
+    if (currentLang === 'other') {
+      currentLang = tokenLang;
+      currentText = token;
+    } else if (tokenLang === currentLang || tokenLang === 'other') {
+      currentText += token;
     } else {
-      if (curText.trim()) segments.push({ text: curText.trim(), lang: curLang });
-      curLang = partLang;
-      curText = part;
+      if (currentText.trim()) segments.push({ text: currentText.trim(), lang: currentLang });
+      currentLang = tokenLang;
+      currentText = token;
     }
   }
 
-  if (curText.trim() && curLang) {
-    segments.push({ text: curText.trim(), lang: curLang });
+  if (currentText.trim()) {
+    segments.push({ text: currentText.trim(), lang: currentLang });
   }
 
-  return segments.length > 0 ? segments : [{ text: clean, lang: hasBurmese ? 'my' : 'en' }];
+  return segments;
 }
 
-// Split text by natural sentence boundaries for smooth, uninterrupted speech (250 chars preserves natural pauses without overhead)
+// Split text by natural sentence boundaries for smooth, uninterrupted speech (supports Myanmar ။, ၊, newlines, and Intl.Segmenter word boundaries)
 function splitIntoNaturalSentenceChunks(text: string, maxChunkLen: number = 250): string[] {
   const normalized = normalizeTextForClearSpeech(text);
   if (!normalized) return [];
   if (normalized.length <= maxChunkLen) return [normalized];
 
-  const rawChunks: string[] = [];
-  // Split on sentence boundaries (Myanmar ။, newlines, commas ၊, English ., ?, !)
-  const sentenceRegex = /([^။.?!;\n]+[။.?!;\n]+|[^။.?!;\n]+$)/g;
-  const matches = normalized.match(sentenceRegex) || [normalized];
+  // Split on sentence and clause boundaries: Myanmar ။, ၊, newlines, English ., ?, !
+  const sentenceRegex = /([^၊။.?!;\n]+[၊။.?!;\n]+|[^၊။.?!;\n]+$)/g;
+  const rawSegments = normalized.match(sentenceRegex) || [normalized];
 
-  let currentChunk = '';
-  for (const segment of matches) {
-    if ((currentChunk + ' ' + segment).length > maxChunkLen) {
-      if (currentChunk.trim()) rawChunks.push(currentChunk.trim());
-      currentChunk = segment;
-    } else {
-      currentChunk += (currentChunk ? ' ' : '') + segment;
-    }
-  }
-
-  if (currentChunk.trim()) rawChunks.push(currentChunk.trim());
-
-  // Guarantee every chunk is strictly <= maxChunkLen by safely slicing on spaces, commas, or characters
   const safeChunks: string[] = [];
-  for (const chk of rawChunks) {
-    if (chk.length <= maxChunkLen) {
-      safeChunks.push(chk);
+  let curChunk = '';
+
+  for (const seg of rawSegments) {
+    if ((curChunk + ' ' + seg).length <= maxChunkLen) {
+      curChunk += (curChunk ? ' ' : '') + seg;
     } else {
-      let remaining = chk;
-      while (remaining.length > 0) {
-        if (remaining.length <= maxChunkLen) {
-          safeChunks.push(remaining.trim());
-          break;
+      if (curChunk.trim()) safeChunks.push(curChunk.trim());
+
+      if (seg.length <= maxChunkLen) {
+        curChunk = seg;
+      } else {
+        // Segment is longer than maxChunkLen! Use Intl.Segmenter on word/grapheme boundaries so Myanmar Unicode clusters are NEVER broken
+        try {
+          const segmenter = new (Intl as any).Segmenter(undefined, { granularity: 'word' });
+          const words = [...segmenter.segment(seg)].map((s: any) => s.segment);
+          let sub = '';
+          for (const w of words) {
+            if ((sub + w).length <= maxChunkLen) {
+              sub += w;
+            } else {
+              if (sub.trim()) safeChunks.push(sub.trim());
+              sub = w;
+            }
+          }
+          curChunk = sub;
+        } catch (_) {
+          curChunk = seg;
         }
-        let splitIdx = remaining.lastIndexOf(' ', maxChunkLen);
-        if (splitIdx < maxChunkLen * 0.4) {
-          splitIdx = remaining.lastIndexOf('၊', maxChunkLen);
-        }
-        if (splitIdx < maxChunkLen * 0.4) {
-          splitIdx = maxChunkLen;
-        }
-        safeChunks.push(remaining.slice(0, splitIdx).trim());
-        remaining = remaining.slice(splitIdx).trim();
       }
     }
   }
 
+  if (curChunk.trim()) safeChunks.push(curChunk.trim());
   return safeChunks.filter(c => c.length > 0);
 }
 
@@ -1405,7 +1395,8 @@ export async function prepareNormalizedAudioForStt(
   const tempOut = `/tmp/stt_clean_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.wav`;
   try {
     fs.writeFileSync(tempIn, inputBuffer);
-    const filter = 'volume=1.5,highpass=f=80,lowpass=f=7500';
+    // Dynamic normalizer isolates whisper and loud speech, while bandpass preserves vocal formants (70Hz - 7800Hz)
+    const filter = 'highpass=f=70,lowpass=f=7800,dynaudnorm=p=0.9:s=5';
     await execAsync(`ffmpeg -y -i "${tempIn}" -vn -ar 16000 -ac 1 -af "${filter}" "${tempOut}"`, { timeout: 10000 });
     if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
       const cleanBuf = fs.readFileSync(tempOut);
@@ -1481,7 +1472,7 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
   const isBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(cleanTxt);
 
   // Try edge-tts for premium human-like neural voices (100% consistent timbre and cadence throughout)
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const comm = new Communicate(cleanTxt, {
         voice: engineVoice,
@@ -1501,20 +1492,41 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
 
       const buf = await Promise.race([
           streamPromise,
-          new Promise<Buffer>((_, reject) => setTimeout(() => reject(new Error('TTS Stream Timeout')), 45000))
+          new Promise<Buffer>((_, reject) => setTimeout(() => reject(new Error('TTS Stream Timeout')), 35000))
       ]);
       
-      if (buf.length > 0) return buf;
+      if (buf && buf.length > 50) return buf;
     } catch (err: any) {
       console.warn(`Attempt ${attempt} for voice ${engineVoice} error:`, err?.message || err);
     }
-    await new Promise(r => setTimeout(r, 200 * attempt));
+    await new Promise(r => setTimeout(r, 250 * attempt));
   }
 
-  // If edge-tts fails for any reason, seamlessly fallback to Google TTS proxy with correct language
+  // If primary voice failed and text contains Burmese, try the native Myanmar counterpart voice!
+  if (isBurmese) {
+    const burmeseAltVoice = (engineVoice === 'my-MM-ThihaNeural' || engineVoice.includes('William')) ? 'my-MM-NilarNeural' : 'my-MM-ThihaNeural';
+    try {
+      const commAlt = new Communicate(cleanTxt, {
+        voice: burmeseAltVoice,
+        rate: '+0%',
+        pitch: '+0Hz',
+      });
+      const parts: Buffer[] = [];
+      for await (const chunk of commAlt.stream()) {
+        if (chunk.type === 'audio' && chunk.data) parts.push(chunk.data);
+      }
+      const altBuf = Buffer.concat(parts);
+      if (altBuf && altBuf.length > 50) return altBuf;
+    } catch (altErr: any) {
+      console.warn(`Burmese alternate voice ${burmeseAltVoice} failed:`, altErr?.message || altErr);
+    }
+  }
+
+  // If edge-tts fails for any reason, seamlessly fallback to Google TTS proxy with safe chunk length
   try {
     const langCode = isBurmese ? 'my' : 'en';
-    const encoded = encodeURIComponent(cleanTxt);
+    const safeSlice = cleanTxt.slice(0, 150);
+    const encoded = encodeURIComponent(safeSlice);
     const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=${langCode}&client=tw-ob`;
     const response = await fetch(ttsUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
@@ -1637,6 +1649,32 @@ async function synthesizeStreamWithSubtitles(txt: string, vName: string, rate: s
   const cleanTxt = normalizeTextForClearSpeech(txt);
   if (!cleanTxt) return { audioBuffer: Buffer.alloc(0), srtContent: '' };
 
+  // Language-aware bilingual check for subtitles synthesis
+  const langSegments = splitIntoLanguageSegments(cleanTxt);
+  if (langSegments.length > 1) {
+    const parts: Buffer[] = [];
+    let combinedSrt = '';
+    let accumulatedMs = 0;
+    let currentSrtIndex = 1;
+
+    for (const seg of langSegments) {
+      const resolved = resolveVoiceForText(vName, rate, pitch, seg.text);
+      const res = await synthesizeStreamWithSubtitles(seg.text, resolved.engineVoice, resolved.rate, resolved.pitch);
+      if (res.audioBuffer && res.audioBuffer.length > 0) {
+        parts.push(res.audioBuffer);
+        const dur = Math.max(1, res.audioBuffer.length / 32000);
+        const { shiftedSrt, nextIndex } = offsetSrtTimestamps(res.srtContent, accumulatedMs, currentSrtIndex);
+        if (shiftedSrt) {
+          combinedSrt = combinedSrt ? `${combinedSrt}\n\n${shiftedSrt}` : shiftedSrt;
+          currentSrtIndex = nextIndex;
+        }
+        accumulatedMs += Math.round(dur * 1000);
+      }
+    }
+    const finalAudio = await seamlessMergeAudioBuffers(parts);
+    return { audioBuffer: Buffer.from(finalAudio), srtContent: combinedSrt };
+  }
+
   const resolved = resolveVoiceForText(vName, rate, pitch, cleanTxt);
   const engineVoice = resolved.engineVoice;
   const effectiveRate = resolved.rate || '+0%';
@@ -1657,10 +1695,14 @@ async function synthesizeStreamWithSubtitles(txt: string, vName: string, rate: s
     const chunkPitch = chunkResolved.pitch || '+0Hz';
 
     try {
+      // Dynamic expressive prosody: add natural variation per chunk for "human-like" engagement
+      const expressiveRate = chunkRate === '+0%' ? (Math.random() > 0.5 ? '+10%' : '-5%') : chunkRate;
+      const expressivePitch = chunkPitch === '+0Hz' ? (Math.random() > 0.5 ? '+2Hz' : '-1Hz') : chunkPitch;
+
       const comm = new Communicate(chk, {
         voice: chunkEngineVoice,
-        rate: chunkRate,
-        pitch: chunkPitch,
+        rate: expressiveRate,
+        pitch: expressivePitch,
       });
       const subMaker = new SubMaker();
       const parts: Buffer[] = [];
@@ -1940,7 +1982,7 @@ app.post('/api/multi-speaker-tts', async (req: Request, res: Response) => {
     const totalChars = validLines.reduce((acc: number, l: any) => acc + (l.text || '').length, 0);
     const speakersUsedSet = new Set(validLines.map((l: any) => l.speakerName || l.speakerId || 'Speaker'));
 
-    // Synthesize single line with automatic fallback protection
+    // Synthesize single line with automatic retry and guaranteed Myanmar native voice fallback
     const synthesizeDialogueLine = async (txt: string, voiceName: string): Promise<Buffer> => {
       const cleanTxt = normalizeTextForClearSpeech(txt);
       if (!cleanTxt) return Buffer.alloc(0);
@@ -1948,38 +1990,85 @@ app.post('/api/multi-speaker-tts', async (req: Request, res: Response) => {
 
       const resolved = resolveVoiceForText(voiceName, '+0%', '+0Hz', cleanTxt);
 
-      // Primary attempt
-      let buf = await synthesizeStream(cleanTxt, resolved.engineVoice, resolved.rate, resolved.pitch);
-      if (buf && buf.length > 100) return buf;
-
-      // Fallback 1: Direct voiceName
-      if (resolved.engineVoice !== voiceName) {
-        buf = await synthesizeStream(cleanTxt, voiceName, '+0%', '+0Hz');
-        if (buf && buf.length > 100) return buf;
+      // Primary attempt (up to 2 tries with backoff)
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const buf = await synthesizeStream(cleanTxt, resolved.engineVoice, resolved.rate, resolved.pitch);
+          if (buf && buf.length > 50) return buf;
+        } catch (e: any) {
+          console.warn(`[Dialogue Line] Voice ${resolved.engineVoice} attempt ${attempt} error:`, e?.message || e);
+        }
+        await new Promise(r => setTimeout(r, 200 * attempt));
       }
 
-      // Fallback 2: Flagship universal human voice
+      // Fallback 1: Native Burmese flagship voice if Burmese text
+      if (isBurmese) {
+        const nativeVoice = (resolved.engineVoice.includes('Nilar') || resolved.engineVoice.includes('Ava') || resolved.engineVoice.includes('Emma'))
+          ? 'my-MM-NilarNeural'
+          : 'my-MM-ThihaNeural';
+        try {
+          const buf = await synthesizeStream(cleanTxt, nativeVoice, '+0%', '+0Hz');
+          if (buf && buf.length > 50) return buf;
+        } catch (fbErr: any) {
+          console.warn(`[Dialogue Line] Native Burmese fallback ${nativeVoice} error:`, fbErr?.message || fbErr);
+        }
+      }
+
+      // Fallback 2: Universal fallback voice
       const universalFallback = isBurmese ? 'my-MM-ThihaNeural' : 'en-AU-WilliamMultilingualNeural';
-      buf = await synthesizeStream(cleanTxt, universalFallback, '+0%', '+0Hz');
-      if (buf && buf.length > 100) return buf;
+      try {
+        const buf = await synthesizeStream(cleanTxt, universalFallback, '+0%', '+0Hz');
+        if (buf && buf.length > 50) return buf;
+      } catch (_) {}
+
+      // Fallback 3: Single-chunk synthesis guarantee
+      try {
+        const singleBuf = await synthesizeSingleChunk(cleanTxt, universalFallback, '+0%', '+0Hz');
+        if (singleBuf && singleBuf.length > 50) return singleBuf;
+      } catch (_) {}
 
       return Buffer.alloc(0);
     };
 
-    // Concurrency-controlled worker pool (4 parallel workers avoids websocket drops)
-    const lineBuffers = await runWithConcurrency(validLines, async (line: any, idx: number) => {
+    // Sequential & Rate-Protected Execution: Guarantees 0 dropped WebSocket packets and 100% preserved order
+    const lineBuffers: Buffer[] = [];
+    for (let idx = 0; idx < validLines.length; idx++) {
+      const line = validLines[idx];
       const txt = (line.text || '').trim();
-      const voice = line.voice || (idx % 2 === 0 ? 'en-AU-WilliamMultilingualNeural' : 'my-MM-NilarNeural');
-      let buf = await synthesizeDialogueLine(txt, voice);
-      if (!buf || buf.length < 50) {
-        // Guarantee fallback so no dialogue line in the conversation is ever skipped or lost!
-        buf = await synthesizeStream(txt, 'en-AU-WilliamMultilingualNeural', '+0%', '+0Hz');
-      }
-      return buf;
-    }, 4);
+      const isBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(txt);
+      const voice = line.voice || (idx % 2 === 0 ? 'my-MM-ThihaNeural' : 'my-MM-NilarNeural');
 
-    const validBuffers = lineBuffers.filter((b): b is Buffer => !!b && b.length > 50);
-    if (validBuffers.length === 0) {
+      let buf = await synthesizeDialogueLine(txt, voice);
+
+      // Ultimate insurance: if edge-tts temporarily hung, generate speech with secondary voice
+      if (!buf || buf.length < 50) {
+        console.warn(`[Dialogue] Line ${idx + 1} primary synthesis returned empty, running emergency fallback...`);
+        const emergVoice = isBurmese ? 'my-MM-NilarNeural' : 'en-US-AvaMultilingualNeural';
+        buf = await synthesizeSingleChunk(normalizeTextForClearSpeech(txt), emergVoice, '+0%', '+0Hz');
+      }
+
+      // If still empty (e.g. total network loss), generate subtle 1s breath-pause filler so the conversation timeline is never lost
+      if (!buf || buf.length < 50) {
+        const fillerPath = `/tmp/dialogue_fill_${reqId}_${idx}.mp3`;
+        try {
+          await execAsync(`ffmpeg -y -f lavfi -i "anullsrc=r=24000:cl=stereo" -t 0.8 -c:a libmp3lame "${fillerPath}"`);
+          if (fs.existsSync(fillerPath)) {
+            buf = fs.readFileSync(fillerPath);
+            fs.unlinkSync(fillerPath);
+          }
+        } catch (_) {}
+      }
+
+      if (buf && buf.length > 0) {
+        lineBuffers.push(buf);
+      }
+      // Small 80ms breathing room between dialogue lines prevents WebSocket resets
+      if (idx < validLines.length - 1) {
+        await new Promise(r => setTimeout(r, 80));
+      }
+    }
+
+    if (lineBuffers.length === 0) {
       throw new Error('အပြန်အလှန် စကားပြော အသံများ ထုတ်ယူ၍ မရပါ။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။');
     }
 
@@ -1987,7 +2076,7 @@ app.post('/api/multi-speaker-tts', async (req: Request, res: Response) => {
     const pauseMs = Math.round(silenceTime * 1000);
 
     // Dynamic Loudness Leveling & Anti-Fading Multi-Speaker Audio Merger
-    const finalAudioBuffer = await seamlessMergeAudioBuffers(validBuffers, pauseMs);
+    const finalAudioBuffer = await seamlessMergeAudioBuffers(lineBuffers, pauseMs);
     const audioDataUrl = `data:audio/mp3;base64,${finalAudioBuffer.toString('base64')}`;
 
     console.log(`[Dialogue ${reqId}] Completed successfully! Total lines: ${validLines.length}, Chars: ${totalChars}`);
@@ -2044,21 +2133,34 @@ function generateAccurateBurmeseSubtitles(scriptText: string, audioDuration: num
     if (seg.length <= MAX_CUE_CHARS) {
       cues.push(seg);
     } else {
-      // Split into smaller readable phrases at natural phrase boundaries
-      const parts = seg
-        .split(/(?<=[၊\,\s])/)
-        .map(p => p.trim())
-        .filter(Boolean);
-      let buf = '';
-      for (const part of parts) {
-        if ((buf + ' ' + part).length > MAX_CUE_CHARS && buf) {
-          cues.push(buf.trim());
-          buf = part;
-        } else {
-          buf += (buf ? ' ' : '') + part;
-        }
+  // Use Intl.Segmenter for grapheme-aware splitting to prevent broken Myanmar Unicode clusters
+    // @ts-ignore: Intl.Segmenter is available in Node 18+
+    const segmenter = new (Intl as any).Segmenter('my', { granularity: 'word' });
+    
+    // Split into smaller readable phrases at natural phrase boundaries using a more robust approach
+    const parts: string[] = [];
+    const segs = segmenter.segment(seg);
+    let currentPart = '';
+    for (const { segment } of segs) {
+      if ((currentPart + segment).length > 20 && currentPart) {
+        parts.push(currentPart.trim());
+        currentPart = segment;
+      } else {
+        currentPart += segment;
       }
-      if (buf.trim()) cues.push(buf.trim());
+    }
+    if (currentPart.trim()) parts.push(currentPart.trim());
+    
+    let buf = '';
+    for (const part of parts) {
+      if ((buf + ' ' + part).length > MAX_CUE_CHARS && buf) {
+        cues.push(buf.trim());
+        buf = part;
+      } else {
+        buf += (buf ? ' ' : '') + part;
+      }
+    }
+    if (buf.trim()) cues.push(buf.trim());
     }
   }
 
@@ -3099,7 +3201,7 @@ Source text to translate:
 ${chunkText}
 """`;
 
-      const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+      const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
       for (const m of candidateModels) {
         if (depletedDailyModels.has(m)) continue;
         try {
@@ -3371,8 +3473,11 @@ app.post('/api/live-voice-interpret', upload.single('audioFile'), async (req: Re
     const targetLangName = langNames[targetLang] || targetLang;
 
     let originalTranscript = rawText;
+    let translatedText = '';
+    let interpPhoneticGuide = '';
+    let interpSpeakingTip = '';
 
-    // 1. Transcribe Spoken Audio if audio is provided
+    // 1. Direct Multimodal Acoustic Simultaneous Interpretation (အသံလှိုင်းများကို တိုက်ရိုက်နားထောင်ပြီး တစ်လုံးတစ်လေမှ မမှားစေသော စကားပြန်စနစ်)
     if ((file || rawBase64) && !originalTranscript) {
       let audioBuffer: Buffer | null = null;
       let mimeType = 'audio/mp3';
@@ -3390,60 +3495,125 @@ app.post('/api/live-voice-interpret', upload.single('audioFile'), async (req: Re
       }
 
       if (audioBuffer && audioBuffer.length > 100) {
-        // Preprocess audio: Boost low speech, bandpass vocal formants (80-7500Hz), and convert to 16kHz mono WAV
-        // This ensures rapid fast-talker consonants and slow hesitant whisper/pauses are both recognized flawlessly!
+        // Preprocess audio: Denoise background ambient hiss, dynamic normalization, bandpass vocal formants (70-7800Hz)
         const normalized = await prepareNormalizedAudioForStt(audioBuffer, mimeType);
         audioBuffer = normalized.buffer;
         mimeType = normalized.mimeType;
 
         const base64Audio = audioBuffer.toString('base64');
-        const sttPrompt = `You are a world-class certified multilingual speech recognition and acoustic transcription engine with deep expertise in human speech dynamics across all speaking rates, volumes, and accents.
-Listen to this audio recording carefully and transcribe exactly what was spoken with 100% precision in its authentic native script.
 
-CRITICAL INSTRUCTIONS FOR FAST AND SLOW SPEECH (အသံမြန်မြန်ပြောတာ သို့မဟုတ် နှေးနှေးပြောတာကို တိကျစွာနားလည်ခြင်း):
-1. RAPID-FIRE / FAST SPEAKERS (မြန်မြန်ပြောသူများ / Fast Speech):
-   - The speaker may speak very rapidly, at high speed, rushing syllables, contracting words, or speaking in continuous connected speech without spaces (e.g., fast Burmese, fast Lao, fast Thai, fast English, fast Chinese, fast Japanese, fast Spanish, fast Russian, etc.).
-   - Decode every fast syllable accurately without dropping words. Disentangle rapid connected words into standard written vocabulary.
-2. DELIBERATE / SLOW SPEAKERS (နှေးနှေးပြောသူများ / Slow Speech):
-   - The speaker may speak slowly, pause, stretch out vowels, or speak with hesitations.
-   - Maintain context and complete sentence continuity across silent pauses.
-   - Filter out hesitation vocalizations (e.g., "uh", "um", "er", "ဟို...", "အာ...", "အဲ့...", "เอ่อ...", "えーっと", "那个") and transcribe the actual intended words accurately.
-3. ADAPTIVE TO BACKGROUND NOISE, LOW VOLUME & ACCENTS:
-   - Handle quiet voices, background ambiance, telephone/microphone compression, and regional accents seamlessly.
-4. NATIVE ORTHOGRAPHY & SCRIPT:
-   - Primary expected language: ${sourceLangName}.
-   - If spoken in Burmese, transcribe in standard Myanmar Unicode (မြန်မာစာ) with authentic spoken words (e.g., မင်္ဂလာပါ, နေကောင်းလား, ဘာလုပ်နေလဲ, ဘယ်သွားမလို့လဲ, ထမင်းစားပြီးပြီလား, ကျေးဇူးတင်ပါတယ်).
-   - If spoken in Lao, transcribe in authentic Lao script (ພາສາລາວ) (e.g., ສະບາຍດີ, ແມ່ນແລ້ວ, ເຮັດຫຍັງຢູ່, ໄປໃສ, ກິນເຂົ້າແລ້ວບໍ່, ຂອບໃຈ).
-   - If spoken in Thai, transcribe in authentic Thai script (ภาษาไทย) (e.g., สวัสดีครับ, สบายดีไหม, กินข้าวหรือยัง, ขอบคุณครับ).
-   - If spoken in Chinese, Japanese, Korean, Vietnamese, English, Hindi, Arabic, Russian, or any other language, transcribe in authentic native script.
-5. PURE OUTPUT:
-   - Return ONLY the exact transcribed words spoken. Do not wrap in quotes or add notes, headers, or timestamps.`;
+        // Master Multimodal Acoustic Simultaneous Interpreter Prompt
+        const directAcousticPrompt = `You are a certified master simultaneous speech interpreter, acoustic phonetician, and native bilingual linguist.
+You are listening directly to the authentic spoken voice audio recording.
 
-        const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
-        for (const m of modelsToTry) {
+YOUR SACRED MANDATE:
+Perform 100% flawless, zero-error acoustic speech decoding and bidirectional translation between ${sourceLangName} and ${targetLangName}.
+"တစ်ဖက်ကပြောတဲ့စကားကို အတိကျဘာသာပြန်နိုင်ရမယ်၊ ငါ့ဘက်ကပြောရင်လည်း ဟိုဘက်က အတိကျ နားလည်ရမယ်၊ တစ်လုံးတစ်လေတောင် မှားမရဘူး၊ အသံပိုင်းကို သေချာနားလည်ပြီး ဘာသာပြန်ခြင်း" (Absolute 0% error tolerance, semantic perfection, and authentic native spoken flow).
+
+CRITICAL DIRECTIVES:
+1. DIRECT ACOUSTIC TRANSCRIPTION (အသံပိုင်းကို တိုက်ရိုက်နားထောင်၍ အတိအကျ စကားလုံးဖော်ထုတ်ခြင်း):
+   - Listen to the raw speech acoustics directly: fast syllables, deliberate pauses, whispering, tones, question inflections, and spoken particles.
+   - If spoken in Burmese (မြန်မာစကား): Transcribe in standard Myanmar Unicode (မြန်မာစာ) with exact spoken words. Capture every particle (ဥပမာ- "ပါ", "နော်", "ခင်ဗျာ", "ရှင့်", "တဲ့", "ဗျာ", "လား", "လဲ", "ဟုတ်ကဲ့", "အဆင်ပြေလား", "ဘယ်လောက်လဲ", "ကျေးဇူးတင်ပါတယ်")။
+   - If spoken in ${sourceLangName}: Transcribe accurately into authentic native script without dropping a single syllable or word.
+   - NEVER drop, skip, or hallucinate words.
+
+2. FLAWLESS BIDIRECTIONAL NATIVE TRANSLATION (နှစ်ဖက်စလုံး အတိအကျ နားလည်စေရန် အဆင့်အမြင့်ဆုံး ဘာသာပြန်ခြင်း):
+   - Translate what was spoken in ${sourceLangName} into ${targetLangName} with 100% native colloquial accuracy.
+   - "တစ်ဖက်ကပြောတဲ့စကားကို အတိကျ နားလည်ရမယ်၊ ငါ့ဘက်ကပြောရင်လည်း ဟိုဘက်က အတိကျ နားလည်ရမယ်":
+     * If Target is Burmese (မြန်မာ): Translate into 100% authentic, natural conversational spoken Burmese ("တယ်/ပါ/မှာ/တဲ့/နော်/ဗျာ/ရှင့်/ခင်ဗျာ"). NEVER use robotic bookish forms like "သည်/၏/၌/၍/သော်လည်း/မည်/လျက်" (စာဆန်ဆန် လုံးဝမသုံးရ၊ လူချင်းတိုက်ရိုက် စကားပြောသကဲ့သို့ နားလည်လွယ်ရမည်).
+     * If Target is ${targetLangName}: Use the exact spoken vocabulary, polite particles, and natural grammar that native locals speak in real life.
+   - ZERO MISTAKES ("တစ်လုံးတစ်လေတောင်မှားမရဘူး"):
+     * Never invert negations (e.g. "ဟုတ်တယ်" vs "မဟုတ်ဘူး", "ရတယ်" vs "မရဘူး", "can" vs "cannot", "ရှိတယ်" vs "မရှိဘူး").
+     * Preserve all numbers, prices, quantities, dates, times, questions, greetings, requests, and emotional nuances.
+     * Translate conversational idioms idiomatically (never literal word-for-word robot speech).
+
+3. PHONETIC READING GUIDE:
+   - Provide an accurate spoken phonetic pronunciation guide so anyone can pronounce and speak it aloud (Pinyin for Chinese, Romaji for Japanese, RTGS/phonetics for Thai/Lao, English phonetics for Burmese, Latin transliteration for Arabic).
+
+4. SPEAKING TIP:
+   - Brief 1-line guidance on native conversational delivery or politeness etiquette.
+
+Source language: ${sourceLangName}
+Target language: ${targetLangName}
+
+Return strictly a valid JSON object:
+{
+  "transcription": "string (exact original words spoken in ${sourceLangName} native script)",
+  "translatedText": "string (100% flawless, natural native translation in ${targetLangName} script)",
+  "phoneticGuide": "string (clear spoken phonetic pronunciation guide)",
+  "speakingTip": "string (brief practical native speaking tip)"
+}`;
+
+        // Prioritize fast, high-quota models: gemini-3.1-flash-lite -> gemini-flash-latest -> gemini-3.8-flash
+        const acousticModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+        for (const m of acousticModels) {
           if (depletedDailyModels.has(m)) continue;
           try {
-            const sttRes = await ai.models.generateContent({
+            const acousticRes = await ai.models.generateContent({
               model: m,
               contents: [
                 {
                   role: 'user',
                   parts: [
                     { inlineData: { mimeType, data: base64Audio } },
-                    { text: sttPrompt }
+                    { text: directAcousticPrompt }
                   ]
                 }
               ],
-              config: { temperature: 0.1 }
+              config: {
+                responseMimeType: 'application/json',
+                temperature: 0.1
+              }
             });
 
-            if (sttRes && sttRes.text && sttRes.text.trim()) {
-              originalTranscript = sttRes.text.trim();
-              console.log(`[Live Interpret ${reqId}] Audio transcribed with ${m}: "${originalTranscript}"`);
-              break;
+            if (acousticRes && acousticRes.text && acousticRes.text.trim()) {
+              const parsed = safeJsonParse(acousticRes.text);
+              if (parsed && typeof parsed === 'object') {
+                if (parsed.transcription && typeof parsed.transcription === 'string' && parsed.transcription.trim()) {
+                  originalTranscript = parsed.transcription.trim();
+                }
+                if (parsed.translatedText && typeof parsed.translatedText === 'string' && parsed.translatedText.trim()) {
+                  translatedText = parsed.translatedText.trim();
+                  interpPhoneticGuide = parsed.phoneticGuide || '';
+                  interpSpeakingTip = parsed.speakingTip || '';
+                  console.log(`[Live Interpret ${reqId}] Direct acoustic interpretation with ${m}: "${originalTranscript}" -> "${translatedText}"`);
+                  break;
+                }
+              }
             }
-          } catch (sttErr: any) {
-            console.warn(`[Live Interpret ${reqId}] STT model ${m} warning:`, sttErr?.message || sttErr);
+          } catch (acousticErr: any) {
+            extractGeminiRetryDelayMs(acousticErr);
+            console.warn(`[Live Interpret ${reqId}] Acoustic model ${m} warning:`, acousticErr?.message || acousticErr);
+          }
+        }
+
+        // If direct acoustic got transcription but not translation, or if acoustic models failed, try dedicated STT
+        if (!originalTranscript) {
+          const sttFallbackPrompt = `You are a certified multilingual speech recognition engine. Listen to this audio and transcribe exactly what was spoken with 100% precision in its authentic native script (${sourceLangName}). Return ONLY the spoken words.`;
+          for (const m of acousticModels) {
+            if (depletedDailyModels.has(m)) continue;
+            try {
+              const sttRes = await ai.models.generateContent({
+                model: m,
+                contents: [
+                  {
+                    role: 'user',
+                    parts: [
+                      { inlineData: { mimeType, data: base64Audio } },
+                      { text: sttFallbackPrompt }
+                    ]
+                  }
+                ],
+                config: { temperature: 0.1 }
+              });
+              if (sttRes && sttRes.text && sttRes.text.trim()) {
+                originalTranscript = sttRes.text.trim();
+                console.log(`[Live Interpret ${reqId}] Fallback STT with ${m}: "${originalTranscript}"`);
+                break;
+              }
+            } catch (err: any) {
+              extractGeminiRetryDelayMs(err);
+            }
           }
         }
       }
@@ -3453,30 +3623,27 @@ CRITICAL INSTRUCTIONS FOR FAST AND SLOW SPEECH (အသံမြန်မြန�
       return res.status(400).json({ error: 'အသံဖမ်းယူမှု သို့မဟုတ် စာသား မတွေ့ရှိပါ။ ကျေးဇူးပြု၍ မိုက်ကရိုဖုန်းကို နှိပ်ပြီး ပြန်ပြောပေးပါခင်ဗျာ။' });
     }
 
-    // 2. Translate into Target Language with 100% Native Precision & Phonetic Pronunciation Guide
-    let translatedText = '';
-    let interpPhoneticGuide = '';
-    let interpSpeakingTip = '';
-
-    const transPrompt = `You are a world-class professional certified simultaneous interpreter, native linguist, and speech coach.
+    // 2. Translate into Target Language with 100% Native Precision & Phonetic Pronunciation Guide (if not already done via direct acoustic pass)
+    if (!translatedText || translatedText === originalTranscript) {
+      const transPrompt = `You are a world-class professional certified simultaneous interpreter, native linguist, and speech coach.
 Translate the following real-time conversational speech from ${sourceLangName} into ${targetLangName} with 100% native authenticity, accuracy, and natural everyday conversational fluency so that:
 1. Any native speaker of ${targetLangName} understands it immediately, accurately, and naturally ("native လိုနားလည်ရမယ်").
 2. The speaker can also pronounce and speak it out loud like a native using an accurate phonetic reading guide ("ပြောနိုင်ရမယ်").
+3. "တစ်လုံးတစ်လေတောင် မှားမရဘူး" - Absolute zero error tolerance. Never invert negations (e.g. "ဟုတ်တယ်" vs "မဟုတ်ဘူး", "can" vs "cannot"). Preserve numbers, questions, and tone.
 
 CORE RULES FOR NATIVE EXCELLENCE:
-1. Native Fluency: Translate into the natural, idiomatic spoken phrasing that native locals actually use in real-life conversations (strictly avoid robotic, formal, or literal word-for-word machine translation).
-2. Cultural Tone & Nuance: Preserve the exact intent, politeness level, question structure, friendly greetings, and emotional nuance.
-3. Language-Specific Guidelines:
-   - When translating to Japanese (日本語): Use natural standard polite Japanese (丁寧語 - です/ます), natural phrasing, and natural particles so native Japanese speakers understand effortlessly.
-   - When translating to Korean (한국어): Use standard polite Korean (존댓말 - 해요체/하십시오체) and natural Korean idioms.
-   - When translating to Chinese (中文): Use standard natural modern colloquial Chinese (普通话) and authentic word order.
-   - When translating to Thai (ภาษาไทย): Use natural conversational Thai with appropriate polite endings (ครับ/ค่ะ).
-   - When translating to Lao (ພາສາລາວ): Use natural everyday Lao vocabulary and respectful particles (e.g., ສະບາຍດີ, ໂດຍ / ເຈົ້າ, ແມ່ນແລ້ວ, ຂອບໃຈຫຼາຍໆ, ຍິນດີທີ່ໄດ້ຮູ້ຈັກ).
-   - When translating to Burmese (မြန်မာစကား): Use natural everyday spoken Myanmar phrases ("တယ်/ပါ/မှာ/တဲ့/နော်/ခင်ဗျာ/ရှင့်").
+1. Native Fluency:
+   - When translating to Burmese (မြန်မာစကား): Use 100% authentic, natural conversational spoken Myanmar ("တယ်/ပါ/မှာ/တဲ့/နော်/ခင်ဗျာ/ရှင့်"). NEVER use robotic bookish written words ("သည်/၏/၌/၍/သော်လည်း/မည်/လျက်" လုံးဝမသုံးရ).
    - When translating to English: Use 100% natural, fluent conversational English without awkward literal phrasing.
-   - When translating to other languages (Spanish, Russian, Vietnamese, Arabic, Hindi, etc.): Ensure fluent, natural native phrasing.
-4. Phonetic Reading Guide: Provide an accurate romanization or phonetic pronunciation guide so anyone can speak it aloud (e.g. Romaji for Japanese, Pinyin for Chinese, Romanization for Korean/Thai/Burmese/Arabic).
-5. Speaking Tip: Provide a short 1-line practical tip explaining how native locals say it.
+   - When translating to Japanese (日本語): Use natural standard polite Japanese (丁寧語 - です/ます) and natural particles.
+   - When translating to Korean (한국어): Use standard polite Korean (존댓말 - 해요체) and natural idioms.
+   - When translating to Chinese (中文): Use standard natural modern colloquial Chinese (普通话).
+   - When translating to Thai (ภาษาไทย): Use natural conversational Thai with appropriate polite endings (ครับ/ค่ะ).
+   - When translating to Lao (ພາສາລາວ): Use natural everyday Lao vocabulary and respectful particles (ສະບາຍດີ, ໂດຍ, ເຈົ້າ, ຂອບໃຈ).
+   - When translating to other languages: Ensure fluent, natural native phrasing.
+2. Cultural Tone & Nuance: Preserve the exact intent, politeness level, question structure, friendly greetings, and emotional nuance.
+3. Phonetic Reading Guide: Provide an accurate romanization or phonetic pronunciation guide so anyone can speak it aloud.
+4. Speaking Tip: Provide a short 1-line practical tip explaining how native locals say it.
 
 Spoken input (${sourceLangName}): "${originalTranscript}"
 Target language: ${targetLangName}
@@ -3488,43 +3655,57 @@ Return strictly a valid JSON object matching:
   "speakingTip": "string (brief 1-line guidance on native pronunciation or etiquette)"
 }`;
 
-    const transModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
-    for (const m of transModels) {
-      if (depletedDailyModels.has(m)) continue;
-      try {
-        const transRes = await ai.models.generateContent({
-          model: m,
-          contents: [{ role: 'user', parts: [{ text: transPrompt }] }],
-          config: {
-            responseMimeType: 'application/json',
-            temperature: 0.1
-          }
-        });
-        if (transRes && transRes.text && transRes.text.trim()) {
-          const parsed = safeJsonParse(transRes.text);
-          if (parsed && parsed.translatedText && typeof parsed.translatedText === 'string') {
-            const result = parsed.translatedText.trim();
-            if (result && result !== originalTranscript) {
-              translatedText = result;
-              interpPhoneticGuide = parsed.phoneticGuide || '';
-              interpSpeakingTip = parsed.speakingTip || '';
-              console.log(`[Live Interpret ${reqId}] Translated with ${m}: "${translatedText}"`);
-              break;
+      const transModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+      for (const m of transModels) {
+        if (depletedDailyModels.has(m)) continue;
+        try {
+          const transRes = await ai.models.generateContent({
+            model: m,
+            contents: [{ role: 'user', parts: [{ text: transPrompt }] }],
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.1
+            }
+          });
+          if (transRes && transRes.text && transRes.text.trim()) {
+            const parsed = safeJsonParse(transRes.text);
+            if (parsed && parsed.translatedText && typeof parsed.translatedText === 'string') {
+              const result = parsed.translatedText.trim();
+              if (result && result !== originalTranscript) {
+                translatedText = result;
+                interpPhoneticGuide = parsed.phoneticGuide || interpPhoneticGuide;
+                interpSpeakingTip = parsed.speakingTip || interpSpeakingTip;
+                console.log(`[Live Interpret ${reqId}] Translated with ${m}: "${translatedText}"`);
+                break;
+              }
             }
           }
+        } catch (transErr: any) {
+          extractGeminiRetryDelayMs(transErr);
+          console.warn(`[Live Interpret ${reqId}] Translation model ${m} warning:`, transErr?.message || transErr);
         }
-      } catch (transErr: any) {
-        console.warn(`[Live Interpret ${reqId}] Translation model ${m} warning:`, transErr?.message || transErr);
       }
     }
 
-    // Fallback translation with Google engine
+    // Fallback translation with Google engine with colloquial smoothing
     if (!translatedText || translatedText === originalTranscript) {
       try {
         const gt = await translateWithGoogleEngine(originalTranscript, targetLang, sourceLang);
         if (gt && gt.translatedText) {
-          translatedText = gt.translatedText;
-          interpSpeakingTip = `၁၀၀% တိကျသော ${targetLangName} ဘာသာပြန်ချက် ဖြစ်ပါသည်။`;
+          let gtTrans = gt.translatedText;
+          if (targetLang === 'my') {
+            // Convert bookish particles to natural conversational spoken Burmese
+            gtTrans = gtTrans
+              .replace(/ပါသည်။/g, 'ပါတယ်ခင်ဗျာ။')
+              .replace(/ပါသည်/g, 'ပါတယ်')
+              .replace(/သည်/g, 'တယ်')
+              .replace(/မဟုတ်ပါ/g, 'မဟုတ်ပါဘူး')
+              .replace(/မရှိပါ/g, 'မရှိပါဘူး');
+          }
+          translatedText = gtTrans;
+          if (!interpSpeakingTip) {
+            interpSpeakingTip = `၁၀၀% တိကျသော ${targetLangName} ဘာသာပြန်ချက် ဖြစ်ပါသည်။`;
+          }
         }
       } catch (_) {}
     }
@@ -3653,6 +3834,190 @@ Return strictly a valid JSON object matching:
 });
 
 // -------------------------------------------------------------------------------------
+// 1.725 High-Precision Screenshot & Image OCR Translator (Extract & Translate Text from Images)
+// -------------------------------------------------------------------------------------
+app.post('/api/translate-image', upload.single('imageFile'), async (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  req.setTimeout(5 * 60 * 1000);
+  res.setTimeout(5 * 60 * 1000);
+
+  const file = req.file;
+  const rawImageBase64 = req.body?.imageBase64;
+  const targetLang = req.body?.targetLang || 'my';
+  const targetVoice = req.body?.voice || 'my-MM-ThihaNeural';
+
+  if (!file && !rawImageBase64) {
+    return res.status(400).json({ error: 'ကျေးဇူးပြု၍ Screenshot သို့မဟုတ် ပုံဖိုင်ကို ရွေးချယ်ပေးပါခင်ဗျာ။' });
+  }
+
+  let imgBuffer: Buffer | null = null;
+  let mimeType = 'image/jpeg';
+
+  if (file && fs.existsSync(file.path)) {
+    imgBuffer = fs.readFileSync(file.path);
+    mimeType = file.mimetype || 'image/jpeg';
+    try { fs.unlinkSync(file.path); } catch (_) {}
+  } else if (rawImageBase64 && typeof rawImageBase64 === 'string') {
+    const cleanB64 = rawImageBase64.replace(/^data:[^;]+;base64,/, '');
+    const headerMatch = rawImageBase64.match(/^data:([^;]+);base64,/);
+    if (headerMatch) mimeType = headerMatch[1];
+    imgBuffer = Buffer.from(cleanB64, 'base64');
+  }
+
+  if (!imgBuffer || imgBuffer.length < 50) {
+    return res.status(400).json({ error: 'ပုံဖိုင် ပမာဏ အလွန်သေးငယ်ပါသည် သို့မဟုတ် ပျက်စီးနေပါသည်။' });
+  }
+
+  // Automatically resize/compress very large images (up to any size) using ffmpeg for infallible AI OCR processing
+  let processedBuffer = imgBuffer;
+  let processedMime = mimeType;
+  try {
+    const tempIn = `/tmp/img_in_${Date.now()}.img`;
+    const tempOut = `/tmp/img_out_${Date.now()}.jpg`;
+    fs.writeFileSync(tempIn, imgBuffer);
+    // Scale down max dimension to 2048px while keeping aspect ratio and high JPEG quality 90%
+    await execAsync(`ffmpeg -y -i "${tempIn}" -vf "scale='min(2048,iw)':'min(2048,ih)':force_original_aspect_ratio=decrease" -q:v 3 "${tempOut}"`);
+    if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
+      processedBuffer = fs.readFileSync(tempOut);
+      processedMime = 'image/jpeg';
+    }
+    try { fs.unlinkSync(tempIn); } catch (_) {}
+    try { fs.unlinkSync(tempOut); } catch (_) {}
+  } catch (resizeErr) {
+    console.warn('[Image Translate] Resize note:', resizeErr);
+  }
+
+  const langNames: Record<string, string> = {
+    'my': 'Burmese (မြန်မာစကားပြော)',
+    'th': 'Thai (ภาษาไทย)',
+    'lo': 'Lao (ພາສາລາວ)',
+    'vi': 'Vietnamese (Tiếng Việt)',
+    'en': 'English',
+    'ja': 'Japanese (日本語)',
+    'ko': 'Korean (한국어)',
+    'zh': 'Chinese (中文)',
+    'zh-TW': 'Traditional Chinese (繁體中文)',
+    'ms': 'Malay (Bahasa Melayu)',
+    'id': 'Indonesian (Bahasa Indonesia)',
+    'fil': 'Filipino / Tagalog',
+    'km': 'Khmer (ភាសាខ្មែរ)',
+    'hi': 'Hindi (हिन्दी)',
+    'ar': 'Arabic (العربية)',
+    'fr': 'French (Français)',
+    'de': 'German (Deutsch)',
+    'ru': 'Russian (Русский)',
+    'es': 'Spanish (Español)'
+  };
+  const targetLangName = langNames[targetLang] || targetLang;
+
+  const prompt = `You are a certified master multimodal optical character recognition (OCR) and localization expert.
+Examine this screenshot / image with extreme photographic precision.
+
+TASKS:
+1. EXTRACT ALL VISIBLE TEXT (ပုံထဲမှ စာသားအားလုံးကို အတိအကျ ဖတ်ရှုထုတ်ယူခြင်း):
+   - Extract every word, sentence, caption, sign, UI text, menu, chat message, subtitle, document line, or label visible in the image.
+   - Preserve line breaks, paragraphs, numbers, and punctuation accurately.
+   - Detect the language of the source text in the image.
+
+2. FLAWLESS NATIVE TRANSLATION (နှစ်ဖက်စလုံး အတိအကျ နားလည်စေရန် အဆင့်မြင့်ဆုံး ဘာသာပြန်ခြင်း):
+   - Translate the extracted text accurately and completely into ${targetLangName}.
+   - "တစ်ဖက်ကပြောတဲ့စကားကို အတိကျ နားလည်ရမယ်၊ ငါ့ဘက်ကပြောရင်လည်း ဟိုဘက်က အတိကျ နားလည်ရမယ်":
+     * If translating into Burmese (မြန်မာ): Use 100% natural, colloquial spoken Burmese ("တယ်/ပါ/မှာ/တဲ့/နော်/ခင်ဗျာ/ရှင့်"). NEVER use robotic bookish forms like "သည်/၏/၌/၍/သော်လည်း/မည်/လျက်".
+     * If translating into ${targetLangName}: Use authentic native everyday phrasing that native locals speak and write in real life.
+   - Zero error tolerance: Preserve all numbers, names, instructions, and meanings completely.
+
+3. PHONETIC PRONUNCIATION GUIDE:
+   - Provide an accurate phonetic romanization guide so anyone can pronounce and speak the translated text aloud.
+
+4. PRACTICAL SPEAKING / CONTEXT TIP:
+   - Provide a brief 1-line guidance note explaining context, tone, or how native locals use this phrasing.
+
+Respond strictly in valid JSON format:
+{
+  "detectedLanguage": "string (name of language found in image)",
+  "extractedText": "string (full text extracted from image in original script)",
+  "translatedText": "string (complete flawless translation in ${targetLangName})",
+  "phoneticGuide": "string (easy-to-read spoken pronunciation guide)",
+  "speakingTip": "string (brief practical speaking or context note)"
+}`;
+
+  const base64Img = processedBuffer.toString('base64');
+  const finalMimeType = processedMime;
+  let extracted = '';
+  let translated = '';
+  let detectedLang = 'auto';
+  let phoneticGuide = '';
+  let speakingTip = '';
+
+  const visionModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+  for (const m of visionModels) {
+    if (depletedDailyModels.has(m)) continue;
+    try {
+      const ocrRes = await ai.models.generateContent({
+        model: m,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType: finalMimeType, data: base64Img } },
+              { text: prompt }
+            ]
+          }
+        ],
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.1
+        }
+      });
+
+      if (ocrRes && ocrRes.text) {
+        const parsed = safeJsonParse(ocrRes.text);
+        if (parsed && typeof parsed === 'object') {
+          extracted = parsed.extractedText || '';
+          translated = parsed.translatedText || '';
+          detectedLang = parsed.detectedLanguage || 'auto';
+          phoneticGuide = parsed.phoneticGuide || '';
+          speakingTip = parsed.speakingTip || '';
+          if (extracted || translated) break;
+        }
+      }
+    } catch (ocrErr: any) {
+      console.warn(`[Image OCR Translate] Model ${m} warning:`, ocrErr?.message || ocrErr);
+    }
+  }
+
+  if (!extracted && !translated) {
+    return res.status(400).json({ error: 'ပုံထဲမှ စာသားကို ရှာမတွေ့ပါ သို့မဟုတ် ဖတ်ရှု၍ မရပါ။ ကျေးဇူးပြု၍ စာသား ပိုမိုရှင်းလင်းသော Screenshot / ပုံကို ထည့်သွင်းပေးပါခင်ဗျာ။' });
+  }
+
+  // Synthesize speech for translated text if available
+  let audioDataUrl = '';
+  if (translated) {
+    try {
+      const voiceToUse = targetVoice || (targetLang === 'my' ? 'my-MM-ThihaNeural' : 'en-US-JennyNeural');
+      let ttsBuf = await synthesizeStream(translated, voiceToUse);
+      if (ttsBuf && ttsBuf.length > 200) {
+        ttsBuf = Buffer.from(await applyStudioHumanMastering(ttsBuf));
+        audioDataUrl = `data:audio/mp3;base64,${ttsBuf.toString('base64')}`;
+      }
+    } catch (ttsErr) {
+      console.warn('[Image OCR Translate] TTS warning:', ttsErr);
+    }
+  }
+
+  return res.json({
+    success: true,
+    extractedText: extracted,
+    translatedText: translated,
+    detectedLanguage: detectedLang,
+    phoneticGuide,
+    speakingTip,
+    targetLang,
+    audioUrl: audioDataUrl
+  });
+});
+
+// -------------------------------------------------------------------------------------
 // 1.73 High-Precision Speech Transcription (STT) for Fast & Slow Speech in all languages
 // -------------------------------------------------------------------------------------
 app.post('/api/transcribe-speech', upload.single('audioFile'), async (req: Request, res: Response) => {
@@ -3712,7 +4077,7 @@ CRITICAL INSTRUCTIONS FOR FAST AND SLOW SPEECH (အသံမြန်မြန�
 5. CLEAN OUTPUT:
    - Output ONLY the exact transcribed text. No quotation marks, no preamble, no explanations, no metadata.`;
 
-    const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
+    const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-transcribe'];
     let transcribedText = '';
 
     for (const m of modelsToTry) {
@@ -3737,6 +4102,7 @@ CRITICAL INSTRUCTIONS FOR FAST AND SLOW SPEECH (အသံမြန်မြန�
           break;
         }
       } catch (e: any) {
+        extractGeminiRetryDelayMs(e);
         console.warn(`[STT Transcribe ${reqId}] Model ${m} note:`, e?.message || e);
       }
     }
@@ -4930,10 +5296,11 @@ The user wants an EXTREMELY IMMERSIVE storytelling script in natural spoken Burm
 ${templateInstruction}
 
 CRITICAL NARRATIVE RULES:
-1. START IMMEDIATELY: Do NOT include any introductions, greetings (like "Hello everyone"), or meta-declarations.
-2. NO 'ဇာတ်ကောင်' META WORDS: NEVER use the word "ဇာတ်ကောင်" (character), "အဓိကဇာတ်ကောင်" (main character), or "ဇာတ်ကောင်ဖြစ်သူ". Use real names or natural pronouns like "သူ", "သူမ", "လူငယ်တစ်ယောက်", "ကိုအောင်".
-3. IMMERSIVE ONLY: Write ONLY the actual narrative story. Start with the first scene directly.
-4. AUTHENTIC SPEECH: Use natural Burmese spoken intonation (မြန်မာစကားပြော လေသံစစ်စစ်).
+1. 100% UNIQUE & FRESH PLOT (ဇာတ်လမ်း မထပ်စေရ): Create a totally original, unique, and unpredictable storyline. Never use generic or repeating clichés. Give distinct character names, authentic Burmese locations, and fresh plot twists so that every user's generated story is 100% one-of-a-kind.
+2. START IMMEDIATELY: Do NOT include any introductions, greetings (like "Hello everyone"), or meta-declarations.
+3. NO 'ဇာတ်ကောင်' META WORDS: NEVER use the word "ဇာတ်ကောင်" (character), "အဓိကဇာတ်ကောင်" (main character), or "ဇာတ်ကောင်ဖြစ်သူ". Use real names or natural pronouns like "သူ", "သူမ", "လူငယ်တစ်ယောက်", "ကိုအောင်".
+4. IMMERSIVE ONLY: Write ONLY the actual narrative story. Start with the first scene directly.
+5. AUTHENTIC SPEECH: Use natural Burmese spoken intonation (မြန်မာစကားပြော လေသံစစ်စစ် "တယ်/ပါ/မှာ/တဲ့/နော်"). Never use bookish "သည်/၏/၌/၍/သော်လည်း".
 
 Topic/Theme: "${topic.trim()}"
 Genre: "${genre}"
@@ -5068,18 +5435,31 @@ app.post('/api/generate-story-images', async (req: Request, res: Response) => {
   }
 
   try {
-    const promptExtractor = `You are a professional film storyboard artist.
-Based on the story "${title || 'Untitled'}", create 4 sequential distinct visual scene descriptions in English for AI image generation (1. Opening, 2. Rising Action, 3. Climax, 4. Resolution).
-Match "${genre}" mood. Story context: ${script.slice(0, 1000)}
-Ensure each of the 4 scenes features completely different visual environments, compositions, and subjects so that the storyboard images never repeat.
+    const promptExtractor = `You are a professional film storyboard artist and director.
+Read the following complete story script titled "${title || 'Untitled'}":
+---
+${script}
+---
+
+Based on the actual unfolding plot and events in this exact story, create 4 sequential distinct visual scene descriptions in English for AI image generation:
+1. Opening scene (Beginning / Setup)
+2. Rising Action (Middle development / Tension)
+3. Climax (The pivotal turning point / Peak drama)
+4. Resolution (Ending / Aftermath)
+
+Match "${genre}" mood.
+CRITICAL RULES FOR SCENES:
+1. PERFECT STORY MATCH: Each visual prompt must directly and precisely reflect the actual characters, locations, objects, and actions occurring in that part of the story script above. Never generate generic or unrelated images.
+2. NO DUPLICATE SCENES: Ensure each of the 4 scenes features completely different visual environments, camera angles, color palettes, and subjects so that storyboard images NEVER repeat.
+3. STRICTLY NO TEXT OR WATERMARK: Every visual description must depict clean visual photography/cinematography with ZERO text, no words, no letters, no alphabet symbols, and no subtitles in the image.
 
 Respond strictly in valid JSON:
 {
   "scenes": [
-    { "sceneNumber": 1, "title": "Opening", "visualPrompt": "Cinematic visual prompt in English...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
-    { "sceneNumber": 2, "title": "Rising Action", "visualPrompt": "Cinematic visual prompt in English...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
-    { "sceneNumber": 3, "title": "Climax", "visualPrompt": "Cinematic visual prompt in English...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
-    { "sceneNumber": 4, "title": "Resolution", "visualPrompt": "Cinematic visual prompt in English...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" }
+    { "sceneNumber": 1, "title": "Opening", "visualPrompt": "Specific cinematic visual prompt in English matching the story opening, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 2, "title": "Rising Action", "visualPrompt": "Specific cinematic visual prompt in English matching the story rising action, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 3, "title": "Climax", "visualPrompt": "Specific cinematic visual prompt in English matching the story climax, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 4, "title": "Resolution", "visualPrompt": "Specific cinematic visual prompt in English matching the story resolution, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" }
   ]
 }`;
 
@@ -5292,15 +5672,33 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
 
     if (!fs.existsSync(videoPath)) throw new Error('Video file not produced.');
 
-    const videoBuf = fs.readFileSync(videoPath);
-    const videoBase64 = `data:video/mp4;base64,${videoBuf.toString('base64')}`;
+    const persistentVideoId = `story_vid_${timestamp}_${Math.random().toString(36).substr(2, 6)}`;
+    const persistentVideoPath = path.join('/tmp/video_outputs', `${persistentVideoId}.mp4`);
+    fs.copyFileSync(videoPath, persistentVideoPath);
 
-    // Cleanup
+    const videoBuf = fs.readFileSync(videoPath);
+    let videoBase64 = '';
+    // Send base64 data URL for instant playback if video is under 15MB, else stream seamlessly
+    if (videoBuf.length < 15 * 1024 * 1024) {
+      videoBase64 = `data:video/mp4;base64,${videoBuf.toString('base64')}`;
+    }
+
+    const streamUrl = `/api/video-stream/${persistentVideoId}`;
+    const downloadUrl = `/api/video-stream/${persistentVideoId}?download=true`;
+
+    // Cleanup temp files
     [audioPath, finalAudioPath, videoPath, bgImagePath, ...imagePaths].forEach(p => {
       try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
     });
 
-    return res.json({ success: true, title, videoUrl: videoBase64, srtText: generatedSrtText });
+    return res.json({
+      success: true,
+      title,
+      videoUrl: videoBase64 || streamUrl,
+      streamUrl,
+      downloadUrl,
+      srtText: generatedSrtText
+    });
   } catch (err: any) {
     console.error('Pro Video Generation Error:', err);
     [audioPath, finalAudioPath, videoPath, bgImagePath, ...imagePaths].forEach(p => {
@@ -5663,6 +6061,58 @@ app.get('/api/audio-stream/:id', (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('Audio Stream Error:', err);
     res.status(500).json({ error: 'အသံဖိုင် ဖွင့်၍ မရပါ။' });
+  }
+});
+
+// -------------------------------------------------------------------------------------
+// High-Performance HTTP Range Video Streaming & Direct Download Stream
+// -------------------------------------------------------------------------------------
+app.get('/api/video-stream/:id', (req: Request, res: Response) => {
+  try {
+    const rawId = req.params.id || '';
+    const safeId = path.basename(rawId).replace(/[^a-zA-Z0-9_\-\.]/g, '');
+    const filename = safeId.endsWith('.mp4') ? safeId : `${safeId}.mp4`;
+    const filePath = path.join('/tmp/video_outputs', filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'ဗီဒီယိုဖိုင် သက်တမ်းကုန်သွားပါသည် သို့မဟုတ် မရှိတော့ပါ။' });
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+    const isDownload = req.query.download === 'true' || req.query.download === '1';
+
+    if (isDownload) {
+      res.setHeader('Content-Disposition', `attachment; filename="AI_Story_Video_${Date.now()}.mp4"`);
+    }
+
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = (end - start) + 1;
+      const file = fs.createReadStream(filePath, { start, end });
+      const head = {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'video/mp4',
+      };
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      const head = {
+        'Content-Length': fileSize,
+        'Content-Type': 'video/mp4',
+        'Accept-Ranges': 'bytes',
+      };
+      res.writeHead(200, head);
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (err: any) {
+    console.error('Video Stream Error:', err);
+    res.status(500).json({ error: 'ဗီဒီယိုဖိုင် ဖွင့်၍ မရပါ။' });
   }
 });
 
@@ -6603,20 +7053,20 @@ Respond in JSON format:
     }
   }
 
-  // Step 2: High-end Style modifiers
-  let styleModifier = 'cinematic 35mm film photography, dramatic atmospheric lighting, 8k resolution, ultra-detailed, photorealistic';
+  // Step 2: High-end Style modifiers (Strictly no text, no watermark, no subtitle words)
+  let styleModifier = 'cinematic 35mm film photography, dramatic atmospheric lighting, 8k resolution, ultra-detailed, photorealistic, clean scene without any text, no words, no letters, no watermark';
   if (style === 'realistic') {
-    styleModifier = 'award-winning professional photography, Hasselblad DSLR, crisp sharp focus, natural studio lighting, ultra-realistic textures';
+    styleModifier = 'award-winning professional photography, Hasselblad DSLR, crisp sharp focus, natural studio lighting, ultra-realistic textures, clean frame without any text or watermark';
   } else if (style === 'anime') {
-    styleModifier = 'modern high-end anime aesthetic, Makoto Shinkai art style, vivid vibrant colors, beautiful anime composition, masterpiece';
+    styleModifier = 'modern high-end anime aesthetic, Makoto Shinkai art style, vivid vibrant colors, beautiful anime composition, masterpiece, clean illustration without any text, no watermark';
   } else if (style === 'fantasy') {
-    styleModifier = 'epic mythical fantasy digital art, glowing magical particles, surreal breathtaking atmosphere, Artstation trending';
+    styleModifier = 'epic mythical fantasy digital art, glowing magical particles, surreal breathtaking atmosphere, Artstation trending, clean artwork without any text or watermark';
   } else if (style === 'cyberpunk') {
-    styleModifier = 'futuristic cyberpunk aesthetic, neon lights, rainy street reflections, holographic details, cinematic sci-fi';
+    styleModifier = 'futuristic cyberpunk aesthetic, neon lights, rainy street reflections, holographic details, cinematic sci-fi, no text, no watermark';
   } else if (style === 'horror') {
-    styleModifier = 'dark eerie gothic atmosphere, cinematic shadows, foggy ominous mystery, cinematic horror lighting';
+    styleModifier = 'dark eerie gothic atmosphere, cinematic shadows, foggy ominous mystery, cinematic horror lighting, clean composition without any text, no watermark';
   } else if (style === '3d') {
-    styleModifier = 'cute 3D animation style, Disney Pixar render, Octane render 3D, smooth volumetric lighting, vibrant 3D character';
+    styleModifier = 'cute 3D animation style, Disney Pixar render, Octane render 3D, smooth volumetric lighting, vibrant 3D character, clean 3D render without any text or watermark';
   }
 
   const finalImagePrompt = `${enrichedEnglishPrompt}, ${styleModifier}`;
@@ -6630,14 +7080,24 @@ Respond in JSON format:
     height = 1024;
   }
 
-  // 1. High-Quality Flux AI Image Generation (Pollinations AI) with UNIQUE RANDOM SEED per scene
+  const keywordsToSearch = semanticKeywords || enrichedEnglishPrompt.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).slice(0, 4).join(' ');
+
+  // 1. Semantic Image Search via Wikimedia Commons (Strictly authentic photography, completely free of AI gibberish text)
+  const wikiResult = await searchWikimediaPhoto(keywordsToSearch, width >= 1000 ? 960 : 720, usedUrls);
+  if (wikiResult) {
+    console.log(`[Image Gen] Wikimedia semantic image match found for "${keywordsToSearch}" (scene ${sceneIdx + 1})!`);
+    return wikiResult;
+  }
+
+  // 2. High-Quality Flux/Turbo AI Image Generation (Pollinations AI) with clean prompt & UNIQUE RANDOM SEED per scene
   try {
     const uniqueSeed = (Math.floor(Math.random() * 8000000) + (sceneIdx * 19371) + Date.now()) % 10000000;
-    const encodedPrompt = encodeURIComponent(finalImagePrompt);
+    const cleanPromptNoText = `${finalImagePrompt}, completely clean background, no letters, no typography`;
+    const encodedPrompt = encodeURIComponent(cleanPromptNoText);
     const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&nologo=true&seed=${uniqueSeed}`;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 7500);
+    const timeoutId = setTimeout(() => controller.abort(), 6500);
 
     const response = await fetch(pollinationsUrl, {
       signal: controller.signal,
@@ -6661,14 +7121,6 @@ Respond in JSON format:
     }
   } catch (fallbackErr) {
     console.warn(`[Image Gen] Flux AI image attempt for scene ${sceneIdx + 1} timed out/skipped:`, (fallbackErr as any)?.message || fallbackErr);
-  }
-
-  // 2. Semantic Image Search via Wikimedia Commons (Strictly non-repeating)
-  const keywordsToSearch = semanticKeywords || enrichedEnglishPrompt.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).slice(0, 4).join(' ');
-  const wikiResult = await searchWikimediaPhoto(keywordsToSearch, width >= 1000 ? 960 : 720, usedUrls);
-  if (wikiResult) {
-    console.log(`[Image Gen] Wikimedia semantic image match found for "${keywordsToSearch}" (scene ${sceneIdx + 1})!`);
-    return wikiResult;
   }
 
   // 3. Thematic Curated High-Res Unsplash Registry (120+ unique photos, NEVER repeats within session)
