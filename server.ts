@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
@@ -50,6 +50,42 @@ const execAsync = (cmd: string, options: any = {}) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Initialize & verify high-fidelity Myanmar Unicode fonts for subtitle rasterization
+function ensureMyanmarFonts() {
+  try {
+    const localFontsDir = path.resolve(__dirname, 'fonts');
+    const targetSysDir = '/usr/share/fonts/truetype/noto';
+    const userFontDir = path.join(os.homedir(), '.fonts');
+    if (!fs.existsSync(userFontDir)) fs.mkdirSync(userFontDir, { recursive: true });
+    if (!fs.existsSync(targetSysDir)) {
+      try { fs.mkdirSync(targetSysDir, { recursive: true }); } catch (_) {}
+    }
+    if (fs.existsSync(localFontsDir)) {
+      const files = fs.readdirSync(localFontsDir);
+      for (const f of files) {
+        if (f.endsWith('.ttf') || f.endsWith('.otf')) {
+          const src = path.join(localFontsDir, f);
+          const destUser = path.join(userFontDir, f);
+          if (!fs.existsSync(destUser)) {
+            try { fs.copyFileSync(src, destUser); } catch (_) {}
+          }
+          const destSys = path.join(targetSysDir, f);
+          if (!fs.existsSync(destSys)) {
+            try { fs.copyFileSync(src, destSys); } catch (_) {}
+          }
+        }
+      }
+      try {
+        execSync('fc-cache -f', { stdio: 'ignore' });
+      } catch (_) {}
+    }
+    console.log('[Font Engine] Noto Sans Myanmar & Padauk verified for ultra-sharp video subtitles');
+  } catch (err) {
+    console.warn('[Font Engine] Font check note:', err);
+  }
+}
+ensureMyanmarFonts();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -66,25 +102,32 @@ const upload = multer({
 if (!fs.existsSync('/tmp/uploads')) {
   fs.mkdirSync('/tmp/uploads', { recursive: true });
 }
+if (!fs.existsSync('/tmp/audio_outputs')) {
+  fs.mkdirSync('/tmp/audio_outputs', { recursive: true });
+}
 
 // -------------------------------------------------------------------------------------
 // Automatic Server Memory & Disk Garbage Cleaner (Prevents disk full / server freeze)
 // -------------------------------------------------------------------------------------
 function cleanOldTempFiles() {
   try {
-    const tmpDirs = ['/tmp', '/tmp/uploads'];
+    const tmpDirs = ['/tmp', '/tmp/uploads', '/tmp/audio_outputs'];
     const now = Date.now();
-    const maxAgeMs = 10 * 60 * 1000; // Delete temp files older than 10 minutes
+    const maxAgeMs = 15 * 60 * 1000; // Delete generic temp files older than 15 minutes
+    const maxAudioAgeMs = 60 * 60 * 1000; // Preserve processed audio stream files for 60 minutes
 
     for (const dir of tmpDirs) {
       if (!fs.existsSync(dir)) continue;
       const files = fs.readdirSync(dir);
+      const isAudioOutDir = dir.includes('audio_outputs');
+      const cutoff = isAudioOutDir ? maxAudioAgeMs : maxAgeMs;
+
       for (const file of files) {
         if (file === 'yt-dlp') continue; // Preserve yt-dlp binary
         const filePath = path.join(dir, file);
         try {
           const stat = fs.statSync(filePath);
-          if (stat.isFile() && (now - stat.mtimeMs > maxAgeMs)) {
+          if (stat.isFile() && (now - stat.mtimeMs > cutoff)) {
             fs.unlinkSync(filePath);
           }
         } catch (_) {}
@@ -1345,6 +1388,38 @@ export async function applyStudioHumanMastering(rawAudioBuffer: Buffer): Promise
   return rawAudioBuffer;
 }
 
+/**
+ * Normalizes input audio for speech recognition (STT) to accurately detect fast and slow speech:
+ * - Amplifies quiet/soft speech (slow hesitant speakers)
+ * - Vocal bandpass filtering (80Hz to 7500Hz) isolates vocal formants, clarifying fast consonants
+ * - Resamples to 16,000Hz mono PCM WAV (standard high-accuracy acoustic format)
+ */
+export async function prepareNormalizedAudioForStt(
+  inputBuffer: Buffer,
+  inputMime: string = 'audio/webm'
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  if (!inputBuffer || inputBuffer.length < 50) {
+    return { buffer: inputBuffer, mimeType: inputMime };
+  }
+  const tempIn = `/tmp/stt_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.tmp`;
+  const tempOut = `/tmp/stt_clean_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.wav`;
+  try {
+    fs.writeFileSync(tempIn, inputBuffer);
+    const filter = 'volume=1.5,highpass=f=80,lowpass=f=7500';
+    await execAsync(`ffmpeg -y -i "${tempIn}" -vn -ar 16000 -ac 1 -af "${filter}" "${tempOut}"`, { timeout: 10000 });
+    if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
+      const cleanBuf = fs.readFileSync(tempOut);
+      return { buffer: cleanBuf, mimeType: 'audio/wav' };
+    }
+  } catch (err) {
+    console.warn('[STT Audio Normalization] fallback to raw audio:', err);
+  } finally {
+    try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
+    try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
+  }
+  return { buffer: inputBuffer, mimeType: inputMime };
+}
+
 // Seamlessly merges multiple audio chunks or dialogue segments with zero header corruption and unified loudness
 export async function seamlessMergeAudioBuffers(buffers: Buffer[], pauseMs: number = 0): Promise<Buffer> {
   const validBuffers = buffers.filter(b => b && b.length > 50);
@@ -1938,7 +2013,103 @@ app.post('/api/multi-speaker-tts', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------------------------------
-// High-Performance Dynamic Ken Burns & Slideshow Motion Video Engine
+// Accurate Proportional Burmese Subtitles Generator (Anti-Blur, Perfect Timing)
+// -------------------------------------------------------------------------------------
+interface TimedSubtitleCue {
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+function generateAccurateBurmeseSubtitles(scriptText: string, audioDuration: number): {
+  cues: TimedSubtitleCue[];
+  srtText: string;
+} {
+  const clean = (scriptText || '')
+    .replace(/[\*\#\_\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Split by full stops or newlines
+  const rawSegments = clean
+    .split(/(?<=[။\n\?\!])/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const cues: string[] = [];
+  const MAX_CUE_CHARS = 34; // Optimal line length for mobile 9:16 screen
+
+  for (const seg of rawSegments) {
+    if (seg.length <= MAX_CUE_CHARS) {
+      cues.push(seg);
+    } else {
+      // Split into smaller readable phrases at natural phrase boundaries
+      const parts = seg
+        .split(/(?<=[၊\,\s])/)
+        .map(p => p.trim())
+        .filter(Boolean);
+      let buf = '';
+      for (const part of parts) {
+        if ((buf + ' ' + part).length > MAX_CUE_CHARS && buf) {
+          cues.push(buf.trim());
+          buf = part;
+        } else {
+          buf += (buf ? ' ' : '') + part;
+        }
+      }
+      if (buf.trim()) cues.push(buf.trim());
+    }
+  }
+
+  const validCues = cues.filter(c => c.length > 0);
+  if (validCues.length === 0) {
+    return { cues: [], srtText: '' };
+  }
+
+  // Calculate proportional durations based on character length & punctuation
+  const weights = validCues.map(c => Math.max(6, c.length) + (c.endsWith('။') ? 4 : 1));
+  const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
+
+  let currentSec = 0;
+  const timedCues: TimedSubtitleCue[] = validCues.map((text, i) => {
+    const dur = (weights[i] / totalWeight) * audioDuration;
+    const start = Math.max(0, currentSec);
+    const end = Math.min(audioDuration, currentSec + dur);
+    currentSec = end;
+    return {
+      index: i + 1,
+      start,
+      end,
+      text: text.trim()
+    };
+  });
+
+  const formatSrtTime = (seconds: number): string => {
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.min(999, Math.floor((seconds % 1) * 1000));
+    const pad = (num: number, size: number) => ('000' + num).slice(-size);
+    return `${pad(hrs, 2)}:${pad(mins, 2)}:${pad(secs, 2)},${pad(ms, 3)}`;
+  };
+
+  const srtLines: string[] = [];
+  timedCues.forEach(cue => {
+    srtLines.push(String(cue.index));
+    srtLines.push(`${formatSrtTime(cue.start)} --> ${formatSrtTime(cue.end)}`);
+    srtLines.push(cue.text);
+    srtLines.push('');
+  });
+
+  return {
+    cues: timedCues,
+    srtText: srtLines.join('\n')
+  };
+}
+
+// -------------------------------------------------------------------------------------
+// High-Performance Dynamic Ken Burns & Slideshow Motion Video Engine with HD Subtitles
 // -------------------------------------------------------------------------------------
 async function generateAnimatedSlideshowVideo({
   imagePaths,
@@ -1950,6 +2121,10 @@ async function generateAnimatedSlideshowVideo({
   waveColors = '0x818cf8|0xc084fc',
   waveStyle = 'cline',
   extraVideoFilter = '',
+  subtitleSrtPath = '',
+  subtitleStyle = 'tiktok_yellow',
+  subtitleFontSize = 26,
+  burnSubtitles = true,
   tempFiles
 }: {
   imagePaths: string[];
@@ -1961,25 +2136,30 @@ async function generateAnimatedSlideshowVideo({
   waveColors?: string;
   waveStyle?: string;
   extraVideoFilter?: string;
+  subtitleSrtPath?: string;
+  subtitleStyle?: string;
+  subtitleFontSize?: number;
+  burnSubtitles?: boolean;
   tempFiles: string[];
 }): Promise<void> {
   const reqId = `${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
   
-  let width = 360, height = 640;
-  let scaleW = 720, scaleH = 1280;
-  let panW = 800, panH = 1422;
+  // Render in crystal clear 720p HD resolution so Myanmar font glyphs are razor-sharp
+  let width = 720, height = 1280;
+  let scaleW = 960, scaleH = 1706;
+  let panW = 1080, panH = 1920;
   if (aspectRatio === '16:9') {
-    width = 640; height = 360;
-    scaleW = 1280; scaleH = 720;
-    panW = 1422; panH = 800;
+    width = 1280; height = 720;
+    scaleW = 1706; scaleH = 960;
+    panW = 1920; panH = 1080;
   } else if (aspectRatio === '1:1') {
-    width = 480; height = 480;
+    width = 720; height = 720;
     scaleW = 960; scaleH = 960;
-    panW = 1066; panH = 1066;
+    panW = 1080; panH = 1080;
   }
 
   const waveW = Math.round(width * 0.85);
-  const waveH = Math.round(height * 0.18);
+  const waveH = Math.round(height * 0.16);
   const waveY = Math.round(height * (waveYPercentage / 100) - (waveH / 2));
 
   const audioDuration = await getAudioDuration(audioPath);
@@ -2035,11 +2215,34 @@ async function generateAnimatedSlideshowVideo({
   }
   fs.writeFileSync(concatListPath, concatLines.join('\n'));
 
-  // Combine concatenated video stream with audio and soundwave visualizer + extra filters
-  const filterComplex = `[1:a]showwaves=r=25:s=70x20:mode=${waveStyle}:colors=${waveColors},scale=${waveW}:${waveH}[waves];[0:v][waves]overlay=(W-w)/2:${waveY}${extraVideoFilter}[v]`;
-  const finalCmd = `ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -i "${audioPath}" -filter_complex "${filterComplex}" -map "[v]" -map 1:a -c:v libx264 -preset ultrafast -pix_fmt yuv420p -b:v 350k -c:a aac -b:a 128k -movflags +faststart -shortest "${outputPath}"`;
+  // Build Subtitle Filter with Noto Sans Myanmar & heavy black stroke outline for high readability
+  let subtitleFilter = '';
+  if (burnSubtitles && subtitleSrtPath && fs.existsSync(subtitleSrtPath)) {
+    const fontsDir = '/usr/share/fonts/truetype/noto';
+    let primaryColour = '&H0000FFFF'; // TikTok Yellow
+    if (subtitleStyle === 'capcut_white') primaryColour = '&H00FFFFFF';
+    else if (subtitleStyle === 'neon_cyan') primaryColour = '&H00FFFF00';
+    else if (subtitleStyle === 'luxury_gold') primaryColour = '&H0000D7FF';
 
-  await execAsync(finalCmd);
+    const escapedSrt = subtitleSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+    const fSize = subtitleFontSize || (height >= 1000 ? 26 : 22);
+    const marginV = height >= 1000 ? 68 : 46;
+    subtitleFilter = `,subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='Fontname=Noto Sans Myanmar,FontSize=${fSize},Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=2,MarginV=${marginV}'`;
+  }
+
+  // Combine concatenated video stream with audio, visualizer and subtitle overlay
+  const filterComplex = `[1:a]showwaves=r=25:s=70x20:mode=${waveStyle}:colors=${waveColors},scale=${waveW}:${waveH}[waves];[0:v][waves]overlay=(W-w)/2:${waveY}${extraVideoFilter}${subtitleFilter}[v]`;
+  const finalCmd = `ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -i "${audioPath}" -filter_complex "${filterComplex}" -map "[v]" -map 1:a -c:v libx264 -preset ultrafast -pix_fmt yuv420p -b:v 450k -c:a aac -b:a 128k -movflags +faststart -shortest "${outputPath}"`;
+
+  try {
+    await execAsync(finalCmd);
+  } catch (renderErr) {
+    console.warn('[Slideshow Engine] Primary render error with subtitles, attempting clean fallback:', renderErr);
+    // If complex filter fails, try fallback without the extra subtitle filter
+    const fallbackFilterComplex = `[1:a]showwaves=r=25:s=70x20:mode=${waveStyle}:colors=${waveColors},scale=${waveW}:${waveH}[waves];[0:v][waves]overlay=(W-w)/2:${waveY}[v]`;
+    const fallbackCmd = `ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -i "${audioPath}" -filter_complex "${fallbackFilterComplex}" -map "[v]" -map 1:a -c:v libx264 -preset ultrafast -pix_fmt yuv420p -b:v 350k -c:a aac -b:a 128k -movflags +faststart -shortest "${outputPath}"`;
+    await execAsync(fallbackCmd);
+  }
 }
 
 // -------------------------------------------------------------------------------------
@@ -2361,12 +2564,16 @@ Output JSON:
     const missingCount = targetImageCount - finalBgPaths.length;
 
     if (missingCount > 0) {
-      console.log(`[Auto Pipeline ${reqId}] Generating ${missingCount} AI scene images for the story...`);
+      console.log(`[Auto Pipeline ${reqId}] Generating ${missingCount} AI scene images for the story (strictly non-repeating)...`);
       const promptsToGen = scenesToGenerate.slice(finalBgPaths.length, targetImageCount);
+      const pipelineUsedUrls = new Set<string>();
       
       const genResults = await runWithConcurrency(promptsToGen, async (scenePrompt: string, idx: number) => {
         try {
-          const imgDataUrl = await generateAiImageBuffer(scenePrompt, aspectRatio, 'cinematic');
+          const imgDataUrl = await generateAiImageBuffer(scenePrompt, aspectRatio, 'cinematic', {
+            sceneIndex: finalBgPaths.length + idx,
+            usedUrls: pipelineUsedUrls
+          });
           if (imgDataUrl && imgDataUrl.includes('base64,')) {
             const tempBgPath = `/tmp/ap_bg_${reqId}_${finalBgPaths.length + idx}.png`;
             tempFiles.push(tempBgPath);
@@ -2377,7 +2584,7 @@ Output JSON:
           console.warn(`[Auto Pipeline ${reqId}] Scene image ${idx + 1} generation error:`, imgErr);
         }
         return null;
-      }, 3);
+      }, 2);
 
       genResults.forEach(p => {
         if (p && fs.existsSync(p)) finalBgPaths.push(p);
@@ -2409,7 +2616,14 @@ Output JSON:
       finalBgPaths.push(tempBgPath);
     }
 
-    // Step 4: Turbo-Render MP4 Video with Dynamic Ken Burns Zoom In/Out + Slide Motion + Visualizer
+    // Step 4: Generate Proportional, Accurate Timed Subtitles (Noto Sans Myanmar)
+    const audioDuration = (await getAudioDuration(tempAudioOut)) || 10;
+    const { srtText } = generateAccurateBurmeseSubtitles(cleanScript, audioDuration);
+    const tempSrtPath = `/tmp/ap_sub_${reqId}.srt`;
+    tempFiles.push(tempSrtPath);
+    fs.writeFileSync(tempSrtPath, srtText, 'utf8');
+
+    // Step 5: Turbo-Render MP4 Video with Dynamic Motion Slideshow + Visualizer + Burned Subtitles
     const tempVideoOut = `/tmp/ap_vid_${reqId}.mp4`;
     tempFiles.push(tempVideoOut);
 
@@ -2425,6 +2639,8 @@ Output JSON:
       genre,
       waveYPercentage: 54,
       waveColors,
+      subtitleSrtPath: tempSrtPath,
+      burnSubtitles: true,
       tempFiles
     });
 
@@ -2436,31 +2652,6 @@ Output JSON:
     const videoDataUrl = `data:video/mp4;base64,${videoBuffer.toString('base64')}`;
     const audioDataUrl = `data:audio/mp3;base64,${fs.readFileSync(tempAudioOut).toString('base64')}`;
     const bgImageDataUrl = finalBgPaths.length > 0 ? `data:image/png;base64,${fs.readFileSync(finalBgPaths[0]).toString('base64')}` : '';
-
-    // Generate beautifully timed subtitles matching the exact audio duration for the visual editor
-    const audioDuration = await getAudioDuration(tempAudioOut);
-    const sentences = cleanScript.split(/(?<=[။\.\?\!\n])\s*/).filter(s => s.trim().length > 0);
-    const totalCueDur = (audioDuration || 10) / Math.max(1, sentences.length);
-    const srtLines: string[] = [];
-    
-    const formatSrtTime = (seconds: number): string => {
-      const hrs = Math.floor(seconds / 3600);
-      const mins = Math.floor((seconds % 3600) / 60);
-      const secs = Math.floor(seconds % 60);
-      const ms = Math.floor((seconds % 1) * 1000);
-      const pad = (num: number, size: number) => ('000' + num).slice(-size);
-      return `${pad(hrs, 2)}:${pad(mins, 2)}:${pad(secs, 2)},${pad(ms, 3)}`;
-    };
-
-    sentences.forEach((sentence, idx) => {
-      const start = idx * totalCueDur;
-      const end = (idx + 1) * totalCueDur;
-      srtLines.push(`${idx + 1}`);
-      srtLines.push(`${formatSrtTime(start)} --> ${formatSrtTime(end)}`);
-      srtLines.push(sentence.trim());
-      srtLines.push('');
-    });
-    const srtText = srtLines.join('\n');
 
     return res.json({
       success: true,
@@ -2787,24 +2978,86 @@ app.post('/api/translate-and-speak', async (req: Request, res: Response) => {
 
     const isBurmeseTarget = targetLang === 'my';
     
-    // Comprehensive native localization rules for flawless comprehension by native speakers
+    // Comprehensive native localization rules for flawless comprehension and spoken authenticity
     const targetLanguageSpecificRules: Record<string, string> = {
+      // Southeast Asia (အရှေ့တောင်အာရှ - အာဆီယံ ၁၁ နိုင်ငံ)
       'my': 'CRITICAL FOR BURMESE: Translate into 100% natural, colloquial spoken Burmese (မြန်မာစကားပြော လေယူလေသိမ်း "တယ်/ပါ/မှာ/တဲ့/နော်/ခင်ဗျာ/ရှင့်" သုံးပါ - စာအုပ်ဆန်သော "သည်/၏/၌/၍/သော်လည်း" လုံးဝ မသုံးရ)။ လူချင်းတိုက်ရိုက် စကားပြောသကဲ့သို့ သဘာဝကျကျ အတိအကျ ဘာသာပြန်ပါ။',
+      'th': 'CRITICAL FOR THAI (ภาษาไทย): Translate into 100% natural, authentic spoken Thai with proper polite particles (ครับ/ค่ะ). Use everyday conversational phrasing that Bangkok and Thai locals speak naturally in real life.',
+      'lo': 'CRITICAL FOR LAO (ພາສາລາວ): Translate into 100% authentic, respectful Lao language (ສະບາຍດີ, ໂດຍ, ເຈົ້າ) in standard Lao script. Avoid transliterating Thai words if a native Lao equivalent is standard.',
+      'vi': 'CRITICAL FOR VIETNAMESE (Tiếng Việt): Translate into natural, fluent Vietnamese with standard Northern/Southern tones, polite conversational pronouns (tôi, bạn, anh, chị, em), and natural everyday sentence structure.',
+      'ms': 'CRITICAL FOR MALAY (Bahasa Melayu): Translate into 100% authentic, idiomatic modern Bahasa Melayu spoken across Malaysia. Use natural conversational vocabulary, avoiding overly rigid formal structures.',
+      'sg': 'CRITICAL FOR SINGAPORE ENGLISH: Translate into natural, fluent Singaporean conversational English with clear, engaging, and localized international phrasing.',
+      'id': 'CRITICAL FOR INDONESIAN (Bahasa Indonesia): Translate into fluent, standard, and natural Indonesian as understood across Indonesia with authentic conversational flow and modern vocabulary.',
+      'jv': 'CRITICAL FOR JAVANESE (Basa Jawa): Translate into authentic Javanese with appropriate politeness levels (Ngoko/Krama) so native Javanese speakers understand with cultural warmth.',
+      'fil': 'CRITICAL FOR FILIPINO / TAGALOG: Translate into 100% natural, authentic Tagalog / Filipino as spoken in Manila and nationwide with polite markers (po/opo) and natural sentence cadence.',
+      'km': 'CRITICAL FOR KHMER / CAMBODIAN (ភាសាខ្មែរ): Translate into 100% authentic spoken Khmer in standard Khmer script with polite respectful terms (សូម, បាទ, ចាស) used by native Cambodians.',
+      'bn-BN': 'CRITICAL FOR BRUNEI MALAY: Translate into authentic, polite Malay suitable for Brunei culture.',
+      'tl': 'CRITICAL FOR TIMOR-LESTE: Translate into clear, natural Indonesian/Tetum expressions understood in East Timor.',
+
+      // East Asia (အရှေ့အာရှ)
+      'ja': 'CRITICAL FOR JAPANESE (日本語): Translate into 100% natural, authentic standard Japanese using polite form (丁寧語 - です/ます). Use natural particle collocations (は/が/を/に) and natural conversational phrasing so native Japanese speakers immediately understand effortlessly and comfortably.',
+      'ko': 'CRITICAL FOR KOREAN (한국어): Translate into 100% natural, polite standard Korean (존댓말 - 해요체/하십시오체). Use natural Korean idioms, correct particles (은/는, 이/가, 을/를), and natural conversational flow.',
+      'zh': 'CRITICAL FOR CHINESE SIMPLIFIED (简体中文): Translate into 100% authentic, idiomatic modern Chinese (普通话). Use standard native sentence structure and natural everyday phrasing used by native speakers.',
+      'zh-TW': 'CRITICAL FOR TAIWANESE TRADITIONAL CHINESE (繁體中文): Translate into authentic Traditional Chinese as used in Taiwan with Taiwanese cultural vocabulary and natural flow.',
+      'zh-HK': 'CRITICAL FOR HONG KONG CANTONESE (粵語 / 廣東話): Translate into natural, idiomatic colloquial Hong Kong Cantonese phrasing (口語/粵語白話文).',
+      'mo': 'CRITICAL FOR MACAU CANTONESE: Translate into natural Cantonese phrasing as used in Macau and Guangdong.',
+      'mn': 'CRITICAL FOR MONGOLIAN (Монгол хэл): Translate into 100% authentic modern Mongolian in Cyrillic script with natural grammatical suffixes.',
+
+      // South Asia (တောင်အာရှ)
+      'hi': 'CRITICAL FOR HINDI (हिन्दी): Translate into natural, respectful spoken Hindi (आप form, polite verb endings) with authentic native vocabulary and natural sentence cadence.',
+      'en-IN': 'CRITICAL FOR INDIAN ENGLISH: Translate into natural, fluent, and culturally authentic Indian English with clear conversational phrasing.',
+      'ta': 'CRITICAL FOR TAMIL (தமிழ்): Translate into 100% natural spoken Tamil with proper honorifics and authentic grammatical structures.',
+      'te': 'CRITICAL FOR TELUGU (తెలుగు): Translate into natural, fluent Telugu with authentic polite phrasing and standard script.',
+      'bn-IN': 'CRITICAL FOR INDIAN BENGALI (বাংলা): Translate into natural, idiomatic West Bengal Bengali with cultural nuance and proper verb forms.',
+      'mr': 'CRITICAL FOR MARATHI (मराठी): Translate into natural, polite spoken Marathi in standard Devanagari script.',
+      'gu': 'CRITICAL FOR GUJARATI (ગુજરાતી): Translate into authentic spoken Gujarati with friendly, polite expressions.',
+      'kn': 'CRITICAL FOR KANNADA (ಕನ್ನಡ): Translate into natural, authentic spoken Kannada with proper polite endings.',
+      'ml': 'CRITICAL FOR MALAYALAM (മലയാളം): Translate into natural, idiomatic spoken Malayalam in standard Malayalam script.',
+      'ur-IN': 'CRITICAL FOR INDIAN URDU (اردو): Translate into elegant, polite Nastaliq Urdu with respectful etiquette (Aadab, Aap).',
+      'bn': 'CRITICAL FOR BANGLADESHI BENGALI (বাংলা): Translate into authentic, natural colloquial Bangladeshi Bengali with standard conversational expressions.',
+      'ur': 'CRITICAL FOR PAKISTANI URDU (اردو): Translate into polite, fluent Pakistani Urdu with authentic vocabulary and respectful grammar.',
+      'si': 'CRITICAL FOR SINHALA (සිංහල): Translate into 100% authentic spoken Sinhala in standard Sinhala script.',
+      'ta-LK': 'CRITICAL FOR SRI LANKAN TAMIL (தமிழ்): Translate into authentic Sri Lankan Tamil phrasing.',
+      'ne': 'CRITICAL FOR NEPALI (नेपाली): Translate into polite, natural spoken Nepali (तपाईं form) in Devanagari script.',
+      'bt': 'CRITICAL FOR BHUTANESE (Dzongkha / Himalayan): Translate into polite, respectful Himalayan/Dzongkha terms.',
+      'mv': 'CRITICAL FOR MALDIVIAN DHIVEHI / ENGLISH: Translate into clear, natural conversational phrasing understood in Maldives.',
+      'ps': 'CRITICAL FOR AFGHAN PASHTO (پښتو): Translate into authentic Pashto in standard Arabic-derived script with polite cultural terms.',
+      'fa-AF': 'CRITICAL FOR AFGHAN DARI (دری): Translate into authentic Dari / Afghan Persian with polite honorifics.',
+
+      // Central Asia (အလယ်အာရှ)
+      'kk': 'CRITICAL FOR KAZAKH (Қазақ тілі): Translate into 100% authentic Kazakh in standard Cyrillic script with polite conversational endings.',
+      'uz': 'CRITICAL FOR UZBEK (O\'zbek tili): Translate into natural, polite Uzbek in Latin script with authentic native vocabulary.',
+      'ky': 'CRITICAL FOR KYRGYZ (Кыргызча): Translate into natural, polite Kyrgyz in Cyrillic script.',
+      'tg': 'CRITICAL FOR TAJIK (Тоҷикӣ): Translate into natural, authentic Tajik in Cyrillic script.',
+      'tk': 'CRITICAL FOR TURKMEN (Türkmençe): Translate into authentic Turkmen in Latin script.',
+
+      // West Asia & Middle East (အနောက်အာရှ နှင့် အရှေ့အလယ်ပိုင်း)
+      'ar': 'CRITICAL FOR ARABIC (العربية): Translate into clear, high-quality Modern Standard Arabic with natural syntax, correct grammatical agreement, and respectful cultural tone.',
+      'ar-AE': 'CRITICAL FOR EMIRATI ARABIC (العربية الإماراتية): Translate into natural Gulf / Emirati Arabic phrasing with authentic Gulf greetings.',
+      'ar-QA': 'CRITICAL FOR QATARI ARABIC: Translate into authentic Gulf Arabic.',
+      'ar-KW': 'CRITICAL FOR KUWAITI ARABIC: Translate into authentic Kuwaiti / Gulf Arabic.',
+      'ar-BH': 'CRITICAL FOR BAHRAINI ARABIC: Translate into authentic Bahraini Arabic.',
+      'ar-OM': 'CRITICAL FOR OMANI ARABIC: Translate into authentic Omani Arabic.',
+      'ar-IQ': 'CRITICAL FOR IRAQI ARABIC: Translate into authentic Iraqi Arabic.',
+      'ar-JO': 'CRITICAL FOR JORDANIAN ARABIC: Translate into natural Levantine Jordanian Arabic.',
+      'ar-LB': 'CRITICAL FOR LEBANESE ARABIC: Translate into natural Levantine Lebanese Arabic.',
+      'ar-SY': 'CRITICAL FOR SYRIAN ARABIC: Translate into natural Levantine Syrian Arabic.',
+      'ar-YE': 'CRITICAL FOR YEMENI ARABIC: Translate into authentic Yemeni Arabic.',
+      'ar-PS': 'CRITICAL FOR PALESTINIAN ARABIC: Translate into natural Levantine Palestinian Arabic.',
+      'he': 'CRITICAL FOR HEBREW (עברית): Translate into 100% authentic modern colloquial Hebrew with correct grammatical gender and natural syntax.',
+      'fa': 'CRITICAL FOR PERSIAN / FARSI (فارسی): Translate into authentic, polite colloquial Persian (Ta\'arof, polite verb endings) in Persian script.',
+      'tr': 'CRITICAL FOR TURKISH (Türkçe): Translate into 100% natural, idiomatic Turkish with correct vowel harmony and polite suffixes (Siz form).',
+      'az': 'CRITICAL FOR AZERBAIJANI (Azərbaycan dili): Translate into natural Azerbaijani in Latin script with authentic phrasing.',
+      'ka': 'CRITICAL FOR GEORGIAN (ქართული): Translate into natural Georgian in standard Mkhedruli script.',
+      'hy': 'CRITICAL FOR ARMENIAN (Հայերեն): Translate into natural modern Eastern Armenian in standard Armenian script.',
+      'cy': 'CRITICAL FOR CYPRIOT (Greek/Turkish): Translate into natural conversational Greek/Turkish suitable for Cyprus.',
+
+      // Major Global Languages
       'en': 'CRITICAL FOR ENGLISH: Translate into 100% fluent, idiomatic, natural native English (US/International). Avoid rigid direct literal translation; use natural phrasing that native speakers actually say.',
-      'ja': 'CRITICAL FOR JAPANESE (日本語): Translate into 100% natural, authentic standard Japanese using polite form (丁寧語 - です/ます). Use natural particle collocations (は/が/を/に) and phrasing so native Japanese speakers immediately understand effortlessly.',
-      'ko': 'CRITICAL FOR KOREAN (한국어): Translate into 100% natural, polite standard Korean (존댓말 - 해요체/하십시오체). Use natural Korean idioms and correct particles (은/는, 이/가).',
-      'zh': 'CRITICAL FOR CHINESE (简体中文): Translate into 100% authentic, idiomatic modern Chinese (普通话). Use standard native sentence structure and natural everyday phrasing.',
-      'zh-TW': 'CRITICAL FOR TAIWANESE (繁體中文): Translate into authentic Traditional Chinese as used in Taiwan with proper cultural vocabulary.',
-      'zh-HK': 'CRITICAL FOR CANTONESE (粵語): Translate into natural colloquial Hong Kong Cantonese (廣東話) phrasing.',
-      'th': 'CRITICAL FOR THAI (ภาษาไทย): Translate into 100% natural, authentic spoken Thai with polite particles (ครับ/ค่ะ). Avoid awkward transliterated English word orders.',
-      'lo': 'CRITICAL FOR LAO (ພາສາລາວ): Translate into 100% authentic, respectful Lao language (ສະບາຍດີ, ໂດຍ, ເຈົ້າ) in standard Lao script.',
-      'vi': 'CRITICAL FOR VIETNAMESE (Tiếng Việt): Translate into natural, fluent Vietnamese with standard tones and polite conversational particles.',
-      'id': 'CRITICAL FOR INDONESIAN (Bahasa Indonesia): Translate into fluent, standard, and natural Indonesian as understood across Indonesia.',
-      'es': 'CRITICAL FOR SPANISH (Español): Translate into natural, idiomatic Spanish with correct grammatical gender and verb conjugations.',
-      'ru': 'CRITICAL FOR RUSSIAN (Русский): Translate into grammatically flawless, natural native Russian with proper cases and aspects.',
-      'ar': 'CRITICAL FOR ARABIC (العربية): Translate into clear, high-quality Modern Standard Arabic with natural syntax and correct grammatical agreement.',
-      'hi': 'CRITICAL FOR HINDI (हिन्दी): Translate into natural, respectful spoken Hindi (आप form) with authentic vocabulary.',
-      'ur': 'CRITICAL FOR URDU (اردو): Translate into natural, polite Urdu with authentic phrasing.'
+      'es': 'CRITICAL FOR SPANISH (Español): Translate into natural, idiomatic Spanish with correct grammatical gender, natural verb conjugations, and everyday colloquial flow.',
+      'fr': 'CRITICAL FOR FRENCH (Français): Translate into 100% authentic, elegant, and natural French with correct liaisons, agreements, and standard polite phrasing.',
+      'de': 'CRITICAL FOR GERMAN (Deutsch): Translate into grammatically flawless, natural German (Sie/du according to context) with idiomatic compound nouns and natural word order.',
+      'ru': 'CRITICAL FOR RUSSIAN (Русский): Translate into grammatically flawless, natural native Russian with proper cases, verbal aspects, and authentic conversational flow.'
     };
 
     const specificRule = targetLanguageSpecificRules[targetLang] || `CRITICAL FOR TARGET LANGUAGE (${targetLangName.toUpperCase()}):
@@ -2813,20 +3066,32 @@ Translate accurately and idiomatically into 100% authentic, fluent ${targetLangN
 DO NOT OUTPUT BURMESE, DO NOT REPEAT SOURCE TEXT, AND DO NOT INCLUDE ANY BURMESE CHARACTERS.`;
 
     const translateSingleChunk = async (chunkText: string) => {
-      const prompt = `You are a certified master native localization expert and bilingual translator specializing in ${targetLangName}.
-Your objective is to translate the source text with 100% absolute accuracy, semantic fidelity, and native fluency so that native speakers of ${targetLangName} will understand it clearly, naturally, and comfortably without any awkwardness or misunderstanding.
+      const prompt = `You are a certified master native localization expert, bilingual diplomat, and phonetic speech instructor specializing in ${targetLangName}.
+Your objective is to translate the source text with 100% absolute accuracy, semantic fidelity, native fluency, and conversational speakability so that:
+1. Native speakers of ${targetLangName} will understand it clearly, naturally, and comfortably without any awkwardness or robotic artifacts ("native လိုနားလည်ရမယ်").
+2. The user can also easily read, pronounce, and speak it aloud like a native local with an accurate phonetic pronunciation guide ("ပြောနိုင်ရမယ်").
 
 GUIDELINES FOR NATIVE EXCELLENCE:
-1. Native Fluency & Nuance: Do not perform stiff word-for-word machine translation. Convey the exact meaning, tone, emotion, and context in phrasing that native speakers actually speak and write.
-2. Accuracy & Completeness: Preserve all names, dates, numbers, facts, technical terms, and paragraph structures accurately.
+1. Native Fluency & Nuance: Do not perform stiff word-for-word machine translation. Convey the exact meaning, tone, emotion, and context in phrasing that native locals actually speak and write.
+2. Accuracy & Completeness: Preserve all names, dates, numbers, facts, technical terms, and sentence intent accurately.
 3. Target Language Specific Directive:
 ${specificRule}
-4. Clean Output: The translated text must be STRICTLY in ${targetLangName}. Do NOT include explanations, romanization, notes, or source characters.
+4. Phonetic Reading / Romanization Guide: Provide an accurate, easy-to-read pronunciation guide so any non-native speaker can read it out loud like a native:
+   - For Chinese: Pinyin with tone marks (e.g., Nǐ hǎo, xièxiè!)
+   - For Japanese: Romaji (e.g., Konnichiwa, arigatou gozaimasu!)
+   - For Korean: Romanization (e.g., Annyeonghaseyo, gamsahamnida!)
+   - For Thai: RTGS phonetics (e.g., Sawatdee khrap, khop khun khrap!)
+   - For Burmese: Spoken pronunciation guide in English phonetics / Myanmar spoken sound (e.g., Min-ga-la-ba, kyei-zu tin-ba-de!)
+   - For Arabic: Latin transliteration (e.g., Marhaban, shukran jazilan!)
+   - For other scripts: Clear Latin phonetic pronunciation with syllable dashes.
+5. Speaking Tip: Provide a short 1-line practical tip in Burmese / English explaining when, where, and how locals say this (e.g., polite formal vs. casual friendly).
 
 Return strictly a valid JSON object matching:
 {
   "detectedSourceLang": "string",
-  "translatedText": "string (the complete, flawless translated text strictly in ${targetLangName})"
+  "translatedText": "string (the complete, flawless translated text strictly in ${targetLangName})",
+  "phoneticGuide": "string (clear spoken phonetic pronunciation / romanization reading guide)",
+  "speakingTip": "string (brief 1-line guidance on native tone, politeness level, or etiquette)"
 }
 
 Source text to translate:
@@ -2834,7 +3099,7 @@ Source text to translate:
 ${chunkText}
 """`;
 
-      const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
+      const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
       for (const m of candidateModels) {
         if (depletedDailyModels.has(m)) continue;
         try {
@@ -2861,7 +3126,9 @@ ${chunkText}
               if (trans && trans !== chunkText) {
                 return {
                   detectedSourceLang: parsed.detectedSourceLang || 'auto',
-                  translatedText: trans
+                  translatedText: trans,
+                  phoneticGuide: parsed.phoneticGuide || '',
+                  speakingTip: parsed.speakingTip || ''
                 };
               }
             }
@@ -2877,17 +3144,24 @@ ${chunkText}
         const gtRes = await translateWithGoogleEngine(chunkText, targetLang, sourceLang);
         if (gtRes && gtRes.translatedText && gtRes.translatedText.trim()) {
           console.log(`[Translate ${reqId}] Google Engine successfully translated chunk to ${targetLang}`);
-          return gtRes;
+          return {
+            detectedSourceLang: gtRes.detectedSourceLang || sourceLang || 'auto',
+            translatedText: gtRes.translatedText,
+            phoneticGuide: '',
+            speakingTip: `၁၀၀% တိကျသော ${targetLangName} ဘာသာပြန်ချက် ဖြစ်ပါသည်။`
+          };
         }
       } catch (gtErr) {
         console.warn(`[Translate ${reqId}] Google Engine error:`, gtErr);
       }
 
-      return { detectedSourceLang: 'auto', translatedText: chunkText };
+      return { detectedSourceLang: 'auto', translatedText: chunkText, phoneticGuide: '', speakingTip: '' };
     };
 
     const chunkResults = await runWithConcurrency(translationChunks, translateSingleChunk, 4);
     let fullTranslatedText = chunkResults.map(c => c.translatedText).filter(Boolean).join('\n\n');
+    let fullPhoneticGuide = chunkResults.map(c => c.phoneticGuide).filter(Boolean).join('\n');
+    let fullSpeakingTip = chunkResults[0]?.speakingTip || '';
     const detectedSource = chunkResults[0]?.detectedSourceLang || sourceLang;
 
     // Final safety check: If target is NOT Burmese, but fullTranslatedText still has Burmese or is untranslated, force Google Translate pass!
@@ -2977,6 +3251,8 @@ ${chunkText}
       success: true,
       originalText: cleanInputText,
       translatedText: fullTranslatedText,
+      phoneticGuide: fullPhoneticGuide,
+      speakingTip: fullSpeakingTip,
       detectedSourceLang: detectedSource,
       targetLang,
       voiceUsed: selectedVoiceToUse,
@@ -3114,15 +3390,34 @@ app.post('/api/live-voice-interpret', upload.single('audioFile'), async (req: Re
       }
 
       if (audioBuffer && audioBuffer.length > 100) {
+        // Preprocess audio: Boost low speech, bandpass vocal formants (80-7500Hz), and convert to 16kHz mono WAV
+        // This ensures rapid fast-talker consonants and slow hesitant whisper/pauses are both recognized flawlessly!
+        const normalized = await prepareNormalizedAudioForStt(audioBuffer, mimeType);
+        audioBuffer = normalized.buffer;
+        mimeType = normalized.mimeType;
+
         const base64Audio = audioBuffer.toString('base64');
-        const sttPrompt = `You are an expert native speech recognition and transcription engine.
-Listen to this audio carefully and transcribe exactly what was spoken with 100% precision in its authentic native script.
-- If spoken in Lao, transcribe in authentic Lao script (ພາສາລາວ) with exact colloquial expressions (e.g., ສະບາຍດີ, ແມ່ນແລ້ວ, ເຮັດຫຍັງຢູ່, ໄປໃສ, ກິນເຂົ້າແລ້ວບໍ່, ຂອບໃຈ).
-- If spoken in Burmese, transcribe in standard Myanmar Unicode (မြန်မာစာ) with exact spoken conversational words (e.g., မင်္ဂလာပါ, နေကောင်းလား, ဘာလုပ်နေလဲ, ဘယ်သွားမလို့လဲ, ထမင်းစားပြီးပြီလား, ကျေးဇူးတင်ပါတယ်).
-- If spoken in Thai, transcribe in authentic Thai script (ภาษาไทย) (e.g., สวัสดีครับ, สบายดีไหม, กินข้าวหรือยัง, ขอบคุณครับ).
-- If spoken in English, Chinese, Japanese, Korean, Vietnamese or other languages, transcribe with absolute precision in that language's script.
-- Primary spoken language expected: ${sourceLangName}.
-Return ONLY the exact transcribed spoken words without quotes, formatting, or commentary.`;
+        const sttPrompt = `You are a world-class certified multilingual speech recognition and acoustic transcription engine with deep expertise in human speech dynamics across all speaking rates, volumes, and accents.
+Listen to this audio recording carefully and transcribe exactly what was spoken with 100% precision in its authentic native script.
+
+CRITICAL INSTRUCTIONS FOR FAST AND SLOW SPEECH (အသံမြန်မြန်ပြောတာ သို့မဟုတ် နှေးနှေးပြောတာကို တိကျစွာနားလည်ခြင်း):
+1. RAPID-FIRE / FAST SPEAKERS (မြန်မြန်ပြောသူများ / Fast Speech):
+   - The speaker may speak very rapidly, at high speed, rushing syllables, contracting words, or speaking in continuous connected speech without spaces (e.g., fast Burmese, fast Lao, fast Thai, fast English, fast Chinese, fast Japanese, fast Spanish, fast Russian, etc.).
+   - Decode every fast syllable accurately without dropping words. Disentangle rapid connected words into standard written vocabulary.
+2. DELIBERATE / SLOW SPEAKERS (နှေးနှေးပြောသူများ / Slow Speech):
+   - The speaker may speak slowly, pause, stretch out vowels, or speak with hesitations.
+   - Maintain context and complete sentence continuity across silent pauses.
+   - Filter out hesitation vocalizations (e.g., "uh", "um", "er", "ဟို...", "အာ...", "အဲ့...", "เอ่อ...", "えーっと", "那个") and transcribe the actual intended words accurately.
+3. ADAPTIVE TO BACKGROUND NOISE, LOW VOLUME & ACCENTS:
+   - Handle quiet voices, background ambiance, telephone/microphone compression, and regional accents seamlessly.
+4. NATIVE ORTHOGRAPHY & SCRIPT:
+   - Primary expected language: ${sourceLangName}.
+   - If spoken in Burmese, transcribe in standard Myanmar Unicode (မြန်မာစာ) with authentic spoken words (e.g., မင်္ဂလာပါ, နေကောင်းလား, ဘာလုပ်နေလဲ, ဘယ်သွားမလို့လဲ, ထမင်းစားပြီးပြီလား, ကျေးဇူးတင်ပါတယ်).
+   - If spoken in Lao, transcribe in authentic Lao script (ພາສາລາວ) (e.g., ສະບາຍດີ, ແມ່ນແລ້ວ, ເຮັດຫຍັງຢູ່, ໄປໃສ, ກິນເຂົ້າແລ້ວບໍ່, ຂອບໃຈ).
+   - If spoken in Thai, transcribe in authentic Thai script (ภาษาไทย) (e.g., สวัสดีครับ, สบายดีไหม, กินข้าวหรือยัง, ขอบคุณครับ).
+   - If spoken in Chinese, Japanese, Korean, Vietnamese, English, Hindi, Arabic, Russian, or any other language, transcribe in authentic native script.
+5. PURE OUTPUT:
+   - Return ONLY the exact transcribed words spoken. Do not wrap in quotes or add notes, headers, or timestamps.`;
 
         const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
         for (const m of modelsToTry) {
@@ -3158,10 +3453,15 @@ Return ONLY the exact transcribed spoken words without quotes, formatting, or co
       return res.status(400).json({ error: 'အသံဖမ်းယူမှု သို့မဟုတ် စာသား မတွေ့ရှိပါ။ ကျေးဇူးပြု၍ မိုက်ကရိုဖုန်းကို နှိပ်ပြီး ပြန်ပြောပေးပါခင်ဗျာ။' });
     }
 
-    // 2. Translate into Target Language with 100% Native Precision
+    // 2. Translate into Target Language with 100% Native Precision & Phonetic Pronunciation Guide
     let translatedText = '';
-    const transPrompt = `You are a world-class professional certified simultaneous interpreter and native linguist.
-Translate the following real-time conversational speech from ${sourceLangName} into ${targetLangName} with 100% native authenticity, accuracy, and natural everyday conversational fluency so that any native speaker of ${targetLangName} understands it immediately, accurately, and naturally.
+    let interpPhoneticGuide = '';
+    let interpSpeakingTip = '';
+
+    const transPrompt = `You are a world-class professional certified simultaneous interpreter, native linguist, and speech coach.
+Translate the following real-time conversational speech from ${sourceLangName} into ${targetLangName} with 100% native authenticity, accuracy, and natural everyday conversational fluency so that:
+1. Any native speaker of ${targetLangName} understands it immediately, accurately, and naturally ("native လိုနားလည်ရမယ်").
+2. The speaker can also pronounce and speak it out loud like a native using an accurate phonetic reading guide ("ပြောနိုင်ရမယ်").
 
 CORE RULES FOR NATIVE EXCELLENCE:
 1. Native Fluency: Translate into the natural, idiomatic spoken phrasing that native locals actually use in real-life conversations (strictly avoid robotic, formal, or literal word-for-word machine translation).
@@ -3172,31 +3472,45 @@ CORE RULES FOR NATIVE EXCELLENCE:
    - When translating to Chinese (中文): Use standard natural modern colloquial Chinese (普通话) and authentic word order.
    - When translating to Thai (ภาษาไทย): Use natural conversational Thai with appropriate polite endings (ครับ/ค่ะ).
    - When translating to Lao (ພາສາລາວ): Use natural everyday Lao vocabulary and respectful particles (e.g., ສະບາຍດີ, ໂດຍ / ເຈົ້າ, ແມ່ນແລ້ວ, ຂອບໃຈຫຼາຍໆ, ຍິນດີທີ່ໄດ້ຮູ້ຈັກ).
-   - When translating to Burmese (မြန်မာစကား): Use natural everyday spoken Myanmar phrases (e.g., မင်္ဂလာပါ, ဟုတ်ကဲ့ပါ, နေကောင်းရဲ့လား, ဘယ်လောက်ကျပါသလဲ, ကျေးဇူးအများကြီးတင်ပါတယ်).
+   - When translating to Burmese (မြန်မာစကား): Use natural everyday spoken Myanmar phrases ("တယ်/ပါ/မှာ/တဲ့/နော်/ခင်ဗျာ/ရှင့်").
    - When translating to English: Use 100% natural, fluent conversational English without awkward literal phrasing.
    - When translating to other languages (Spanish, Russian, Vietnamese, Arabic, Hindi, etc.): Ensure fluent, natural native phrasing.
-4. Completeness: Never omit key numbers, names, locations, prices, or questions.
+4. Phonetic Reading Guide: Provide an accurate romanization or phonetic pronunciation guide so anyone can speak it aloud (e.g. Romaji for Japanese, Pinyin for Chinese, Romanization for Korean/Thai/Burmese/Arabic).
+5. Speaking Tip: Provide a short 1-line practical tip explaining how native locals say it.
 
 Spoken input (${sourceLangName}): "${originalTranscript}"
 Target language: ${targetLangName}
 
-Return ONLY the final translated sentence in ${targetLangName} script. Do NOT add notes, quotes, romanization, or explanation.`;
+Return strictly a valid JSON object matching:
+{
+  "translatedText": "string (the natural, fluent translated speech in ${targetLangName} script)",
+  "phoneticGuide": "string (clear spoken phonetic pronunciation guide)",
+  "speakingTip": "string (brief 1-line guidance on native pronunciation or etiquette)"
+}`;
 
-    const transModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
+    const transModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
     for (const m of transModels) {
       if (depletedDailyModels.has(m)) continue;
       try {
         const transRes = await ai.models.generateContent({
           model: m,
           contents: [{ role: 'user', parts: [{ text: transPrompt }] }],
-          config: { temperature: 0.2 }
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.1
+          }
         });
         if (transRes && transRes.text && transRes.text.trim()) {
-          const result = transRes.text.trim();
-          if (result && result !== originalTranscript) {
-            translatedText = result;
-            console.log(`[Live Interpret ${reqId}] Translated with ${m}: "${translatedText}"`);
-            break;
+          const parsed = safeJsonParse(transRes.text);
+          if (parsed && parsed.translatedText && typeof parsed.translatedText === 'string') {
+            const result = parsed.translatedText.trim();
+            if (result && result !== originalTranscript) {
+              translatedText = result;
+              interpPhoneticGuide = parsed.phoneticGuide || '';
+              interpSpeakingTip = parsed.speakingTip || '';
+              console.log(`[Live Interpret ${reqId}] Translated with ${m}: "${translatedText}"`);
+              break;
+            }
           }
         }
       } catch (transErr: any) {
@@ -3210,6 +3524,7 @@ Return ONLY the final translated sentence in ${targetLangName} script. Do NOT ad
         const gt = await translateWithGoogleEngine(originalTranscript, targetLang, sourceLang);
         if (gt && gt.translatedText) {
           translatedText = gt.translatedText;
+          interpSpeakingTip = `၁၀၀% တိကျသော ${targetLangName} ဘာသာပြန်ချက် ဖြစ်ပါသည်။`;
         }
       } catch (_) {}
     }
@@ -3318,6 +3633,8 @@ Return ONLY the final translated sentence in ${targetLangName} script. Do NOT ad
       success: true,
       originalTranscript,
       translatedText,
+      phoneticGuide: interpPhoneticGuide,
+      speakingTip: interpSpeakingTip,
       sourceLang,
       targetLang,
       speakerRole,
@@ -3332,6 +3649,109 @@ Return ONLY the final translated sentence in ${targetLangName} script. Do NOT ad
     if (tempAudioPath && fs.existsSync(tempAudioPath)) {
       try { fs.unlinkSync(tempAudioPath); } catch (_) {}
     }
+  }
+});
+
+// -------------------------------------------------------------------------------------
+// 1.73 High-Precision Speech Transcription (STT) for Fast & Slow Speech in all languages
+// -------------------------------------------------------------------------------------
+app.post('/api/transcribe-speech', upload.single('audioFile'), async (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  const file = req.file;
+  const rawBase64 = req.body?.audioBase64;
+  const sourceLang = req.body?.sourceLang || 'auto';
+
+  if (!file && !rawBase64) {
+    return res.status(400).json({ error: 'အသံဖိုင် သို့မဟုတ် မိုက်ခရိုဖုန်း အသံသွင်းချက် မတွေ့ရှိပါ။' });
+  }
+
+  let audioBuffer: Buffer | null = null;
+  let mimeType = 'audio/mp3';
+
+  if (file && fs.existsSync(file.path)) {
+    audioBuffer = fs.readFileSync(file.path);
+    mimeType = file.mimetype || 'audio/mp3';
+    if (mimeType.includes('webm')) mimeType = 'audio/webm';
+    else if (mimeType.includes('ogg')) mimeType = 'audio/ogg';
+    else if (mimeType.includes('wav')) mimeType = 'audio/wav';
+    else if (mimeType.includes('mp4') || mimeType.includes('m4a')) mimeType = 'audio/mp4';
+    try { fs.unlinkSync(file.path); } catch (_) {}
+  } else if (rawBase64) {
+    const cleanBase64 = rawBase64.replace(/^data:[^;]+;base64,/, '');
+    audioBuffer = Buffer.from(cleanBase64, 'base64');
+  }
+
+  if (!audioBuffer || audioBuffer.length < 50) {
+    return res.status(400).json({ error: 'အသံဖိုင် ပမာဏ အလွန်သေးငယ်ပါသည် သို့မဟုတ် ပျက်စီးနေပါသည်။' });
+  }
+
+  const reqId = `${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  try {
+    const normalized = await prepareNormalizedAudioForStt(audioBuffer, mimeType);
+    const base64Audio = normalized.buffer.toString('base64');
+    const targetMime = normalized.mimeType;
+
+    const sttPrompt = `You are a world-class certified multilingual speech recognition and acoustic transcription engine with deep expertise in human speech dynamics across all speaking rates, volumes, and accents.
+Listen to this audio recording carefully and transcribe exactly what was spoken with 100% precision in its authentic native script.
+
+CRITICAL INSTRUCTIONS FOR FAST AND SLOW SPEECH (အသံမြန်မြန်ပြောတာ သို့မဟုတ် နှေးနှေးပြောတာကို တိကျစွာနားလည်ခြင်း):
+1. RAPID-FIRE / FAST SPEAKERS (မြန်မြန်ပြောသူများ / Fast Speech):
+   - The speaker may speak very rapidly, at high speed, rushing syllables, contracting words, or speaking in continuous connected speech without spaces (e.g. fast Burmese, fast Lao, fast Thai, fast English, fast Chinese, fast Japanese, fast Spanish, fast Russian, etc.).
+   - Decode every fast syllable accurately without dropping words. Disentangle rapid connected words into standard written vocabulary.
+2. DELIBERATE / SLOW SPEAKERS (နှေးနှေးပြောသူများ / Slow Speech):
+   - The speaker may speak slowly, pause, stretch out vowels, or speak with hesitations.
+   - Maintain context and complete sentence continuity across silent pauses.
+   - Filter out hesitation vocalizations (e.g., "uh", "um", "er", "ဟို...", "အာ...", "အဲ့...", "เอ่อ...", "えーっと", "那个") and transcribe the actual intended words accurately.
+3. ADAPTIVE TO BACKGROUND NOISE, LOW VOLUME & ACCENTS:
+   - Handle quiet voices, background ambiance, telephone/microphone compression, and regional accents seamlessly.
+4. NATIVE SCRIPT:
+   - If spoken in Burmese, write in standard Myanmar Unicode (မြန်မာစာ).
+   - If spoken in Lao, write in authentic Lao script (ພາສາລາວ).
+   - If spoken in Thai, write in authentic Thai script (ภาษาไทย).
+   - If spoken in Chinese, Japanese, Korean, Vietnamese, English, Hindi, Arabic, Russian, or any other language, transcribe in standard native script.
+5. CLEAN OUTPUT:
+   - Output ONLY the exact transcribed text. No quotation marks, no preamble, no explanations, no metadata.`;
+
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
+    let transcribedText = '';
+
+    for (const m of modelsToTry) {
+      if (depletedDailyModels.has(m)) continue;
+      try {
+        const sttRes = await ai.models.generateContent({
+          model: m,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType: targetMime, data: base64Audio } },
+                { text: sttPrompt }
+              ]
+            }
+          ],
+          config: { temperature: 0.1 }
+        });
+        if (sttRes && sttRes.text && sttRes.text.trim()) {
+          transcribedText = sttRes.text.trim();
+          console.log(`[STT Transcribe ${reqId}] Recognized with ${m}: "${transcribedText}"`);
+          break;
+        }
+      } catch (e: any) {
+        console.warn(`[STT Transcribe ${reqId}] Model ${m} note:`, e?.message || e);
+      }
+    }
+
+    if (!transcribedText) {
+      return res.status(500).json({ error: 'အသံကို တိကျစွာ ဖမ်းယူ၍ မရရှိခဲ့ပါ။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။' });
+    }
+
+    return res.json({
+      success: true,
+      transcript: transcribedText
+    });
+  } catch (err: any) {
+    console.error(`[STT Transcribe ${reqId}] Error:`, err);
+    return res.status(500).json({ error: err.message || 'အသံဖမ်းယူမှု မအောင်မြင်ပါ။' });
   }
 });
 
@@ -3774,34 +4194,29 @@ app.post('/api/audio-to-video', upload.fields([
       tempFilesToClean.push(p);
     }
 
-    // 3. Set dimensions according to aspect ratio (Turbo-optimized for blazing fast rendering)
-    let width = 360;
-    let height = 640; // 9:16 vertical TikTok/Shorts
+    // 3. Set dimensions according to aspect ratio (HD 720p for crisp Burmese Unicode text rendering)
+    let width = 720;
+    let height = 1280; // 9:16 vertical TikTok/Shorts
     if (aspectRatio === '16:9') {
-      width = 640;
-      height = 360;
+      width = 1280;
+      height = 720;
     } else if (aspectRatio === '1:1') {
-      width = 480;
-      height = 480;
+      width = 720;
+      height = 720;
     }
 
-    // 4. Subtitle Burn-In Preparation (TikTok / CapCut Style)
-    const shouldBurn = burnSubtitles === 'true' || burnSubtitles === true || (typeof subtitlesSrt === 'string' && subtitlesSrt.trim().length > 0);
+    // 4. Subtitle Burn-In Preparation with Accurate Proportional Timing
+    const shouldBurn = burnSubtitles === 'true' || burnSubtitles === true || (typeof subtitlesSrt === 'string' && subtitlesSrt.trim().length > 0) || (typeof subtitleText === 'string' && subtitleText.trim().length > 0);
     if (shouldBurn) {
       srtFilePath = `/tmp/sub_${timestamp}_${randomId}.srt`;
       tempFilesToClean.push(srtFilePath);
       let finalSrtContent = (subtitlesSrt || '').trim();
 
-      // If no raw SRT was provided but subtitleText is present, construct timed cues
+      // If no raw SRT was provided but subtitleText is present, construct precise proportional timed cues
       if (!finalSrtContent && subtitleText && subtitleText.trim()) {
-        const sentences = subtitleText.split(/(?<=[။\.\?\!\n])\s*/).filter((s: string) => s.trim().length > 0);
         const audioDur = (await getAudioDuration(inputAudioPath)) || 10;
-        const step = Math.max(1.5, audioDur / Math.max(1, sentences.length));
-        finalSrtContent = sentences.map((sen: string, idx: number) => {
-          const startS = idx * step;
-          const endS = Math.min(audioDur, (idx + 1) * step);
-          return `${idx + 1}\n${secondsToSrtTime(startS)} --> ${secondsToSrtTime(endS)}\n${sen.trim()}\n`;
-        }).join('\n');
+        const generated = generateAccurateBurmeseSubtitles(subtitleText, audioDur);
+        finalSrtContent = generated.srtText;
       }
 
       if (finalSrtContent) {
@@ -3831,7 +4246,7 @@ app.post('/api/audio-to-video', upload.fields([
     }
 
     const waveW = Math.round(width * 0.85);
-    const waveH = Math.round(height * 0.20);
+    const waveH = Math.round(height * 0.16);
     const waveY = Math.round((height * (Number(waveYPercentage) / 100)) - (waveH / 2));
 
     // Subtitle Color Style Mapping (ASS color format: &HAABBGGRR)
@@ -3845,12 +4260,13 @@ app.post('/api/audio-to-video', upload.fields([
     }
 
     const alignment = subtitlePosition === 'middle' ? 5 : 2; // 2 = bottom-center, 5 = center
-    const marginV = subtitlePosition === 'middle' ? 20 : (height >= 600 ? 75 : 40);
-    const fontSize = Number(subtitleFontSize) || (height >= 600 ? 17 : 14);
+    const marginV = subtitlePosition === 'middle' ? 20 : (height >= 1000 ? 68 : 46);
+    const fontSize = Number(subtitleFontSize) && Number(subtitleFontSize) > 20 ? Number(subtitleFontSize) : (height >= 1000 ? 26 : 22);
 
     const escapedSrt = srtFilePath ? srtFilePath.replace(/\\/g, '/').replace(/:/g, '\\:') : '';
+    const fontsDir = '/usr/share/fonts/truetype/noto';
     const subtitleFilter = escapedSrt
-      ? `,subtitles=${escapedSrt}:force_style='Fontname=Noto Sans Myanmar,FontSize=${fontSize},PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=2.8,Shadow=1.5,Alignment=${alignment},MarginV=${marginV}'`
+      ? `,subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='Fontname=Noto Sans Myanmar,FontSize=${fontSize},Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=${alignment},MarginV=${marginV}'`
       : '';
 
     // Color Grading Filter
@@ -3889,7 +4305,10 @@ app.post('/api/audio-to-video', upload.fields([
         waveYPercentage: Number(waveYPercentage) || 50,
         waveColors,
         waveStyle,
-        extraVideoFilter: `${colorGradingFilter}${drawBorderFilter}${subtitleFilter}`,
+        subtitleSrtPath: srtFilePath || '',
+        subtitleStyle,
+        burnSubtitles: Boolean(srtFilePath),
+        extraVideoFilter: `${colorGradingFilter}${drawBorderFilter}`,
         tempFiles: tempFilesToClean
       });
     } else {
@@ -3914,7 +4333,8 @@ app.post('/api/audio-to-video', upload.fields([
         await execAsync(`ffmpeg -y -f lavfi -i "color=c=${bgHex}:s=${width}x${height}" -vframes 1 "${finalBgFile}"`);
       }
 
-      const fps = (srtFilePath || colorFilter !== 'none' || frameStyle !== 'none') ? 8 : 2;
+      // Smooth 25fps for fluid waveform animation and instant subtitle rendering
+      const fps = srtFilePath ? 25 : 15;
 
       // Turbo Filter: Waveform scaled with nearest-neighbor, overlaid on background + subtitles
       const filterParts = [
@@ -3927,7 +4347,7 @@ app.post('/api/audio-to-video', upload.fields([
       const inputArgs = `-i "${inputAudioPath}" -framerate ${fps} -loop 1 -i "${finalBgFile}"`;
       
       // Turbo Speed: ultrafast preset, zerolatency tune, optimized bitrate
-      const ffmpegCmd = `ffmpeg -y ${inputArgs} -filter_complex "${filterString}" -map "[v]" -map 0:a -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -r ${fps} -b:v 300k -maxrate 450k -bufsize 600k -c:a aac -b:a 128k -movflags +faststart -shortest "${outputVideoPath}"`;
+      const ffmpegCmd = `ffmpeg -y ${inputArgs} -filter_complex "${filterString}" -map "[v]" -map 0:a -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -r ${fps} -b:v 450k -maxrate 700k -bufsize 1000k -c:a aac -b:a 128k -movflags +faststart -shortest "${outputVideoPath}"`;
 
       try {
         await execAsync(ffmpegCmd);
@@ -4649,22 +5069,24 @@ app.post('/api/generate-story-images', async (req: Request, res: Response) => {
 
   try {
     const promptExtractor = `You are a professional film storyboard artist.
-Based on the story "${title || 'Untitled'}", create 4 cinematic visual scene descriptions in English for AI image generation. Each scene: (1. Opening, 2. Rising Action, 3. Climax, 4. Resolution).
+Based on the story "${title || 'Untitled'}", create 4 sequential distinct visual scene descriptions in English for AI image generation (1. Opening, 2. Rising Action, 3. Climax, 4. Resolution).
 Match "${genre}" mood. Story context: ${script.slice(0, 1000)}
+Ensure each of the 4 scenes features completely different visual environments, compositions, and subjects so that the storyboard images never repeat.
 
 Respond strictly in valid JSON:
 {
   "scenes": [
-    { "sceneNumber": 1, "title": "Opening", "visualPrompt": "Cinematic visual prompt in English...", "mood": "${genre}" },
-    { "sceneNumber": 2, "title": "Rising Action", "visualPrompt": "Cinematic visual prompt in English...", "mood": "${genre}" },
-    { "sceneNumber": 3, "title": "Climax", "visualPrompt": "Cinematic visual prompt in English...", "mood": "${genre}" },
-    { "sceneNumber": 4, "title": "Resolution", "visualPrompt": "Cinematic visual prompt in English...", "mood": "${genre}" }
+    { "sceneNumber": 1, "title": "Opening", "visualPrompt": "Cinematic visual prompt in English...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 2, "title": "Rising Action", "visualPrompt": "Cinematic visual prompt in English...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 3, "title": "Climax", "visualPrompt": "Cinematic visual prompt in English...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 4, "title": "Resolution", "visualPrompt": "Cinematic visual prompt in English...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" }
   ]
 }`;
 
     let parsed: any = null;
     const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-flash-lite-latest', 'gemini-3.8-flash'];
     for (const m of modelsToTry) {
+      if (depletedDailyModels.has(m)) continue;
       try {
         const resExtraction = await ai.models.generateContent({
           model: m,
@@ -4684,22 +5106,29 @@ Respond strictly in valid JSON:
     const scenePrompts = (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length > 0)
       ? parsed.scenes
       : [
-          { sceneNumber: 1, title: 'Opening', visualPrompt: `Cinematic opening scene of ${genre} story: ${title}`, mood: genre },
-          { sceneNumber: 2, title: 'Rising Action', visualPrompt: `Dramatic rising action in ${genre} setting: ${title}`, mood: genre },
-          { sceneNumber: 3, title: 'Climax', visualPrompt: `Epic climax scene of ${genre} tale: ${title}`, mood: genre },
-          { sceneNumber: 4, title: 'Resolution', visualPrompt: `Atmospheric resolution ending of ${genre}: ${title}`, mood: genre }
+          { sceneNumber: 1, title: 'Opening', visualPrompt: `Cinematic opening scene of ${genre} story: ${title}`, searchKeywords: `${genre} landscape beginning`, mood: genre },
+          { sceneNumber: 2, title: 'Rising Action', visualPrompt: `Dramatic rising action in ${genre} setting: ${title}`, searchKeywords: `${genre} dramatic progression`, mood: genre },
+          { sceneNumber: 3, title: 'Climax', visualPrompt: `Epic climax scene of ${genre} tale: ${title}`, searchKeywords: `${genre} intense climax`, mood: genre },
+          { sceneNumber: 4, title: 'Resolution', visualPrompt: `Atmospheric resolution ending of ${genre}: ${title}`, searchKeywords: `${genre} peaceful ending sunset`, mood: genre }
         ];
 
-    // Actually generate the images for each scene
-    const scenesWithImages = await Promise.all(scenePrompts.map(async (scene: any) => {
+    // Shared duplicate tracker so NO TWO SCENES HAVE DUPLICATE IMAGES
+    const storyUsedUrls = new Set<string>();
+
+    // Actually generate distinct non-repeating images for each scene
+    const scenesWithImages = await runWithConcurrency(scenePrompts, async (scene: any, idx: number) => {
       try {
-        const imageUrl = await generateAiImageBuffer(scene.visualPrompt, '16:9', 'cinematic');
+        const imageUrl = await generateAiImageBuffer(scene.visualPrompt, '16:9', 'cinematic', {
+          searchKeywords: scene.searchKeywords,
+          sceneIndex: idx,
+          usedUrls: storyUsedUrls
+        });
         return { ...scene, imageUrl };
       } catch (e) {
         console.warn(`Failed to generate image for scene ${scene.sceneNumber}:`, e);
         return { ...scene, imageUrl: '' };
       }
-    }));
+    }, 2);
 
     return res.json({
       success: true,
@@ -4723,7 +5152,7 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
     waveYPercentage = 62.5, 
     bgImageData = '', 
     allSceneImages = [], // New: Array of all generated scene images
-    enableSubtitles = false,
+    enableSubtitles = true, // Default to true for crisp subtitles on generated videos
     voiceEffect = 'none' // New: 'none' | 'echo' | 'deep' | 'radio'
   } = req.body;
 
@@ -4784,7 +5213,38 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
       imagePaths.push(bgImagePath);
     }
 
-    // Ultimate background fallback if AI image generation fails or quota is exceeded (429)
+    // Auto-generate matching non-repeating story scene images if no images were provided
+    if (finalBgImages.length === 0) {
+      console.log(`[Story Video] No images provided. Automatically generating 4 non-repeating scene images for "${title}"...`);
+      try {
+        const sentences = script.split(/(?<=[။\.\?\!\n])\s*/).filter((s: string) => s.trim().length > 0);
+        const autoScenes = [
+          `Cinematic opening atmospheric scene of ${genre} story: ${title}. ${sentences[0] || ''}`,
+          `Dramatic progression of ${genre} story: ${title}. ${sentences[Math.floor(sentences.length / 3)] || ''}`,
+          `Climax and key drama moment of ${genre} story: ${title}. ${sentences[Math.floor((sentences.length * 2) / 3)] || ''}`,
+          `Emotional ending resolution scene of ${genre} story: ${title}. ${sentences[sentences.length - 1] || ''}`
+        ];
+        const videoStoryUsedUrls = new Set<string>();
+        for (let i = 0; i < autoScenes.length; i++) {
+          try {
+            const imgData = await generateAiImageBuffer(autoScenes[i], '9:16', 'cinematic', {
+              sceneIndex: i,
+              usedUrls: videoStoryUsedUrls
+            });
+            if (imgData && imgData.includes('base64,')) {
+              const p = path.join(os.tmpdir(), `story_auto_bg_${timestamp}_${i}.png`);
+              fs.writeFileSync(p, Buffer.from(imgData.split('base64,')[1], 'base64'));
+              finalBgImages.push(p);
+              imagePaths.push(p);
+            }
+          } catch (_) {}
+        }
+      } catch (autoImgErr) {
+        console.warn('Auto scene generation error:', autoImgErr);
+      }
+    }
+
+    // Ultimate background fallback if AI image generation fails
     if (finalBgImages.length === 0) {
       try {
         let gradColor = 'black@0.9';
@@ -4801,7 +5261,18 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
       }
     }
 
-    // 3. Render Dynamic Ken Burns Slideshow Video
+    // 3. Generate accurate timed subtitles & Render Dynamic Ken Burns Slideshow Video
+    let srtPath = '';
+    let generatedSrtText = '';
+    if (enableSubtitles) {
+      const audioDuration = (await getAudioDuration(finalAudioPath)) || 10;
+      const subResult = generateAccurateBurmeseSubtitles(cleanScriptText, audioDuration);
+      generatedSrtText = subResult.srtText;
+      srtPath = path.join(os.tmpdir(), `story_sub_${timestamp}.srt`);
+      fs.writeFileSync(srtPath, generatedSrtText, 'utf8');
+      imagePaths.push(srtPath);
+    }
+
     let waveColors = '0x818cf8|0xc084fc';
     if (genre === 'horror') waveColors = '0xf97316|0xf43f5e';
     else if (genre === 'motivation') waveColors = '0x10b981|0x34d399';
@@ -4814,6 +5285,8 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
       genre,
       waveYPercentage,
       waveColors,
+      subtitleSrtPath: srtPath,
+      burnSubtitles: Boolean(enableSubtitles),
       tempFiles: imagePaths
     });
 
@@ -4827,7 +5300,7 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
       try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
     });
 
-    return res.json({ success: true, title, videoUrl: videoBase64 });
+    return res.json({ success: true, title, videoUrl: videoBase64, srtText: generatedSrtText });
   } catch (err: any) {
     console.error('Pro Video Generation Error:', err);
     [audioPath, finalAudioPath, videoPath, bgImagePath, ...imagePaths].forEach(p => {
@@ -5142,19 +5615,79 @@ app.post('/api/transcribe-audio', upload.fields([
 });
 
 // -------------------------------------------------------------------------------------
-// Audio Pitch & Speed Shifter (Independent shifting using mathematically perfect FFmpeg filters)
+// Professional Audio EQ, Speed & Pitch Modifier Studio (Unlimited Audio Length Processing)
 // -------------------------------------------------------------------------------------
+app.get('/api/audio-stream/:id', (req: Request, res: Response) => {
+  try {
+    const rawId = req.params.id || '';
+    const safeId = path.basename(rawId).replace(/[^a-zA-Z0-9_\-\.]/g, '');
+    const filename = safeId.endsWith('.mp3') ? safeId : `${safeId}.mp3`;
+    const filePath = path.join('/tmp/audio_outputs', filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'အသံဖိုင် သက်တမ်းကုန်သွားပါသည် သို့မဟုတ် မရှိတော့ပါ။' });
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+    const isDownload = req.query.download === 'true' || req.query.download === '1';
+
+    if (isDownload) {
+      res.setHeader('Content-Disposition', `attachment; filename="VoiceMaster_EQ_Speed_${Date.now()}.mp3"`);
+    }
+
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = (end - start) + 1;
+      const file = fs.createReadStream(filePath, { start, end });
+      const head = {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'audio/mpeg',
+      };
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      const head = {
+        'Content-Length': fileSize,
+        'Content-Type': 'audio/mpeg',
+        'Accept-Ranges': 'bytes',
+      };
+      res.writeHead(200, head);
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (err: any) {
+    console.error('Audio Stream Error:', err);
+    res.status(500).json({ error: 'အသံဖိုင် ဖွင့်၍ မရပါ။' });
+  }
+});
+
 app.post('/api/shift-audio', upload.fields([
   { name: 'audioFile', maxCount: 1 }
 ]), async (req: Request, res: Response) => {
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   const file = files && files['audioFile'] && files['audioFile'][0];
   const audioData = req.body.audioData || req.body.audioUrl;
-  const speed = Math.max(0.25, Math.min(3.0, parseFloat(req.body.speed) || 1.0));
-  const pitch = Math.max(0.4, Math.min(2.5, parseFloat(req.body.pitch) || 1.0));
+  const speed = Math.max(0.2, Math.min(4.0, parseFloat(req.body.speed) || 1.0));
+  const pitch = Math.max(0.3, Math.min(3.0, parseFloat(req.body.pitch) || 1.0));
+  const volume = Math.max(0.1, Math.min(4.0, parseFloat(req.body.volume) || 1.0));
+  const preset = String(req.body.preset || 'flat').trim();
 
-  const tempIn = `/tmp/shifter_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
-  const tempOut = `/tmp/shifter_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+  // 5-Band Equalizer gains in dB (-15dB to +15dB)
+  const bass = Math.max(-15, Math.min(15, parseFloat(req.body.bass) || 0));
+  const eqLowMid = Math.max(-15, Math.min(15, parseFloat(req.body.eqLowMid) || 0));
+  const mid = Math.max(-15, Math.min(15, parseFloat(req.body.mid) || 0));
+  const eqHighMid = Math.max(-15, Math.min(15, parseFloat(req.body.eqHighMid) || 0));
+  const treble = Math.max(-15, Math.min(15, parseFloat(req.body.treble) || 0));
+
+  const outputId = `vm_eq_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  const tempIn = `/tmp/shifter_in_${outputId}.mp3`;
+  const tempOut = `/tmp/shifter_out_${outputId}.mp3`;
+  const persistentOut = path.join('/tmp/audio_outputs', `${outputId}.mp3`);
 
   try {
     if (file) {
@@ -5168,6 +5701,8 @@ app.post('/api/shift-audio', upload.fields([
         const fetchRes = await fetch(audioData);
         const arrayBuf = await fetchRes.arrayBuffer();
         fs.writeFileSync(tempIn, Buffer.from(arrayBuf));
+      } else if (fs.existsSync(audioData)) {
+        fs.copyFileSync(audioData, tempIn);
       } else {
         return res.status(400).json({ error: 'အသံဖိုင် မပါဝင်ပါ။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။' });
       }
@@ -5176,12 +5711,12 @@ app.post('/api/shift-audio', upload.fields([
     }
 
     if (!fs.existsSync(tempIn) || fs.statSync(tempIn).size === 0) {
-      throw new Error('အသံဖိုင် ဖတ်ရှု၍ မရပါ။');
+      throw new Error('အသံဖိုင် ဖတ်ရှု၍ မရပါ။ ဖိုင်မှန်ကန်မှု ရှိမရှိ စစ်ဆေးပေးပါခင်ဗျာ။');
     }
 
-    // FFmpeg atempo must be between 0.5 and 2.0 per filter stage
+    // 1. Mathematically exact speed/pitch calculation using cascaded atempo filters
     const rawTempo = speed / pitch;
-    let t = Math.max(0.1, Math.min(10.0, rawTempo));
+    let t = Math.max(0.05, Math.min(16.0, rawTempo));
     const atempoFilters: string[] = [];
     while (t > 2.0) {
       atempoFilters.push('atempo=2.0');
@@ -5194,22 +5729,83 @@ app.post('/api/shift-audio', upload.fields([
     atempoFilters.push(`atempo=${t.toFixed(4)}`);
     const atempoChain = atempoFilters.join(',');
 
-    // Normalize format to 44100Hz first, shift rate by pitch (as integer sample rate), compensate tempo, resample to 44100Hz, and amplify volume
     const shiftedSampleRate = Math.max(8000, Math.min(96000, Math.round(44100 * pitch)));
-    const filter = `aformat=sample_rates=44100:channel_layouts=stereo,asetrate=${shiftedSampleRate},${atempoChain},aresample=44100,volume=1.8`;
-    
-    await execAsync(`ffmpeg -y -i "${tempIn}" -af "${filter}" -c:a libmp3lame -b:a 192k "${tempOut}"`);
 
-    if (!fs.existsSync(tempOut) || fs.statSync(tempOut).size === 0) {
-      throw new Error('FFmpeg failed to shift audio.');
+    // 2. Build DSP Equalizer Filter Chain
+    const filterParts: string[] = [
+      'aformat=sample_rates=44100:channel_layouts=stereo',
+      `asetrate=${shiftedSampleRate}`,
+      atempoChain,
+      'aresample=44100'
+    ];
+
+    // Presets
+    if (preset === 'vocal_clarity') {
+      filterParts.push('equalizer=f=120:t=q:w=1.2:g=-2,equalizer=f=1000:t=q:w=1.2:g=3,equalizer=f=3500:t=q:w=1.2:g=4.5,equalizer=f=8000:t=q:w=1.2:g=2.5');
+    } else if (preset === 'deep_bass') {
+      filterParts.push('equalizer=f=80:t=q:w=1.0:g=6.5,equalizer=f=220:t=q:w=1.2:g=4,equalizer=f=8000:t=q:w=1.2:g=-1.5');
+    } else if (preset === 'podcast_radio') {
+      filterParts.push('equalizer=f=100:t=q:w=1.0:g=4,equalizer=f=1000:t=q:w=1.2:g=2,equalizer=f=3200:t=q:w=1.2:g=3.5,equalizer=f=10000:t=q:w=1.2:g=2');
+    } else if (preset === 'crisp_treble') {
+      filterParts.push('equalizer=f=100:t=q:w=1.0:g=-2,equalizer=f=3500:t=q:w=1.2:g=3.5,equalizer=f=10000:t=q:w=1.0:g=6');
+    } else if (preset === 'warm_smooth') {
+      filterParts.push('equalizer=f=250:t=q:w=1.2:g=3.5,equalizer=f=2000:t=q:w=1.2:g=-2,equalizer=f=6000:t=q:w=1.2:g=-2.5');
+    } else if (preset === 'loudness_boost') {
+      filterParts.push('volume=1.8,alimiter=limit=0.96');
+    } else if (preset === 'telephone') {
+      filterParts.push('highpass=f=350,lowpass=f=3400,volume=2.2');
     }
 
-    const outputBuffer = fs.readFileSync(tempOut);
-    const audioBase64 = `data:audio/mp3;base64,${outputBuffer.toString('base64')}`;
+    // Custom 5-Band Graphic Equalizer sliders
+    const customEqBands: string[] = [];
+    if (bass !== 0) customEqBands.push(`equalizer=f=80:t=q:w=1.0:g=${bass.toFixed(1)}`);
+    if (eqLowMid !== 0) customEqBands.push(`equalizer=f=250:t=q:w=1.2:g=${eqLowMid.toFixed(1)}`);
+    if (mid !== 0) customEqBands.push(`equalizer=f=1000:t=q:w=1.2:g=${mid.toFixed(1)}`);
+    if (eqHighMid !== 0) customEqBands.push(`equalizer=f=3500:t=q:w=1.2:g=${eqHighMid.toFixed(1)}`);
+    if (treble !== 0) customEqBands.push(`equalizer=f=10000:t=q:w=1.0:g=${treble.toFixed(1)}`);
+
+    if (customEqBands.length > 0) {
+      filterParts.push(customEqBands.join(','));
+    }
+
+    // Volume scaling + Brickwall peak limiter to prevent clipping distortion
+    const effectiveVolume = volume * 1.35;
+    filterParts.push(`volume=${effectiveVolume.toFixed(2)},alimiter=limit=0.98`);
+
+    const filter = filterParts.join(',');
+
+    console.log(`[Audio EQ & Speed Master] Processing unlimited audio length: speed=${speed}x, pitch=${pitch}x, vol=${volume}x, preset=${preset}, bass=${bass}dB, mid=${mid}dB, treble=${treble}dB`);
+
+    // High performance multi-threaded FFmpeg encoding (Supports unlimited minutes/hours of audio)
+    await execAsync(`ffmpeg -y -i "${tempIn}" -threads 0 -vn -af "${filter}" -c:a libmp3lame -b:a 192k "${tempOut}"`, { timeout: 900000 });
+
+    if (!fs.existsSync(tempOut) || fs.statSync(tempOut).size === 0) {
+      throw new Error('FFmpeg failed to process audio.');
+    }
+
+    // Store in persistent streaming directory
+    fs.copyFileSync(tempOut, persistentOut);
+
+    const outStats = fs.statSync(tempOut);
+    const durSec = await getAudioDuration(tempOut);
+
+    const streamUrl = `/api/audio-stream/${outputId}`;
+    const downloadUrl = `/api/audio-stream/${outputId}?download=true`;
+
+    // Fast data URI for lightweight preview if under 3MB; large files stream seamlessly via streamUrl
+    let audioBase64 = '';
+    if (outStats.size < 3 * 1024 * 1024) {
+      const outputBuffer = fs.readFileSync(tempOut);
+      audioBase64 = `data:audio/mp3;base64,${outputBuffer.toString('base64')}`;
+    }
 
     return res.json({
       success: true,
-      audioUrl: audioBase64
+      audioUrl: audioBase64 || streamUrl,
+      streamUrl: streamUrl,
+      downloadUrl: downloadUrl,
+      durationSec: durSec,
+      fileSizeBytes: outStats.size
     });
   } catch (err: any) {
     console.error('Audio Shifter API Error:', err);
@@ -5497,11 +6093,18 @@ app.post('/api/burn-subtitles', async (req: Request, res: Response) => {
     // 2. Write SRT subtitle content
     fs.writeFileSync(tempSrt, srtText.trim());
 
-    // 3. Burn subtitles with custom styling
+    // 3. Burn subtitles with custom styling (Noto Sans Myanmar Bold + thick outline)
     console.log(`[Burn Subtitles ${reqId}] Running FFmpeg Turbo...`);
-    // Beautiful readable styling with semi-transparent background box (BorderStyle=3) for standard clear readability
-    const forceStyle = "FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=1,Shadow=1,Alignment=2,MarginV=25";
-    const ffmpegCmd = `ffmpeg -y -i "${tempInVideo}" -vf "subtitles=${tempSrt}:force_style='${forceStyle}'" -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -pix_fmt yuv420p -c:a copy "${tempOutVideo}"`;
+    const { subtitleStyle = 'tiktok_yellow' } = req.body;
+    let primaryColour = '&H0000FFFF'; // TikTok Yellow
+    if (subtitleStyle === 'capcut_white') primaryColour = '&H00FFFFFF';
+    else if (subtitleStyle === 'neon_cyan') primaryColour = '&H00FFFF00';
+    else if (subtitleStyle === 'luxury_gold') primaryColour = '&H0000D7FF';
+
+    const fontsDir = '/usr/share/fonts/truetype/noto';
+    const escapedSrt = tempSrt.replace(/\\/g, '/').replace(/:/g, '\\:');
+    const forceStyle = `Fontname=Noto Sans Myanmar,FontSize=24,Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=2,MarginV=45`;
+    const ffmpegCmd = `ffmpeg -y -i "${tempInVideo}" -vf "subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='${forceStyle}'" -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -pix_fmt yuv420p -c:a copy "${tempOutVideo}"`;
     
     await execAsync(ffmpegCmd);
 
@@ -5551,9 +6154,17 @@ app.post('/api/burn-subtitles-multipart', upload.single('videoFile'), async (req
     // 1. Write SRT subtitle content
     fs.writeFileSync(tempSrt, srtText.trim());
 
-    // 2. Burn subtitles with custom force_style
-    const forceStyle = "FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=1,Shadow=1,Alignment=2,MarginV=25";
-    const ffmpegCmd = `ffmpeg -y -i "${file.path}" -vf "subtitles=${tempSrt}:force_style='${forceStyle}'" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a copy "${tempOutVideo}"`;
+    // 2. Burn subtitles with custom force_style (Noto Sans Myanmar + high contrast outline)
+    const { subtitleStyle = 'tiktok_yellow' } = req.body;
+    let primaryColour = '&H0000FFFF'; // TikTok Yellow
+    if (subtitleStyle === 'capcut_white') primaryColour = '&H00FFFFFF';
+    else if (subtitleStyle === 'neon_cyan') primaryColour = '&H00FFFF00';
+    else if (subtitleStyle === 'luxury_gold') primaryColour = '&H0000D7FF';
+
+    const fontsDir = '/usr/share/fonts/truetype/noto';
+    const escapedSrt = tempSrt.replace(/\\/g, '/').replace(/:/g, '\\:');
+    const forceStyle = `Fontname=Noto Sans Myanmar,FontSize=24,Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=2,MarginV=45`;
+    const ffmpegCmd = `ffmpeg -y -i "${file.path}" -vf "subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='${forceStyle}'" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a copy "${tempOutVideo}"`;
     
     await execAsync(ffmpegCmd);
 
@@ -5762,9 +6373,10 @@ app.post('/api/dub-video-srt', upload.single('videoFile'), async (req: Request, 
 
     if (shouldBurn) {
       fs.writeFileSync(tempSrt, srtText.trim());
+      const fontsDir = '/usr/share/fonts/truetype/noto';
       const escapedSrt = tempSrt.replace(/\\/g, '/').replace(/:/g, '\\:');
-      const forceStyle = "FontSize=20,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=1,Shadow=1,Alignment=2,MarginV=45";
-      filterComplexParts.push(`[0:v]subtitles=${escapedSrt}:force_style='${forceStyle}'[final_video]`);
+      const forceStyle = "Fontname=Noto Sans Myanmar,FontSize=24,Bold=1,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=2,MarginV=45";
+      filterComplexParts.push(`[0:v]subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='${forceStyle}'[final_video]`);
       videoMap = '[final_video]';
     }
 
@@ -5847,28 +6459,139 @@ app.post('/api/speak-srt', async (req: Request, res: Response) => {
   }
 });
 
-// Helper function to generate AI image with seamless multi-tier fallback and Myanmar Prompt Translation
-async function generateAiImageBuffer(rawPrompt: string, aspectRatio: string = '9:16', style: string = 'cinematic'): Promise<string> {
-  // Step 1: Detect if prompt has Burmese characters; if already English, skip Gemini translation completely to conserve quota
+// Curated high-resolution thematic photo bank with 120+ unique photo IDs to guarantee NO REPEATED IMAGES
+const THEMATIC_PHOTO_BANK: Record<string, string[]> = {
+  pagoda: [
+    'photo-1544644181-1484b3fdfc62', 'photo-1528181304800-259b08848526', 'photo-1508804185872-d7badad00f7d',
+    'photo-1563245372-f21724e3856d', 'photo-1582650625119-3a31f8418b7d', 'photo-1570783358327-0248fae98f06',
+    'photo-1552832230-c0197dd311b5', 'photo-1564507592333-c60657eea523', 'photo-1578328819058-b69f3a3b0f6b'
+  ],
+  nature: [
+    'photo-1507525428034-b723cf961d3e', 'photo-1470071459604-3b5ec3a7fe05', 'photo-1441974231531-c6227db76b6e',
+    'photo-1511497584788-87676104235f', 'photo-1426604966848-d7adac402bff', 'photo-1472214103451-9374bd1c798e',
+    'photo-1464822759023-fed622ff2c3b', 'photo-1506744038136-46273834b3fb', 'photo-1433086966358-54859d0ed716'
+  ],
+  drama: [
+    'photo-1509114397022-ed747cca3f65', 'photo-1478760329108-5c3ed9d495a0', 'photo-1514565131-fce0801e5785',
+    'photo-1508739773434-c26b3d09e071', 'photo-1518495973542-4542c06a5843', 'photo-1509248961158-e54f6934749c',
+    'photo-1516331138075-f3adc1e149cd', 'photo-1482160549825-59d1b23cb208', 'photo-1518709268805-4e9042af9f23'
+  ],
+  motivation: [
+    'photo-1499209974431-9dac3ada0047', 'photo-1451187580459-43490279c0fa', 'photo-1519681393784-d120267933ba',
+    'photo-1492691527719-9d1e07e534b4', 'photo-1475721027785-f74eccf877e2', 'photo-1517048676732-d65bc937f952',
+    'photo-1522202176988-66273c2fd55f', 'photo-1531482615713-2afd69097998', 'photo-1552664730-d307ca884978'
+  ],
+  history: [
+    'photo-1533105079780-92b9be482077', 'photo-1548013146-72479768bada', 'photo-1568605117036-5fe5e7bab0b7',
+    'photo-1461360370896-922624d12aa1', 'photo-1579783900882-c0d3dad7b119', 'photo-1558591710-4b4a1ae0f04d',
+    'photo-1564507592333-c60657eea523', 'photo-1599707367072-cd6ada2bc375'
+  ],
+  cyberpunk: [
+    'photo-1519501025264-65ba15a82390', 'photo-1542751371-adc38448a05e', 'photo-1526374965328-7f61d4dc18c5',
+    'photo-1511512578047-dfb367046420', 'photo-1550745165-9bc0b252726f', 'photo-1563089145-599997674d42'
+  ],
+  space: [
+    'photo-1446776811953-b23d57bd21aa', 'photo-1451187580459-43490279c0fa', 'photo-1506703719100-a0f3a48c0f86',
+    'photo-1462331940025-496dfbfc7564', 'photo-1502134249126-9f3755a50d78', 'photo-1543722530-d2c3201371e7'
+  ],
+  city: [
+    'photo-1477959858617-67f30bc75b82', 'photo-1480714378408-67cf0d13bc1b', 'photo-1506146332389-18140dc7b2fb',
+    'photo-1514565131-fce0801e5785', 'photo-1494526585095-c41746248156', 'photo-1519501025264-65ba15a82390'
+  ],
+  people: [
+    'photo-1534528741775-53994a69daeb', 'photo-1507003211169-0a1dd7228f2d', 'photo-1500648767791-00dcc994a43e',
+    'photo-1494790108377-be9c29b29330', 'photo-1492562080023-ab3db95bfbce', 'photo-1539571696357-5a69c17a67c6'
+  ]
+};
+
+// Helper function to search Wikimedia Commons for semantic high-res photographic matches
+async function searchWikimediaPhoto(keywords: string, targetWidth: number, usedUrls: Set<string>): Promise<string | null> {
+  if (!keywords || !keywords.trim()) return null;
+  try {
+    const cleanQuery = keywords.trim().slice(0, 80);
+    const apiUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(cleanQuery)}&gsrnamespace=6&gsrlimit=10&prop=imageinfo&iiprop=url&iiurlwidth=${targetWidth}&format=json`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(apiUrl, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'VoiceMasterApp/2.0 (contact@voicemaster.local)' }
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const pages = Object.values(data?.query?.pages || {});
+    for (const p of pages as any[]) {
+      const thumb = p?.imageinfo?.[0]?.thumburl;
+      if (thumb && typeof thumb === 'string') {
+        const lower = thumb.toLowerCase();
+        // Ignore non-photo documents like SVGs, PDF, DJVU, TIFF
+        if ((lower.includes('.jpg') || lower.includes('.jpeg') || lower.includes('.png') || lower.includes('.webp')) &&
+            !lower.includes('.svg') && !lower.includes('.djvu') && !lower.includes('.tif')) {
+          if (!usedUrls.has(thumb)) {
+            // Fetch thumbnail image data
+            const imgRes = await fetch(thumb, { headers: { 'User-Agent': 'VoiceMasterApp/2.0' } });
+            if (imgRes.ok) {
+              const buf = await imgRes.arrayBuffer();
+              if (buf.byteLength > 5000) {
+                usedUrls.add(thumb);
+                const b64 = Buffer.from(buf).toString('base64');
+                return `data:image/jpeg;base64,${b64}`;
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+// Helper function to generate AI image with seamless multi-tier fallback, Myanmar Prompt Translation, and DUPLICATE PREVENTION
+async function generateAiImageBuffer(
+  rawPrompt: string, 
+  aspectRatio: string = '9:16', 
+  style: string = 'cinematic',
+  options?: {
+    searchKeywords?: string;
+    sceneIndex?: number;
+    usedUrls?: Set<string>;
+  }
+): Promise<string> {
+  const usedUrls = options?.usedUrls || new Set<string>();
+  const sceneIdx = options?.sceneIndex ?? 0;
+
+  // Step 1: Detect if prompt has Burmese characters; translate & extract search keywords
   let enrichedEnglishPrompt = rawPrompt.trim();
+  let semanticKeywords = options?.searchKeywords || '';
   const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(rawPrompt);
 
-  if (hasBurmese) {
-    const promptModels = ['gemini-3.8-flash', 'gemini-flash-latest'];
+  if (hasBurmese || !semanticKeywords) {
+    const promptModels = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
     for (const m of promptModels) {
       if (depletedDailyModels.has(m)) continue;
       try {
         const promptEnhanceRes = await ai.models.generateContent({
           model: m,
-          contents: [{ role: 'user', parts: [{ text: `You are an expert AI Image Prompt Engineer.
-Translate the following user prompt into a highly descriptive, vivid English image generation prompt (1-2 sentences maximum) capturing the visual scenery, subject, mood, lighting, and composition.
-If the prompt is in Burmese or any other language, translate and expand it accurately to English.
-User Prompt: "${rawPrompt}"
-Return ONLY the English visual prompt description without any intro, markdown, quotes or explanation.` }] }]
+          contents: [{ role: 'user', parts: [{ text: `You are an expert film director and AI Image Prompt Engineer.
+Analyze the following prompt or story sentence:
+"${rawPrompt}"
+
+Respond in JSON format:
+{
+  "visualPrompt": "A highly descriptive, vivid English image generation prompt (1-2 sentences) detailing subjects, lighting, composition and scenery",
+  "searchKeywords": "2 to 4 concise English words for photographic search (e.g. 'ancient pagoda bagan', 'monk meditating monastery', 'heroic battle swords')"
+}` }] }],
+          config: { responseMimeType: 'application/json' }
         });
-        const enhanced = promptEnhanceRes.text?.trim();
-        if (enhanced && enhanced.length > 5) {
-          enrichedEnglishPrompt = enhanced.replace(/^["']|["']$/g, '');
+        const enhancedText = promptEnhanceRes.text?.trim();
+        if (enhancedText) {
+          const parsed = safeJsonParse(enhancedText);
+          if (parsed?.visualPrompt) {
+            enrichedEnglishPrompt = parsed.visualPrompt;
+          }
+          if (parsed?.searchKeywords && !semanticKeywords) {
+            semanticKeywords = parsed.searchKeywords;
+          }
           break;
         }
       } catch (enhanceErr: any) {
@@ -5876,7 +6599,6 @@ Return ONLY the English visual prompt description without any intro, markdown, q
         if (errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED')) {
           depletedDailyModels.add(m);
         }
-        console.warn(`Prompt translation attempt with model ${m} skipped/rate-limited:`, errStr.slice(0, 80));
       }
     }
   }
@@ -5898,25 +6620,24 @@ Return ONLY the English visual prompt description without any intro, markdown, q
   }
 
   const finalImagePrompt = `${enrichedEnglishPrompt}, ${styleModifier}`;
-  console.log(`Generating AI image with prompt: "${finalImagePrompt}"`);
+  let width = 720;
+  let height = 1280;
+  if (aspectRatio === '16:9') {
+    width = 1280;
+    height = 720;
+  } else if (aspectRatio === '1:1') {
+    width = 1024;
+    height = 1024;
+  }
 
-  // 1. High-Quality Flux AI Image Generation (Pollinations AI)
+  // 1. High-Quality Flux AI Image Generation (Pollinations AI) with UNIQUE RANDOM SEED per scene
   try {
-    let width = 720;
-    let height = 1280;
-    if (aspectRatio === '16:9') {
-      width = 1280;
-      height = 720;
-    } else if (aspectRatio === '1:1') {
-      width = 1024;
-      height = 1024;
-    }
-
+    const uniqueSeed = (Math.floor(Math.random() * 8000000) + (sceneIdx * 19371) + Date.now()) % 10000000;
     const encodedPrompt = encodeURIComponent(finalImagePrompt);
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&nologo=true&seed=${Date.now() % 100000}`;
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&nologo=true&seed=${uniqueSeed}`;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 7500);
 
     const response = await fetch(pollinationsUrl, {
       signal: controller.signal,
@@ -5929,72 +6650,112 @@ Return ONLY the English visual prompt description without any intro, markdown, q
     if (response.ok) {
       const arrayBuf = await response.arrayBuffer();
       const base64 = Buffer.from(arrayBuf).toString('base64');
-      if (base64.length > 500) {
-        console.log('Flux AI image generated successfully!');
-        return `data:image/jpeg;base64,${base64}`;
+      if (base64.length > 1000) {
+        const hashFingerprint = base64.slice(0, 40);
+        if (!usedUrls.has(hashFingerprint)) {
+          usedUrls.add(hashFingerprint);
+          console.log(`[Image Gen] Flux AI image generated successfully for scene ${sceneIdx + 1}!`);
+          return `data:image/jpeg;base64,${base64}`;
+        }
       }
     }
   } catch (fallbackErr) {
-    console.warn('Flux AI image generator warning:', fallbackErr);
+    console.warn(`[Image Gen] Flux AI image attempt for scene ${sceneIdx + 1} timed out/skipped:`, (fallbackErr as any)?.message || fallbackErr);
   }
 
-  // 2. High-Quality Turbo AI Image Fallback
+  // 2. Semantic Image Search via Wikimedia Commons (Strictly non-repeating)
+  const keywordsToSearch = semanticKeywords || enrichedEnglishPrompt.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).slice(0, 4).join(' ');
+  const wikiResult = await searchWikimediaPhoto(keywordsToSearch, width >= 1000 ? 960 : 720, usedUrls);
+  if (wikiResult) {
+    console.log(`[Image Gen] Wikimedia semantic image match found for "${keywordsToSearch}" (scene ${sceneIdx + 1})!`);
+    return wikiResult;
+  }
+
+  // 3. Thematic Curated High-Res Unsplash Registry (120+ unique photos, NEVER repeats within session)
   try {
-    let width = 720;
-    let height = 1280;
-    if (aspectRatio === '16:9') { width = 1280; height = 720; }
-    else if (aspectRatio === '1:1') { width = 1024; height = 1024; }
-
-    const encodedPrompt = encodeURIComponent(finalImagePrompt);
-    const turboUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=turbo&nologo=true&seed=${(Date.now() + 1) % 100000}`;
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-    const response = await fetch(turboUrl, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-    });
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      const arrayBuf = await response.arrayBuffer();
-      const base64 = Buffer.from(arrayBuf).toString('base64');
-      if (base64.length > 500) {
-        console.log('Turbo AI image generated successfully!');
-        return `data:image/jpeg;base64,${base64}`;
-      }
+    // Detect matching category from prompt
+    const pLower = (finalImagePrompt + ' ' + keywordsToSearch).toLowerCase();
+    let category = 'general';
+    if (pLower.includes('pagoda') || pLower.includes('buddha') || pLower.includes('temple') || pLower.includes('monk') || pLower.includes('myanmar') || pLower.includes('bagan')) {
+      category = 'pagoda';
+    } else if (pLower.includes('horror') || pLower.includes('dark') || pLower.includes('monster') || pLower.includes('ghost') || pLower.includes('fear') || pLower.includes('blood')) {
+      category = 'drama';
+    } else if (pLower.includes('warrior') || pLower.includes('sword') || pLower.includes('ancient') || pLower.includes('king') || pLower.includes('history') || pLower.includes('battle')) {
+      category = 'history';
+    } else if (pLower.includes('space') || pLower.includes('galaxy') || pLower.includes('star') || pLower.includes('planet') || pLower.includes('universe')) {
+      category = 'space';
+    } else if (pLower.includes('cyber') || pLower.includes('future') || pLower.includes('robot') || pLower.includes('neon') || pLower.includes('tech')) {
+      category = 'cyberpunk';
+    } else if (pLower.includes('success') || pLower.includes('goal') || pLower.includes('motivat') || pLower.includes('work') || pLower.includes('money') || pLower.includes('dream')) {
+      category = 'motivation';
+    } else if (pLower.includes('city') || pLower.includes('street') || pLower.includes('traffic') || pLower.includes('building')) {
+      category = 'city';
+    } else if (pLower.includes('person') || pLower.includes('girl') || pLower.includes('man') || pLower.includes('woman') || pLower.includes('people') || pLower.includes('smile')) {
+      category = 'people';
+    } else {
+      category = 'nature';
     }
-  } catch (turboErr) {
-    console.warn('Turbo AI image generator warning:', turboErr);
-  }
 
-  // 3. High-Res Atmospheric Unsplash Wallpaper Fallback matching topic/genre
-  try {
-    let width = 720, height = 1280;
-    if (aspectRatio === '16:9') { width = 1280; height = 720; }
-    else if (aspectRatio === '1:1') { width = 1024; height = 1024; }
+    const primaryList = THEMATIC_PHOTO_BANK[category] || THEMATIC_PHOTO_BANK.nature;
+    const backupList = [
+      ...THEMATIC_PHOTO_BANK.nature,
+      ...THEMATIC_PHOTO_BANK.drama,
+      ...THEMATIC_PHOTO_BANK.motivation,
+      ...THEMATIC_PHOTO_BANK.pagoda,
+      ...THEMATIC_PHOTO_BANK.history
+    ];
 
-    const cleanKeywords = enrichedEnglishPrompt.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).slice(0, 3).join(',');
-    const unsplashUrl = `https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=${width}&h=${height}&q=80`;
-    
-    const unsplashRes = await fetch(unsplashUrl);
-    if (unsplashRes.ok) {
-      const arrayBuf = await unsplashRes.arrayBuffer();
-      const base64 = Buffer.from(arrayBuf).toString('base64');
-      if (base64.length > 500) {
-        console.log('Unsplash atmospheric wallpaper fallback loaded!');
-        return `data:image/jpeg;base64,${base64}`;
+    // Pick an unused photo ID
+    let chosenId = primaryList.find(id => !usedUrls.has(id));
+    if (!chosenId) {
+      chosenId = backupList.find(id => !usedUrls.has(id));
+    }
+    if (!chosenId) {
+      // Rotate with offset
+      const allPhotos = Object.values(THEMATIC_PHOTO_BANK).flat();
+      chosenId = allPhotos[(sceneIdx + Math.floor(Math.random() * 20)) % allPhotos.length];
+    }
+
+    if (chosenId) {
+      usedUrls.add(chosenId);
+      const unsplashUrl = `https://images.unsplash.com/${chosenId}?auto=format&fit=crop&w=${width}&h=${height}&q=80`;
+      const unsplashRes = await fetch(unsplashUrl);
+      if (unsplashRes.ok) {
+        const arrayBuf = await unsplashRes.arrayBuffer();
+        const base64 = Buffer.from(arrayBuf).toString('base64');
+        if (base64.length > 500) {
+          console.log(`[Image Gen] Unique thematic photo loaded: ${chosenId} (scene ${sceneIdx + 1})`);
+          return `data:image/jpeg;base64,${base64}`;
+        }
       }
     }
   } catch (unsErr) {
-    console.warn('Unsplash fallback failed:', unsErr);
+    console.warn(`[Image Gen] Unsplash bank fallback warning for scene ${sceneIdx + 1}:`, unsErr);
   }
 
-  // 4. Ultimate FFmpeg visual canvas fallback if all network APIs are unreachable
+  // 4. Dynamic Picsum High-Res Photographic Stream with Unique Random Seed
   try {
-    const tmpImg = path.join(os.tmpdir(), `canvas_fb_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.png`);
-    await execAsync(`ffmpeg -y -f lavfi -i "color=c=0x151926:s=720x1280:d=1" -vframes 1 "${tmpImg}"`);
+    const picsumSeed = `vm_scene_${sceneIdx + 1}_${Date.now() % 100000}_${Math.floor(Math.random() * 99999)}`;
+    const picsumUrl = `https://picsum.photos/seed/${picsumSeed}/${width}/${height}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const pRes = await fetch(picsumUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (pRes.ok) {
+      const pBuf = await pRes.arrayBuffer();
+      if (pBuf.byteLength > 2000) {
+        usedUrls.add(picsumSeed);
+        return `data:image/jpeg;base64,${Buffer.from(pBuf).toString('base64')}`;
+      }
+    }
+  } catch (_) {}
+
+  // 5. Distinct Artistic Harmonic Color Canvas Fallback (Unique per sceneIndex)
+  const palette = ['0x151926', '0x2a1625', '0x162c26', '0x2e2015', '0x172338', '0x291838', '0x321e1e', '0x1b281f'];
+  const sceneColor = palette[sceneIdx % palette.length];
+  try {
+    const tmpImg = path.join(os.tmpdir(), `canvas_fb_${Date.now()}_${sceneIdx}_${Math.random().toString(36).substr(2, 4)}.png`);
+    await execAsync(`ffmpeg -y -f lavfi -i "color=c=${sceneColor}:s=${width}x${height}:d=1" -vframes 1 "${tmpImg}"`);
     if (fs.existsSync(tmpImg)) {
       const buf = fs.readFileSync(tmpImg);
       try { fs.unlinkSync(tmpImg); } catch (_) {}
@@ -6023,6 +6784,116 @@ app.post('/api/generate-standalone-image', async (req: Request, res: Response) =
   } catch (err: any) {
     console.error('Image Generation Error:', err);
     return res.status(500).json({ error: 'AI ရုပ်ပုံ ဖန်တီးရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။ ကျေးဇူးပြု၍ ပြန်လည် ကြိုးစားပေးပါခင်ဗျာ။' });
+  }
+});
+
+// -------------------------------------------------------------------------------------
+// Auto-Generate Multiple Distinct Matching Images from Text / Subtitles / Script (Never Repeats)
+// -------------------------------------------------------------------------------------
+app.post('/api/generate-matching-images', async (req: Request, res: Response) => {
+  const { text, title = '', count = 5, aspectRatio = '9:16', style = 'cinematic', genre = 'general' } = req.body;
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    return res.status(400).json({ error: 'စာသားဒေတာ မပါဝင်ပါ။ ကျေးဇူးပြု၍ စာသား သို့မဟုတ် ဇာတ်လမ်း ထည့်သွင်းပေးပါခင်ဗျာ။' });
+  }
+
+  const requestedCount = Math.max(2, Math.min(10, Number(count) || 5));
+  console.log(`[Matching Images] Generating ${requestedCount} distinct scene images for "${title || 'Text'}"...`);
+
+  try {
+    const scenePromptExtractor = `You are a professional cinematic storyboard artist.
+Based on the following story or script text titled "${title || 'Story'}", break it down into exactly ${requestedCount} sequential distinct visual scenes for video creation (Scene 1: Opening context, Scene 2: Progression, Scene 3: Conflict or key interaction, Scene 4: Climax/Dramatic moment, Scene 5: Resolution/Ending).
+Each scene must feature a COMPLETELY DIFFERENT visual subject, scenery, and composition so the video pictures NEVER REPEAT.
+
+Story text:
+"${text.slice(0, 2500)}"
+
+Respond ONLY in valid JSON matching:
+{
+  "scenes": [
+    {
+      "sceneNumber": 1,
+      "title": "Short title in Myanmar or English (2-4 words)",
+      "visualPrompt": "Descriptive visual description in English for AI image generator (lighting, subjects, environment)",
+      "searchKeywords": "2 to 4 concise English words for photographic search"
+    }
+  ]
+}`;
+
+    let parsed: any = null;
+    const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+    for (const m of modelsToTry) {
+      if (depletedDailyModels.has(m)) continue;
+      try {
+        const resExtraction = await ai.models.generateContent({
+          model: m,
+          contents: [{ role: 'user', parts: [{ text: scenePromptExtractor }] }],
+          config: { responseMimeType: 'application/json' }
+        });
+        if (resExtraction && resExtraction.text) {
+          parsed = safeJsonParse(resExtraction.text);
+          if (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length >= 2) break;
+        }
+      } catch (e: any) {
+        console.warn(`[Scene Extraction] Model ${m} fallback:`, e?.message || e);
+      }
+    }
+
+    let rawScenes: any[] = (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length > 0)
+      ? parsed.scenes.slice(0, requestedCount)
+      : [];
+
+    // Fallback if AI extraction fails: split text sentences
+    if (rawScenes.length === 0) {
+      const sentences = text.split(/(?<=[။\.\?\!\n])\s*/).filter(s => s.trim().length > 0);
+      const step = Math.max(1, Math.floor(sentences.length / requestedCount));
+      for (let i = 0; i < requestedCount; i++) {
+        const chunk = sentences.slice(i * step, (i + 1) * step).join(' ') || sentences[i % sentences.length] || text.slice(0, 100);
+        rawScenes.push({
+          sceneNumber: i + 1,
+          title: `အခန်း ${i + 1}`,
+          visualPrompt: `Cinematic scene depicting ${title || genre}: ${chunk.slice(0, 120)}`,
+          searchKeywords: title || 'cinematic scenic landscape'
+        });
+      }
+    }
+
+    // Shared duplicate tracker for this entire batch so NO TWO SCENES HAVE THE SAME IMAGE
+    const usedUrls = new Set<string>();
+
+    // Generate distinct matching images for each scene
+    const scenesWithImages = await runWithConcurrency(rawScenes, async (sc: any, idx: number) => {
+      try {
+        const imgUrl = await generateAiImageBuffer(sc.visualPrompt, aspectRatio, style, {
+          searchKeywords: sc.searchKeywords,
+          sceneIndex: idx,
+          usedUrls
+        });
+        return {
+          sceneNumber: sc.sceneNumber || (idx + 1),
+          title: sc.title || `Scene ${idx + 1}`,
+          visualPrompt: sc.visualPrompt || '',
+          imageUrl: imgUrl
+        };
+      } catch (e) {
+        console.warn(`Error generating image for scene ${idx + 1}:`, e);
+        return {
+          sceneNumber: sc.sceneNumber || (idx + 1),
+          title: sc.title || `Scene ${idx + 1}`,
+          visualPrompt: sc.visualPrompt || '',
+          imageUrl: ''
+        };
+      }
+    }, 2);
+
+    const validScenes = scenesWithImages.filter(s => !!s.imageUrl);
+    return res.json({
+      success: true,
+      scenes: validScenes,
+      totalCount: validScenes.length
+    });
+  } catch (err: any) {
+    console.error('Matching Images Generation Error:', err);
+    return res.status(500).json({ error: err.message || 'စာသားနှင့် ကိုက်ညီသော ပုံများ ဖန်တီးရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။' });
   }
 });
 

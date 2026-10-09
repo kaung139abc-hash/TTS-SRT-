@@ -19,6 +19,8 @@ export interface InterpretMessage {
   targetLang: string;
   originalTranscript: string;
   translatedText: string;
+  phoneticGuide?: string;
+  speakingTip?: string;
   audioUrl?: string;
   timestamp: string;
 }
@@ -839,6 +841,8 @@ export const App: React.FC = () => {
   const [videoBgImages, setVideoBgImages] = useState<string[]>([]); // Base64 array of up to 10 background images
   const videoBgImage = videoBgImages[0] || '';
   const setVideoBgImage = (img: string) => setVideoBgImages(img ? [img] : []);
+  const [isMatchingImagesLoading, setIsMatchingImagesLoading] = useState(false);
+  const [matchingImagesNotice, setMatchingImagesNotice] = useState<string | null>(null);
   const [videoBurnSubtitles, setVideoBurnSubtitles] = useState(true);
   const [videoSubtitleSrt, setVideoSubtitleSrt] = useState('');
   const [videoSubtitleStyle, setVideoSubtitleStyle] = useState<'tiktok_yellow' | 'capcut_white' | 'neon_cyan' | 'luxury_gold'>('tiktok_yellow');
@@ -873,13 +877,26 @@ export const App: React.FC = () => {
   const [customSrtInput, setCustomSrtInput] = useState('');
 
   // ----------------------------------------------------
-  // New Studio State 3: Audio Speed & Pitch Shifter State
+  // New Studio State 3: Audio EQ, Speed & Pitch Modifier State (Unlimited Length)
   // ----------------------------------------------------
   const [shifterAudioData, setShifterAudioData] = useState('');
+  const [shifterRawFile, setShifterRawFile] = useState<File | null>(null);
+  const [shifterFileName, setShifterFileName] = useState('');
+  const [shifterSourceDuration, setShifterSourceDuration] = useState<number>(0);
   const [shifterSpeed, setShifterSpeed] = useState(1.0);
   const [shifterPitch, setShifterPitch] = useState(1.0);
+  const [shifterVolume, setShifterVolume] = useState(1.0);
+  const [shifterEqPreset, setShifterEqPreset] = useState('flat');
+  const [shifterBass, setShifterBass] = useState(0);
+  const [shifterLowMid, setShifterLowMid] = useState(0);
+  const [shifterMid, setShifterMid] = useState(0);
+  const [shifterHighMid, setShifterHighMid] = useState(0);
+  const [shifterTreble, setShifterTreble] = useState(0);
   const [isShifting, setIsShifting] = useState(false);
   const [shifterResultUrl, setShifterResultUrl] = useState('');
+  const [shifterDownloadUrl, setShifterDownloadUrl] = useState('');
+  const [shifterOutputDuration, setShifterOutputDuration] = useState<number>(0);
+  const [shifterOutputSize, setShifterOutputSize] = useState('');
   const [shifterError, setShifterError] = useState('');
 
   // ----------------------------------------------------
@@ -1004,6 +1021,7 @@ export const App: React.FC = () => {
   const [interpTextInput, setInterpTextInput] = useState('');
   const [interpTextInputSpeaker, setInterpTextInputSpeaker] = useState<'personA' | 'personB'>('personA');
   const [interpError, setInterpError] = useState('');
+  const [interpSpeed, setInterpSpeed] = useState<number>(1.0);
   const interpMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const interpAudioChunksRef = useRef<Blob[]>([]);
   const interpRecordTimerRef = useRef<any>(null);
@@ -1013,15 +1031,25 @@ export const App: React.FC = () => {
   const [translateTargetLang, setTranslateTargetLang] = useState('en');
   const [translateVoice, setTranslateVoice] = useState('en-US-AndrewMultilingualNeural');
   const [isTranslateLoading, setIsTranslateLoading] = useState(false);
+  const [isTranslateTranscribing, setIsTranslateTranscribing] = useState(false);
+  const [translateMicRecording, setTranslateMicRecording] = useState(false);
+  const [translateMicSec, setTranslateMicSec] = useState(0);
+  const translateMicMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const translateMicAudioChunksRef = useRef<Blob[]>([]);
+  const translateMicTimerRef = useRef<any>(null);
   const [translateResult, setTranslateResult] = useState<{
     originalText: string;
     translatedText: string;
+    phoneticGuide?: string;
+    speakingTip?: string;
     detectedSourceLang: string;
     targetLang?: string;
     voiceUsed?: string;
     audioUrl: string;
     characterCount: number;
   } | null>(null);
+  const [translateAudioSpeed, setTranslateAudioSpeed] = useState<number>(1.0);
+  const translateAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const [translateError, setTranslateError] = useState('');
 
   // ----------------------------------------------------
@@ -1069,6 +1097,59 @@ export const App: React.FC = () => {
     setVideoError('');
     setMainMode('video');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleAutoMatchVideoImages = async (customText?: string) => {
+    const textToMatch = (customText || videoSubtitleText || videoTitleText || ttsText).trim();
+    if (!textToMatch) {
+      alert('ကျေးဇူးပြု၍ ဗီဒီယိုခေါင်းစဉ် သို့မဟုတ် စာတန်းထိုး/ဇာတ်ညွှန်း စာသားကို အရင် ရိုက်ထည့်ပေးပါခင်ဗျာ။');
+      return;
+    }
+    setIsMatchingImagesLoading(true);
+    setMatchingImagesNotice(null);
+    try {
+      const res = await fetch('/api/generate-matching-images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: textToMatch,
+          title: videoTitleText || 'Video Scene',
+          count: 5,
+          aspectRatio: videoAspectRatio,
+          style: 'cinematic'
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.scenes || data.scenes.length === 0) {
+        throw new Error(data.error || 'ပုံများ ဖန်တီး၍ မရပါ');
+      }
+      const newImages = data.scenes.map((s: any) => s.imageUrl).filter(Boolean);
+      if (newImages.length > 0) {
+        setVideoBgImages(newImages);
+        setMatchingImagesNotice(`✨ စာသားနှင့် ကိုက်ညီသော AI ပုံ ${newImages.length} ပုံအား ပုံမထပ်စေဘဲ အလိုအလျောက် ရွေးချယ်ထည့်သွင်းပြီးပါပြီ!`);
+        setTimeout(() => setMatchingImagesNotice(null), 8000);
+      }
+    } catch (err: any) {
+      alert(err.message || 'ပုံများ ရွေးချယ်မှု မအောင်မြင်ပါ။');
+    } finally {
+      setIsMatchingImagesLoading(false);
+    }
+  };
+
+  const openVideoModalWithAutoMatching = async (audioUrl: string, title?: string, scriptText?: string) => {
+    setVideoAudioData(audioUrl);
+    setVideoTitleText(title || '');
+    setVideoSubtitleText(scriptText || '');
+    setVideoBgImages([]);
+    setVideoResultUrl('');
+    setVideoError('');
+    setMainMode('video');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (scriptText || title) {
+      setTimeout(() => {
+        handleAutoMatchVideoImages(scriptText || title);
+      }, 350);
+    }
   };
 
   const handleGenerateMP4Video = async () => {
@@ -1257,6 +1338,7 @@ export const App: React.FC = () => {
   const [storyImagesError, setStoryImagesError] = useState('');
   const [isStoryVideoLoading, setIsStoryVideoLoading] = useState(false);
   const [storyVideoUrl, setStoryVideoUrl] = useState('');
+  const [storyVideoSrtText, setStoryVideoSrtText] = useState('');
   const [storyVideoError, setStoryVideoError] = useState('');
 
   // ----------------------------------------------------
@@ -1308,7 +1390,7 @@ export const App: React.FC = () => {
 
   // New Pro Features States
   const [voiceEffect, setVoiceEffect] = useState<'none' | 'echo' | 'deep' | 'radio'>('none');
-  const [enableSubtitles, setEnableSubtitles] = useState(false);
+  const [enableSubtitles, setEnableSubtitles] = useState(true);
   const [scriptTemplate, setScriptTemplate] = useState('none');
 
   const handleGenerateStandaloneImage = async (e?: React.FormEvent) => {
@@ -1807,6 +1889,7 @@ export const App: React.FC = () => {
       }
 
       setStoryVideoUrl(data.videoUrl);
+      if (data.srtText) setStoryVideoSrtText(data.srtText);
     } catch (err: any) {
       setStoryVideoError(err.message || 'ဗီဒီယို ဖန်တီးမှု မအောင်မြင်ပါ။');
     } finally {
@@ -2094,29 +2177,20 @@ export const App: React.FC = () => {
   };
 
   // ----------------------------------------------------
-  // New Studio Handlers 2: Speed & Pitch Shifter
+  // New Studio Handlers 2: Audio EQ, Speed & Pitch Shifter (Unlimited Length)
   // ----------------------------------------------------
   const handleShiftAudio = async () => {
-    if (!shifterAudioData) return;
+    if (!shifterAudioData && !shifterRawFile) return;
     setIsShifting(true);
     setShifterError('');
     setShifterResultUrl('');
+    setShifterDownloadUrl('');
 
     try {
       const formData = new FormData();
-      if (shifterAudioData.startsWith('data:audio') || shifterAudioData.includes('base64,')) {
-        const parts = shifterAudioData.split(',');
-        const mimeMatch = parts[0].match(/:(.*?);/);
-        const mime = mimeMatch ? mimeMatch[1] : 'audio/mp3';
-        const bstr = atob(parts[1]);
-        let n = bstr.length;
-        const u8arr = new Uint8Array(n);
-        while (n--) {
-          u8arr[n] = bstr.charCodeAt(n);
-        }
-        const audioBlob = new Blob([u8arr], { type: mime });
-        formData.append('audioFile', audioBlob, 'input.mp3');
-      } else if (shifterAudioData.startsWith('http') || shifterAudioData.startsWith('/')) {
+      if (shifterRawFile) {
+        formData.append('audioFile', shifterRawFile, shifterRawFile.name || 'input.mp3');
+      } else if (shifterAudioData.startsWith('blob:') || shifterAudioData.startsWith('http') || shifterAudioData.startsWith('/')) {
         try {
           const res = await fetch(shifterAudioData);
           const audioBlob = await res.blob();
@@ -2124,12 +2198,27 @@ export const App: React.FC = () => {
         } catch (_) {
           formData.append('audioUrl', shifterAudioData);
         }
+      } else if (shifterAudioData.startsWith('data:audio') || shifterAudioData.includes('base64,')) {
+        try {
+          const res = await fetch(shifterAudioData);
+          const audioBlob = await res.blob();
+          formData.append('audioFile', audioBlob, 'input.mp3');
+        } catch (_) {
+          formData.append('audioData', shifterAudioData);
+        }
       } else {
         formData.append('audioUrl', shifterAudioData);
       }
 
       formData.append('speed', String(shifterSpeed));
       formData.append('pitch', String(shifterPitch));
+      formData.append('volume', String(shifterVolume));
+      formData.append('preset', shifterEqPreset);
+      formData.append('bass', String(shifterBass));
+      formData.append('eqLowMid', String(shifterLowMid));
+      formData.append('mid', String(shifterMid));
+      formData.append('eqHighMid', String(shifterHighMid));
+      formData.append('treble', String(shifterTreble));
 
       const res = await fetch('/api/shift-audio', {
         method: 'POST',
@@ -2148,7 +2237,16 @@ export const App: React.FC = () => {
         throw new Error(data.error || 'အသံဖိုင် ပြောင်းလဲရာတွင် အမှားအယွင်း ရှိနေပါသည်။');
       }
 
-      setShifterResultUrl(data.audioUrl);
+      const finalAudioUrl = data.streamUrl || data.audioUrl;
+      setShifterResultUrl(finalAudioUrl);
+      setShifterDownloadUrl(data.downloadUrl || finalAudioUrl);
+      if (data.durationSec) {
+        setShifterOutputDuration(data.durationSec);
+      }
+      if (data.fileSizeBytes) {
+        setShifterOutputSize((data.fileSizeBytes / (1024 * 1024)).toFixed(2) + ' MB');
+      }
+      registerGenerationAndCheckAd('audio_modifier');
     } catch (err: any) {
       setShifterError(err.message || 'အသံ ပြောင်းလဲ၍ မရပါ။');
     } finally {
@@ -2459,6 +2557,81 @@ export const App: React.FC = () => {
     }
   };
 
+  const processTranscribeForTranslator = async (blob: Blob) => {
+    setIsTranslateTranscribing(true);
+    setTranslateError('');
+    try {
+      const formData = new FormData();
+      formData.append('audioFile', blob, `voice_${Date.now()}.webm`);
+      const res = await fetch('/api/transcribe-speech', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.transcript) {
+        setTranslateText(data.transcript);
+      } else {
+        setTranslateError(data.error || 'အသံကို တိကျစွာ ခွဲခြားနားလည်နိုင်ခြင်း မရှိပါ။');
+      }
+    } catch (e: any) {
+      setTranslateError(e.message || 'အသံဖမ်းယူမှု အမှား ဖြစ်ပေါ်သွားပါသည်။');
+    } finally {
+      setIsTranslateTranscribing(false);
+    }
+  };
+
+  const startTranslateMicRecording = async () => {
+    try {
+      setTranslateError('');
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('BROWSER_MIC_UNSUPPORTED');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true }
+      });
+      translateMicAudioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      translateMicMediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) translateMicAudioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(translateMicAudioChunksRef.current, { type: 'audio/webm' });
+        stream.getTracks().forEach((track) => track.stop());
+        if (blob.size > 100) {
+          await processTranscribeForTranslator(blob);
+        }
+      };
+
+      mediaRecorder.start(250);
+      setTranslateMicRecording(true);
+      setTranslateMicSec(0);
+      if (translateMicTimerRef.current) clearInterval(translateMicTimerRef.current);
+      translateMicTimerRef.current = setInterval(() => {
+        setTranslateMicSec((s) => s + 1);
+      }, 1000);
+    } catch (err: any) {
+      setTranslateError('မိုက်ခရိုဖုန်း အသုံးပြုခွင့် မရရှိပါ သို့မဟုတ် စက်တွင် မိုက်ခရိုဖုန်း မရှိပါ။');
+    }
+  };
+
+  const stopTranslateMicRecording = () => {
+    if (translateMicMediaRecorderRef.current && translateMicRecording) {
+      if (translateMicTimerRef.current) clearInterval(translateMicTimerRef.current);
+      setTranslateMicRecording(false);
+      translateMicMediaRecorderRef.current.stop();
+    }
+  };
+
+  const handleTranslateAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processTranscribeForTranslator(file);
+    }
+  };
+
   // ----------------------------------------------------
   // Live 2-Way Voice-to-Voice Interpreter Handlers
   // ----------------------------------------------------
@@ -2661,6 +2834,8 @@ export const App: React.FC = () => {
         targetLang: tLang,
         originalTranscript: data.originalTranscript,
         translatedText: data.translatedText,
+        phoneticGuide: data.phoneticGuide,
+        speakingTip: data.speakingTip,
         audioUrl: data.audioUrl,
         timestamp: new Date().toLocaleTimeString('my-MM', { hour: '2-digit', minute: '2-digit' })
       };
@@ -2671,6 +2846,7 @@ export const App: React.FC = () => {
       if (interpAutoPlay && data.audioUrl) {
         if (interpAudioPlayerRef.current) {
           interpAudioPlayerRef.current.src = data.audioUrl;
+          interpAudioPlayerRef.current.playbackRate = interpSpeed;
           interpAudioPlayerRef.current.play().catch(() => {});
         }
       }
@@ -2720,6 +2896,8 @@ export const App: React.FC = () => {
         targetLang: tLang,
         originalTranscript: data.originalTranscript,
         translatedText: data.translatedText,
+        phoneticGuide: data.phoneticGuide,
+        speakingTip: data.speakingTip,
         audioUrl: data.audioUrl,
         timestamp: new Date().toLocaleTimeString('my-MM', { hour: '2-digit', minute: '2-digit' })
       };
@@ -2731,6 +2909,7 @@ export const App: React.FC = () => {
       if (interpAutoPlay && data.audioUrl) {
         if (interpAudioPlayerRef.current) {
           interpAudioPlayerRef.current.src = data.audioUrl;
+          interpAudioPlayerRef.current.playbackRate = interpSpeed;
           interpAudioPlayerRef.current.play().catch(() => {});
         }
       }
@@ -3538,6 +3717,17 @@ export const App: React.FC = () => {
                     <button
                       onClick={() => {
                         const vName = voices.find(v => v.id === ttsResult.voiceUsed)?.name || 'VoiceMaster';
+                        openVideoModalWithAutoMatching(ttsResult.audioUrl, `${vName} ၏ ဇာတ်လမ်း`, ttsText.trim());
+                      }}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-pink-600/30 active:scale-95 transition-all"
+                    >
+                      <Sparkles className="w-4 h-4 text-pink-200" />
+                      <span>✨ စာသားနှင့် ပုံတွဲဖက် ဗီဒီယိုလုပ်မည် (ပုံမထပ်ပါ)</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        const vName = voices.find(v => v.id === ttsResult.voiceUsed)?.name || 'VoiceMaster';
                         openVideoModalForAudio(ttsResult.audioUrl, `${vName} ၏ ဇာတ်လမ်း`, ttsText.trim().slice(0, 200));
                       }}
                       className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-600/30 active:scale-95 transition-all"
@@ -4250,15 +4440,18 @@ export const App: React.FC = () => {
                             <option value="horror">Horror Vibe</option>
                           </select>
                         </div>
-                        <div className="flex items-center gap-2 pt-4">
+                        <div className="flex items-center gap-2 pt-3 bg-pink-500/10 px-3 py-1.5 rounded-lg border border-pink-500/20">
                           <input 
                             type="checkbox" 
                             id="sub_toggle"
                             checked={enableSubtitles} 
                             onChange={(e) => setEnableSubtitles(e.target.checked)}
-                            className="w-3.5 h-3.5 rounded border-white/10 bg-black/20 text-pink-500 focus:ring-pink-500" 
+                            className="w-4 h-4 rounded border-white/20 bg-black/40 text-pink-500 focus:ring-pink-500 cursor-pointer" 
                           />
-                          <label htmlFor="sub_toggle" className="text-[10px] font-bold text-slate-300 cursor-pointer">Auto Subtitles (စာတန်းထိုး)</label>
+                          <label htmlFor="sub_toggle" className="text-[11px] font-bold text-pink-300 cursor-pointer flex items-center gap-1">
+                            <span>✨ HD မြန်မာစာတန်းထိုး တိကျစွာထည့်မည်</span>
+                            <span className="text-[9px] bg-pink-500/30 text-white px-1.5 py-0.5 rounded font-normal">Auto Subtitles</span>
+                          </label>
                         </div>
                       </div>
 
@@ -4295,14 +4488,33 @@ export const App: React.FC = () => {
                           <CheckCircle2 className="w-4 h-4" />
                           <span>AI ဗီဒီယို အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ! (Download ဆွဲစရာမလိုဘဲ တိုက်ရိုက်ကြည့်ရှုနိုင်ပါပြီ)</span>
                         </span>
-                        <a
-                          href={storyVideoUrl}
-                          download={`AI_Story_Video_${Date.now()}.mp4`}
-                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95 transition-all"
-                        >
-                          <Download className="w-4 h-4" />
-                          <span>10x Turbo Download (.MP4)</span>
-                        </a>
+                        <div className="flex items-center gap-2">
+                          {storyVideoSrtText && (
+                            <button
+                              onClick={() => {
+                                const blob = new Blob([storyVideoSrtText], { type: 'text/plain;charset=utf-8' });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `Story_Subtitles_${Date.now()}.srt`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs flex items-center gap-1.5 border border-amber-500/30 active:scale-95 transition-all"
+                            >
+                              <FileText className="w-4 h-4 text-amber-400" />
+                              <span>SRT Download</span>
+                            </button>
+                          )}
+                          <a
+                            href={storyVideoUrl}
+                            download={`AI_Story_Video_${Date.now()}.mp4`}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95 transition-all"
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>10x Turbo Download (.MP4)</span>
+                          </a>
+                        </div>
                       </div>
 
                       <div className="aspect-[9/16] max-h-[480px] w-full mx-auto bg-black rounded-xl overflow-hidden border border-white/10 relative shadow-2xl flex items-center justify-center">
@@ -4652,6 +4864,44 @@ export const App: React.FC = () => {
                           )}
                         </div>
                       </div>
+
+                      {/* AI Matching Scene Images Generator (Strictly non-repeating) */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 p-3 rounded-xl bg-gradient-to-r from-purple-950/60 via-indigo-950/40 to-[#0e111a] border border-purple-500/35 shadow-inner">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                            <Sparkles className="w-3.5 h-3.5 text-pink-400 animate-pulse" />
+                            <span>✨ စာသားနှင့် ကိုက်ညီသော AI နောက်ခံပုံများ (Auto-Match Scenes)</span>
+                          </div>
+                          <p className="text-[10px] text-slate-300">
+                            ဗီဒီယိုခေါင်းစဉ်နှင့် စာတန်းထိုး/ဇာတ်လမ်း စာသားအလိုက် ပုံမထပ်စေဘဲ ၅ ပုံ အလိုအလျောက် ရွေးချယ်ဖန်တီးပေးပါမည်
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleAutoMatchVideoImages()}
+                          disabled={isMatchingImagesLoading}
+                          className="px-3.5 py-2 rounded-lg bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-md shadow-purple-600/30 active:scale-95 transition-all disabled:opacity-50 shrink-0"
+                        >
+                          {isMatchingImagesLoading ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>ပုံများ ရွေးချယ်နေသည်...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Wand2 className="w-3.5 h-3.5 text-pink-200" />
+                              <span>✨ စာသားနှင့် ပုံများ ရွေးမည် (ပုံမထပ်ပါ)</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {matchingImagesNotice && (
+                        <div className="p-2.5 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>{matchingImagesNotice}</span>
+                        </div>
+                      )}
 
                       {/* Image Upload Input Box */}
                       {videoBgImages.length < 10 && (
@@ -6028,28 +6278,71 @@ export const App: React.FC = () => {
         {/* ========================================================================= */}
         {mainMode === 'audioModifier' && (
           <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="bg-[#151926] border border-amber-500/20 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-6">
-              <div className="border-b border-white/10 pb-4">
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
-                  <Sliders className="w-5 h-5 text-amber-400" />
-                  <span>🎛️ Audio Speed & Pitch Modifier Studio</span>
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  အသံဖိုင်၏ မြန်နှုန်း (Speed) နှင့် အသံအနိမ့်အမြင့် (Pitch) ကို ကိုယ်တိုင်စိတ်ကြိုက် ချိန်ညှိပြီး TikTok ဟာသသံ သို့မဟုတ် စိတ်ဝင်စားဖွယ် Voice Tuning များ ပြုလုပ်နိုင်ပါသည်
-                </p>
+            <div className="bg-[#151926] border border-amber-500/25 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-6">
+              {/* Header with Unlimited Length & Capabilities Badge */}
+              <div className="border-b border-white/10 pb-5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-600 to-orange-500 flex items-center justify-center text-white shadow-lg shadow-amber-500/20">
+                      <Sliders className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                        <span>🎛️ Audio EQ, Speed & Pitch Master Studio</span>
+                      </h2>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        အသံဖိုင် ဘယ်လောက်ရှည်ရှည် (Unlimited Length) အသံအရည်အသွေး မကျဘဲ 5-Band Equalizer ချိန်ညှိခြင်း၊ Speed အမြန်နှုန်း၊ Pitch အသံအမြင့်အနိမ့် နှင့် Volume Boost များကို အကန့်အသတ်မရှိ ထုတ်လုပ်နိုင်ပါသည်
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Feature highlights bar */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
+                  <div className="p-2 rounded-xl bg-[#0a0d16] border border-emerald-500/25 flex items-center gap-2 text-[11px] text-emerald-300 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>အသံကြာချိန် အကန့်အသတ်မရှိ (Unlimited)</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-[#0a0d16] border border-amber-500/25 flex items-center gap-2 text-[11px] text-amber-300 font-bold">
+                    <Sliders className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>5-Band Graphic Equalizer + Presets</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-[#0a0d16] border border-cyan-500/25 flex items-center gap-2 text-[11px] text-cyan-300 font-bold">
+                    <Zap className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <span>0.25x – 3.0x Smooth Speed Engine</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-[#0a0d16] border border-indigo-500/25 flex items-center gap-2 text-[11px] text-indigo-300 font-bold">
+                    <Volume2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <span>300% Clear Master Volume Booster</span>
+                  </div>
+                </div>
               </div>
 
-              <div className="space-y-5">
-                {/* Audio upload box */}
-                <div className="p-4 bg-[#0d101d] rounded-xl border border-white/5 space-y-3">
-                  <label className="text-xs font-bold text-slate-300 block">အသံဖိုင် ရွေးချယ်ပါ (MP3 / WAV သို့မဟုတ် ဖန်တီးပြီးသား အသံ):</label>
+              <div className="space-y-6">
+                {/* 1. Audio Source Selection Box */}
+                <div className="p-4 sm:p-5 bg-[#0d101d] rounded-2xl border border-white/5 space-y-4">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                    <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                      <FileAudio className="w-4 h-4 text-amber-400" />
+                      <span>အသံဖိုင် ရွေးချယ်ပါ (MP3 / WAV / M4A / AAC - ဘယ်လောက်ရှည်ရှည် ထည့်သွင်းနိုင်သည်):</span>
+                    </label>
+                    <span className="text-[10px] text-slate-400">
+                      ⚡ စာလုံးရေ/ဖိုင်ဆိုဒ် အကန့်အသတ်မရှိ High-Speed Upload
+                    </span>
+                  </div>
                   
-                  {/* Quick Select from recent TTS/Dialogue */}
+                  {/* Quick Select from recent TTS/Dialogue/VoiceChanger */}
                   <div className="flex flex-wrap gap-2">
                     {ttsResult?.audioUrl && (
                       <button
                         type="button"
-                        onClick={() => setShifterAudioData(ttsResult.audioUrl)}
+                        onClick={() => {
+                          setShifterRawFile(null);
+                          setShifterFileName('လက်ရှိ TTS အသံ');
+                          setShifterAudioData(ttsResult.audioUrl);
+                          const a = new Audio(ttsResult.audioUrl);
+                          a.onloadedmetadata = () => { if (a.duration && !isNaN(a.duration)) setShifterSourceDuration(a.duration); };
+                        }}
                         className="px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
                       >
                         <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
@@ -6059,99 +6352,433 @@ export const App: React.FC = () => {
                     {dialogueResult?.audioUrl && (
                       <button
                         type="button"
-                        onClick={() => setShifterAudioData(dialogueResult.audioUrl)}
+                        onClick={() => {
+                          setShifterRawFile(null);
+                          setShifterFileName('စကားဝိုင်း အသံ');
+                          setShifterAudioData(dialogueResult.audioUrl);
+                          const a = new Audio(dialogueResult.audioUrl);
+                          a.onloadedmetadata = () => { if (a.duration && !isNaN(a.duration)) setShifterSourceDuration(a.duration); };
+                        }}
                         className="px-3 py-1.5 rounded-lg bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
                       >
                         <Users className="w-3.5 h-3.5 text-amber-400" />
                         <span>💬 စကားဝိုင်း အသံကို ရွေးမည်</span>
                       </button>
                     )}
+                    {vcResultUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShifterRawFile(null);
+                          setShifterFileName('အသံပြောင်းထားသော အသံ');
+                          setShifterAudioData(vcResultUrl);
+                          const a = new Audio(vcResultUrl);
+                          a.onloadedmetadata = () => { if (a.duration && !isNaN(a.duration)) setShifterSourceDuration(a.duration); };
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-purple-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
+                      >
+                        <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+                        <span>🎭 Voice Changer အသံကို ရွေးမည်</span>
+                      </button>
+                    )}
                   </div>
 
                   <input
                     type="file"
-                    accept="audio/*"
+                    accept="audio/*,video/*"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) {
-                        const r = new FileReader();
-                        r.onload = () => setShifterAudioData(r.result as string);
-                        r.readAsDataURL(file);
+                        setShifterRawFile(file);
+                        setShifterFileName(file.name);
+                        const objUrl = URL.createObjectURL(file);
+                        setShifterAudioData(objUrl);
+                        const a = new Audio(objUrl);
+                        a.onloadedmetadata = () => {
+                          if (a.duration && !isNaN(a.duration)) {
+                            setShifterSourceDuration(a.duration);
+                          }
+                        };
                       }
                     }}
-                    className="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-600 file:text-white hover:file:bg-amber-500 cursor-pointer"
+                    className="w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-600 file:text-white hover:file:bg-amber-500 cursor-pointer bg-black/30 p-2 rounded-xl border border-white/5"
                   />
 
                   {shifterAudioData && (
-                    <div className="p-2.5 bg-black/40 rounded-lg border border-emerald-500/30 flex items-center justify-between gap-3">
-                      <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>မူရင်းအသံဖိုင် ထည့်သွင်းထားပြီးပါပြီ</span>
-                      </span>
-                      <audio src={shifterAudioData} controls className="h-7 max-w-[200px]" />
+                    <div className="p-3 bg-black/40 rounded-xl border border-emerald-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>{shifterFileName || 'မူရင်းအသံဖိုင် ထည့်သွင်းထားပြီးပါပြီ'}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                          {shifterSourceDuration > 0 && (
+                            <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-emerald-300 font-mono font-bold flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-emerald-400" />
+                              <span>ကြာချိန်: {Math.floor(shifterSourceDuration / 60)}:{(Math.floor(shifterSourceDuration % 60)).toString().padStart(2, '0')}</span>
+                            </span>
+                          )}
+                          {shifterRawFile && (
+                            <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 font-mono">
+                              အရွယ်အစား: {(shifterRawFile.size / (1024 * 1024)).toFixed(2)} MB
+                            </span>
+                          )}
+                          <span className="text-amber-400 font-medium">
+                            ★ အသံဖိုင် အစအဆုံး အကန့်အသတ်မရှိ Process ပြုလုပ်ပေးပါမည်
+                          </span>
+                        </div>
+                      </div>
+                      <audio src={shifterAudioData} controls className="h-8 max-w-full sm:max-w-[240px]" />
                     </div>
                   )}
                 </div>
 
-                {/* Slider Controls */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* 2. Equalizer (EQ) Section */}
+                <div className="p-4 sm:p-5 bg-[#0c0e14] rounded-2xl border border-white/5 space-y-4">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-white/5 pb-3">
+                    <div>
+                      <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                        <Sliders className="w-4 h-4 text-amber-400" />
+                        <span>🎛️ Audio Equalizer (EQ) & Voice Clarity Enhancer</span>
+                      </h3>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        အသံလှိုင်း အနိမ့်အမြင့်များကို ပရိုစတူဒီယိုစတိုင် ချိန်ညှိပြီး စကားသံကြည်လင်ပြတ်သားစေခြင်း၊ ဩဇာတိက္ကမပြည့်စေခြင်းများ ပြုလုပ်နိုင်ပါသည်
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShifterEqPreset('flat');
+                        setShifterBass(0);
+                        setShifterLowMid(0);
+                        setShifterMid(0);
+                        setShifterHighMid(0);
+                        setShifterTreble(0);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[11px] font-bold flex items-center gap-1 transition-all"
+                    >
+                      <RotateCcw className="w-3 h-3 text-slate-400" />
+                      <span>မူလအတိုင်း Reset</span>
+                    </button>
+                  </div>
+
+                  {/* Equalizer Presets Grid */}
+                  <div className="space-y-2">
+                    <span className="text-[11px] font-bold text-slate-300 block">✨ အဆင်သင့် EQ Presets များ (1-Click Presets):</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        { id: 'flat', name: 'မူလပုံမှန် (Flat)', icon: '🎵', desc: 'သဘာဝ မူရင်းအသံလှိုင်း', b: 0, lm: 0, m: 0, hm: 0, t: 0 },
+                        { id: 'vocal_clarity', name: 'စကားသံ ကြည်လင် (Vocal Clarity)', icon: '🎙️', desc: 'စကားသံထင်ရှား ပြတ်သားစေခြင်း', b: -2, lm: 0, m: 3, hm: 4.5, t: 2.5 },
+                        { id: 'deep_bass', name: 'ဩဇာပြည့် Bass (Deep Voice)', icon: '🔊', desc: 'နက်ရှိုင်းသော ရင်ဘတ်သံ ဩဇာ', b: 6.5, lm: 4, m: 0, hm: 0, t: -1.5 },
+                        { id: 'podcast_radio', name: 'ပေါ့ဒ်ကတ် ရေဒီယို (Podcast)', icon: '📻', desc: 'Broadcast စတိုင် နွေးထွေးကြည်လင်', b: 4, lm: 2, m: 2, hm: 3.5, t: 2 },
+                        { id: 'crisp_treble', name: 'စူးရှတောက်ပသောသံ (Crisp Treble)', icon: '✨', desc: 'အသံစူးရှစေပြီး လေလှိုင်းပါဝင်', b: -2, lm: 0, m: 0, hm: 3.5, t: 6 },
+                        { id: 'warm_smooth', name: 'နူးညံ့ငြိမ့်ညောင်း (Mellow)', icon: '🧘', desc: 'နားထောင်ရသက်တောင့်သက်သာ', b: 3.5, lm: 2, m: -2, hm: -2, t: -2.5 },
+                        { id: 'loudness_boost', name: 'အသံကျယ်လောင် (Loudness)', icon: '📢', desc: 'အသံအင်အားအပြည့် ကျယ်လောင်', b: 3, lm: 1, m: 2, hm: 2.5, t: 2 },
+                        { id: 'telephone', name: 'ဖုန်းစကားပြော (Vintage)', icon: '📞', desc: 'Vintage ဖုန်းနှင့် စကားပြောစက်', b: -12, lm: -6, m: 5, hm: -4, t: -12 }
+                      ].map((item) => {
+                        const active = shifterEqPreset === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setShifterEqPreset(item.id);
+                              setShifterBass(item.b);
+                              setShifterLowMid(item.lm);
+                              setShifterMid(item.m);
+                              setShifterHighMid(item.hm);
+                              setShifterTreble(item.t);
+                            }}
+                            className={`p-2.5 rounded-xl border text-left transition-all ${
+                              active
+                                ? 'bg-amber-500/20 border-amber-500 text-white shadow-md shadow-amber-500/10 ring-1 ring-amber-500'
+                                : 'bg-[#101422] border-white/5 hover:border-white/15 text-slate-300 hover:bg-white/5'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm">{item.icon}</span>
+                              <span className="text-xs font-bold truncate">{item.name}</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{item.desc}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 5-Band Graphic Equalizer Faders */}
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                        <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                        <span>5-Band Graphic Equalizer Sliders (-15dB to +15dB):</span>
+                      </span>
+                      {shifterEqPreset !== 'custom' && (
+                        <span className="text-[10px] text-amber-400 font-mono">Preset: {shifterEqPreset}</span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 p-3.5 bg-[#080a11] rounded-xl border border-white/5">
+                      {/* Band 1: Sub/Bass 80Hz */}
+                      <div className="space-y-1.5 text-center">
+                        <div className="flex sm:flex-col justify-between items-center text-[10px]">
+                          <span className="text-slate-300 font-bold">80 Hz (Bass)</span>
+                          <span className="text-amber-400 font-mono font-bold">{shifterBass > 0 ? `+${shifterBass}` : shifterBass} dB</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-15"
+                          max="15"
+                          step="0.5"
+                          value={shifterBass}
+                          onChange={(e) => {
+                            setShifterBass(parseFloat(e.target.value));
+                            setShifterEqPreset('custom');
+                          }}
+                          className="w-full accent-amber-500"
+                        />
+                        <span className="text-[9px] text-slate-500 hidden sm:block">နက်ရှိုင်းအသံ</span>
+                      </div>
+
+                      {/* Band 2: Low-Mid 250Hz */}
+                      <div className="space-y-1.5 text-center">
+                        <div className="flex sm:flex-col justify-between items-center text-[10px]">
+                          <span className="text-slate-300 font-bold">250 Hz (Low-Mid)</span>
+                          <span className="text-amber-400 font-mono font-bold">{shifterLowMid > 0 ? `+${shifterLowMid}` : shifterLowMid} dB</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-15"
+                          max="15"
+                          step="0.5"
+                          value={shifterLowMid}
+                          onChange={(e) => {
+                            setShifterLowMid(parseFloat(e.target.value));
+                            setShifterEqPreset('custom');
+                          }}
+                          className="w-full accent-amber-500"
+                        />
+                        <span className="text-[9px] text-slate-500 hidden sm:block">အသံထုထည်</span>
+                      </div>
+
+                      {/* Band 3: Mid 1000Hz */}
+                      <div className="space-y-1.5 text-center">
+                        <div className="flex sm:flex-col justify-between items-center text-[10px]">
+                          <span className="text-slate-300 font-bold">1 kHz (Vocal Mid)</span>
+                          <span className="text-amber-400 font-mono font-bold">{shifterMid > 0 ? `+${shifterMid}` : shifterMid} dB</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-15"
+                          max="15"
+                          step="0.5"
+                          value={shifterMid}
+                          onChange={(e) => {
+                            setShifterMid(parseFloat(e.target.value));
+                            setShifterEqPreset('custom');
+                          }}
+                          className="w-full accent-amber-500"
+                        />
+                        <span className="text-[9px] text-slate-500 hidden sm:block">လူ့စကားသံဗဟို</span>
+                      </div>
+
+                      {/* Band 4: High-Mid 3500Hz */}
+                      <div className="space-y-1.5 text-center">
+                        <div className="flex sm:flex-col justify-between items-center text-[10px]">
+                          <span className="text-slate-300 font-bold">3.5 kHz (Clarity)</span>
+                          <span className="text-amber-400 font-mono font-bold">{shifterHighMid > 0 ? `+${shifterHighMid}` : shifterHighMid} dB</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-15"
+                          max="15"
+                          step="0.5"
+                          value={shifterHighMid}
+                          onChange={(e) => {
+                            setShifterHighMid(parseFloat(e.target.value));
+                            setShifterEqPreset('custom');
+                          }}
+                          className="w-full accent-amber-500"
+                        />
+                        <span className="text-[9px] text-slate-500 hidden sm:block">စာလုံးပီသမှု</span>
+                      </div>
+
+                      {/* Band 5: Treble 10000Hz */}
+                      <div className="space-y-1.5 text-center">
+                        <div className="flex sm:flex-col justify-between items-center text-[10px]">
+                          <span className="text-slate-300 font-bold">10 kHz (Treble)</span>
+                          <span className="text-amber-400 font-mono font-bold">{shifterTreble > 0 ? `+${shifterTreble}` : shifterTreble} dB</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-15"
+                          max="15"
+                          step="0.5"
+                          value={shifterTreble}
+                          onChange={(e) => {
+                            setShifterTreble(parseFloat(e.target.value));
+                            setShifterEqPreset('custom');
+                          }}
+                          className="w-full accent-amber-500"
+                        />
+                        <span className="text-[9px] text-slate-500 hidden sm:block">စူးရှလေလှိုင်း</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Speed, Pitch, and Master Volume Controls */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {/* Speed Modifier slider */}
-                  <div className="p-4 bg-[#0c0e14] rounded-xl border border-white/5 space-y-3">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-300">
-                      <span>မြန်နှုန်း multiplier (Speed Multiplier):</span>
-                      <span className="text-amber-400 font-mono">{shifterSpeed}x</span>
+                  <div className="p-4 bg-[#0c0e14] rounded-2xl border border-white/5 space-y-3">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+                      <span className="flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        <span>မြန်နှုန်း (Speed):</span>
+                      </span>
+                      <span className="text-amber-400 font-mono font-bold text-sm bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">{shifterSpeed.toFixed(2)}x</span>
                     </div>
                     <input
                       type="range"
-                      min="0.5"
-                      max="2.0"
+                      min="0.25"
+                      max="3.0"
                       step="0.05"
                       value={shifterSpeed}
                       onChange={(e) => setShifterSpeed(parseFloat(e.target.value))}
                       className="w-full accent-amber-500"
                     />
-                    <p className="text-[10px] text-slate-500 leading-normal">
-                      • 1.0x = ပုံမှန်အမြန်နှုန်း၊ 1.25x = အနည်းငယ်ပိုမြန်ပြီး သက်ဝင်၊ 0.8x = ပိုမိုနှေးကွေး
+
+                    {/* Quick Speed Shortcut Buttons */}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5].map((spd) => (
+                        <button
+                          key={spd}
+                          type="button"
+                          onClick={() => setShifterSpeed(spd)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                            Math.abs(shifterSpeed - spd) < 0.01
+                              ? 'bg-amber-600 text-white shadow'
+                              : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                          }`}
+                        >
+                          {spd === 1.0 ? '1.0x (ပုံမှန်)' : `${spd}x`}
+                        </button>
+                      ))}
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      • 1.0x = ပုံမှန်မြန်နှုန်း၊ 1.25x = TikTok သွက်လက်တက်ကြွ၊ 0.8x = နှေးကွေးပြေပြစ်
                     </p>
                   </div>
 
                   {/* Pitch Modifier slider */}
-                  <div className="p-4 bg-[#0c0e14] rounded-xl border border-white/5 space-y-3">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-300">
-                      <span>အသံအနိမ့်အမြင့် (Pitch Multiplier):</span>
-                      <span className="text-amber-400 font-mono">{shifterPitch}x</span>
+                  <div className="p-4 bg-[#0c0e14] rounded-2xl border border-white/5 space-y-3">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+                      <span className="flex items-center gap-1.5">
+                        <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                        <span>အသံအနိမ့်အမြင့် (Pitch):</span>
+                      </span>
+                      <span className="text-amber-400 font-mono font-bold text-sm bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">{shifterPitch.toFixed(2)}x</span>
                     </div>
                     <input
                       type="range"
-                      min="0.5"
-                      max="1.8"
+                      min="0.4"
+                      max="2.2"
                       step="0.05"
                       value={shifterPitch}
                       onChange={(e) => setShifterPitch(parseFloat(e.target.value))}
                       className="w-full accent-amber-500"
                     />
-                    <p className="text-[10px] text-slate-500 leading-normal">
-                      • 1.3x = ရှဉ့်သံစူးစူး (Chipmunk Voice)၊ 0.8x = အောအောကြီး (Deep Monster Voice)
+
+                    {/* Quick Pitch Character Buttons */}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {[
+                        { p: 0.75, label: 'လူကြီးသံ (Titan)' },
+                        { p: 1.0, label: 'ပုံမှန် (Natural)' },
+                        { p: 1.15, label: 'လူငယ်သံ' },
+                        { p: 1.35, label: 'ရှဉ့်သံ (Chipmunk)' },
+                        { p: 1.6, label: 'Helium' }
+                      ].map((item) => (
+                        <button
+                          key={item.p}
+                          type="button"
+                          onClick={() => setShifterPitch(item.p)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                            Math.abs(shifterPitch - item.p) < 0.01
+                              ? 'bg-amber-600 text-white shadow'
+                              : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      • 1.35x = ရှဉ့်သံစူးစူး (Chipmunk Voice)၊ 0.75x = အောအောကြီး (Deep Monster Voice)
+                    </p>
+                  </div>
+
+                  {/* Master Volume Gain Booster slider */}
+                  <div className="p-4 bg-[#0c0e14] rounded-2xl border border-white/5 space-y-3">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+                      <span className="flex items-center gap-1.5">
+                        <Volume2 className="w-3.5 h-3.5 text-amber-400" />
+                        <span>အသံကျယ်အား (Volume Boost):</span>
+                      </span>
+                      <span className="text-amber-400 font-mono font-bold text-sm bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">{Math.round(shifterVolume * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="3.0"
+                      step="0.1"
+                      value={shifterVolume}
+                      onChange={(e) => setShifterVolume(parseFloat(e.target.value))}
+                      className="w-full accent-amber-500"
+                    />
+
+                    {/* Quick Volume Preset Buttons */}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {[0.8, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0].map((vol) => (
+                        <button
+                          key={vol}
+                          type="button"
+                          onClick={() => setShifterVolume(vol)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                            Math.abs(shifterVolume - vol) < 0.05
+                              ? 'bg-amber-600 text-white shadow'
+                              : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                          }`}
+                        >
+                          {vol === 1.0 ? '100% (မူလ)' : `${Math.round(vol * 100)}%`}
+                        </button>
+                      ))}
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      • Built-in Peak Limiter ပါဝင်သောကြောင့် အသံအတိုးအကျယ် 300% အထိ အသံမကွဲဘဲ တိုးမြှင့်နိုင်ပါသည်
                     </p>
                   </div>
                 </div>
 
-                {/* Action button */}
-                {shifterAudioData && (
+                {/* 4. Action Button with Unlimited Length Progress */}
+                {(shifterAudioData || shifterRawFile) && (
                   <button
                     onClick={handleShiftAudio}
                     disabled={isShifting}
-                    className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all shadow-lg shadow-amber-600/25"
+                    className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-amber-600 via-orange-600 to-amber-500 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-sm flex items-center justify-center gap-2.5 active:scale-[0.99] disabled:opacity-50 transition-all shadow-xl shadow-amber-600/30 ring-1 ring-white/10"
                   >
                     {isShifting ? (
                       <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>FFmpeg က အသံလှိုင်းကို အမြန်နှုန်းနှင့် အမြင့်သံ ချိန်ညှိနေပါသည်...</span>
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span>အသံဖိုင် အစအဆုံး အကန့်အသတ်မရှိ Process ပြုလုပ်နေပါသည်... (မိနစ်/နာရီမရွေး အပြည့်အစုံ ရရှိပါမည်)</span>
                       </>
                     ) : (
                       <>
-                        <Sliders className="w-4 h-4" />
-                        <span>🎛️ အသံပြောင်းလဲမှု စတင်ပြုလုပ်မည် (Apply Adjustments)</span>
+                        <Sliders className="w-5 h-5" />
+                        <span>🎛️ အသံဖိုင် အပြည့်အစုံ စတင်ထုတ်လုပ်မည် (Render Audio with EQ & Speed)</span>
                       </>
                     )}
                   </button>
@@ -6159,42 +6786,98 @@ export const App: React.FC = () => {
 
                 {/* Error Box */}
                 {shifterError && (
-                  <p className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-xs text-rose-300">
-                    {shifterError}
+                  <p className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>{shifterError}</span>
                   </p>
                 )}
 
-                {/* Result Display */}
+                {/* 5. Result Display with Streaming Audio & Direct Actions */}
                 {shifterResultUrl && (
-                  <div className="p-4 bg-[#0a0c12] rounded-xl border border-emerald-500/35 space-y-4 animate-in fade-in">
+                  <div className="p-5 bg-[#0a0c12] rounded-2xl border border-emerald-500/40 space-y-4 animate-in fade-in shadow-2xl">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
-                      <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>အသံဖိုင်ကို စိတ်ကြိုက်ပြောင်းလဲ ပြီးပါပြီ!</span>
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => {
-                            setVideoAudioData(shifterResultUrl);
-                            setMainMode('video');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold flex items-center gap-1.5 shadow"
-                        >
-                          <Video className="w-3.5 h-3.5" />
-                          <span>ဗီဒီယို ပြုလုပ်မည် ➔</span>
-                        </button>
+                      <div className="space-y-1">
+                        <span className="text-xs sm:text-sm font-bold text-emerald-400 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          <span>အသံဖိုင်ကို EQ, Speed နှင့် Pitch ချိန်ညှိပြီး အောင်မြင်စွာ ထုတ်လုပ်ပြီးပါပြီ!</span>
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                          {shifterOutputDuration > 0 && (
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-mono font-bold flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-emerald-400" />
+                              <span>ထွက်ရှိလာသောကြာချိန်: {Math.floor(shifterOutputDuration / 60)}:{(Math.floor(shifterOutputDuration % 60)).toString().padStart(2, '0')}</span>
+                            </span>
+                          )}
+                          {shifterOutputSize && (
+                            <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 font-mono">
+                              အရွယ်အစား: {shifterOutputSize}
+                            </span>
+                          )}
+                          <span className="text-emerald-400 font-medium">
+                            ⚡ High-Fidelity 192kbps MP3 (Range Stream Supported)
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
                         <a
-                          href={shifterResultUrl}
-                          download={`VoiceMaster_Modified_${Date.now()}.mp3`}
-                          className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] flex items-center gap-1.5 shadow"
+                          href={shifterDownloadUrl || shifterResultUrl}
+                          download={`VoiceMaster_EQ_Speed_${Date.now()}.mp3`}
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95 transition-all"
                         >
-                          <Download className="w-3.5 h-3.5" />
+                          <Download className="w-4 h-4" />
                           <span>10x Turbo Download (.MP3)</span>
                         </a>
                       </div>
                     </div>
-                    <audio src={shifterResultUrl} controls className="w-full" />
+
+                    {/* Audio Player */}
+                    <div className="p-3 bg-black/50 rounded-xl border border-white/5">
+                      <audio src={shifterResultUrl} controls className="w-full" />
+                    </div>
+
+                    {/* Workflow Integration Buttons */}
+                    <div className="pt-2 border-t border-white/5 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-[11px] text-slate-400 font-bold mr-1">အခြား Studio များသို့ ပို့မည်:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVideoAudioData(shifterResultUrl);
+                          setMainMode('video');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/60 border border-indigo-500/40 text-indigo-200 text-[11px] font-bold flex items-center gap-1.5 transition-all"
+                      >
+                        <Video className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>🎬 ဗီဒီယို ပြုလုပ်မည် ➔</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSilenceAudioData(shifterResultUrl);
+                          setMainMode('silenceRemover');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-rose-600/30 hover:bg-rose-600/60 border border-rose-500/40 text-rose-200 text-[11px] font-bold flex items-center gap-1.5 transition-all"
+                      >
+                        <Scissors className="w-3.5 h-3.5 text-rose-400" />
+                        <span>✂️ အသံအပိုဖြတ်စက်သို့ ပို့မည် ➔</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTranscribeAudio(shifterResultUrl);
+                          setMainMode('transcribe');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/60 border border-emerald-500/40 text-emerald-200 text-[11px] font-bold flex items-center gap-1.5 transition-all"
+                      >
+                        <Subtitles className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>🎙️ အသံမှ စာသားဖတ်ယူမည် ➔</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -6381,6 +7064,14 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
+                {/* HD Subtitles Notice */}
+                <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/15 via-pink-500/10 to-indigo-500/15 border border-amber-500/30 text-amber-200 text-xs">
+                  <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    <b>✨ HD မြန်မာစာတန်းထိုး တိကျစွာထည့်သွင်းမည်</b> — စာလုံးပေါင်းမှန်ကန်ပြီး စာလုံးမကွဲ၊ မပီမသမမဖြစ်စေဘဲ Noto Sans Myanmar ဖောင့်ဖြင့် အသံထွက်နှင့် အတိအကျချိန်ညှိကာ ဗီဒီယိုအတွင်းသို့ အပြီးစီး စာတန်းထိုးပေးပါမည်။
+                  </span>
+                </div>
+
                 {/* Error Banner */}
                 {pipelineError && (
                   <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-200">
@@ -6421,6 +7112,23 @@ export const App: React.FC = () => {
                       <h3 className="text-sm font-bold text-white mt-1">{pipelineResult.title}</h3>
                     </div>
                     <div className="flex items-center gap-2">
+                      {pipelineResult.srtText && (
+                        <button
+                          onClick={() => {
+                            const blob = new Blob([pipelineResult.srtText || ''], { type: 'text/plain;charset=utf-8' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `Pipeline_Subtitles_${Date.now()}.srt`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs flex items-center gap-1.5 border border-amber-500/30 active:scale-95 transition-all"
+                        >
+                          <FileText className="w-4 h-4 text-amber-400" />
+                          <span>SRT Download</span>
+                        </button>
+                      )}
                       <a
                         href={pipelineResult.videoUrl}
                         download={`VoiceMaster_Pipeline_${Date.now()}.mp4`}
@@ -6968,7 +7676,7 @@ export const App: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Additional Options: Voice Gender, Auto-Play, Face-to-Face */}
+                    {/* Additional Options: Voice Gender, Speed, Auto-Play, Face-to-Face */}
                     <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5 text-xs">
                       <div className="flex items-center gap-4 flex-wrap">
                         {/* Voice Gender Switch */}
@@ -7000,6 +7708,34 @@ export const App: React.FC = () => {
                           </div>
                         </div>
 
+                        {/* Playback Speed Switch */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-400 text-[11px] font-bold">အသံမြန်နှုန်း:</span>
+                          <div className="flex items-center bg-[#151926] p-0.5 rounded-lg border border-white/10">
+                            {[
+                              { spd: 0.8, lbl: '🐢 0.8x နှေးနှေး' },
+                              { spd: 1.0, lbl: '⚡ 1.0x ပုံမှန်' },
+                              { spd: 1.2, lbl: '🚀 1.2x မြန်မြန်' }
+                            ].map(({ spd, lbl }) => (
+                              <button
+                                key={spd}
+                                type="button"
+                                onClick={() => {
+                                  setInterpSpeed(spd);
+                                  if (interpAudioPlayerRef.current) interpAudioPlayerRef.current.playbackRate = spd;
+                                }}
+                                className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all ${
+                                  interpSpeed === spd
+                                    ? 'bg-indigo-600 text-white shadow-sm'
+                                    : 'text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                {lbl}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
                         {/* Auto-Play Toggle */}
                         <label className="flex items-center gap-2 cursor-pointer text-slate-300 select-none">
                           <input
@@ -7024,6 +7760,15 @@ export const App: React.FC = () => {
                       >
                         📱 မျက်နှာချင်းဆိုင် မုဒ် ({interpFaceToFace ? 'ON' : 'OFF'})
                       </button>
+                    </div>
+
+                    {/* Acoustic Speech Speed Resilience Banner */}
+                    <div className="mt-2.5 p-2 rounded-xl bg-gradient-to-r from-emerald-950/40 via-blue-950/30 to-purple-950/40 border border-emerald-500/20 text-[11px] text-emerald-300 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span><strong>Fast & Slow Speech Acoustic AI:</strong> တစ်ဖက်လူက မြန်မြန်ပြောသည်ဖြစ်စေ၊ နှေးနှေးပြောသည်ဖြစ်စေ စကားသံကို အတိအကျ နားလည်ပြီး ဘာသာပြန်ဆိုပေးပါသည်</span>
+                      </div>
+                      <span className="hidden sm:inline-block px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] border border-emerald-500/30">100% Native Precision</span>
                     </div>
                   </div>
 
@@ -7326,22 +8071,54 @@ export const App: React.FC = () => {
                                 <p className="text-sm font-bold text-white leading-relaxed">{msg.translatedText}</p>
                               </div>
 
+                              {/* Phonetic Pronunciation Guide for Speaking like a Native */}
+                              {msg.phoneticGuide && (
+                                <div className="p-2 rounded-lg bg-indigo-950/40 border border-indigo-500/20 text-xs">
+                                  <span className="text-[10px] text-indigo-300 font-bold block">🗣️ အသံထွက်ဖတ်နည်း (Pronunciation):</span>
+                                  <p className="font-mono text-xs text-indigo-100 font-medium mt-0.5 select-text">{msg.phoneticGuide}</p>
+                                </div>
+                              )}
+
+                              {/* Cultural & Speaking Tip */}
+                              {msg.speakingTip && (
+                                <div className="text-[11px] text-emerald-300/90 flex items-center gap-1.5 pt-0.5">
+                                  <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
+                                  <span>{msg.speakingTip}</span>
+                                </div>
+                              )}
+
                               {/* Audio playback & actions */}
                               <div className="flex items-center justify-between gap-2 pt-1">
                                 {msg.audioUrl ? (
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <button
                                       type="button"
                                       onClick={() => {
                                         if (interpAudioPlayerRef.current) {
                                           interpAudioPlayerRef.current.src = msg.audioUrl!;
+                                          interpAudioPlayerRef.current.playbackRate = 1.0;
                                           interpAudioPlayerRef.current.play().catch(() => {});
                                         }
                                       }}
-                                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                                      className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center gap-1 shadow-md active:scale-95 transition-all"
                                     >
                                       <Volume2 className="w-3.5 h-3.5" />
-                                      <span>အသံပြန်ဖွင့်မည်</span>
+                                      <span>အသံဖွင့်မည် (1.0x)</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (interpAudioPlayerRef.current) {
+                                          interpAudioPlayerRef.current.src = msg.audioUrl!;
+                                          interpAudioPlayerRef.current.playbackRate = 0.8;
+                                          interpAudioPlayerRef.current.play().catch(() => {});
+                                        }
+                                      }}
+                                      className="px-2 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 text-[10px] font-bold border border-white/10 flex items-center gap-1 active:scale-95 transition-all"
+                                      title="နှေးနှေးနားထောင်ပြီး အသံထွက်လေ့ကျင့်ရန်"
+                                    >
+                                      <span>🐢 0.8x နှေးနှေး</span>
                                     </button>
 
                                     <button
@@ -7397,7 +8174,47 @@ export const App: React.FC = () => {
                         </span>
                       </label>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Microphone Speech Recording Button */}
+                        {translateMicRecording ? (
+                          <button
+                            type="button"
+                            onClick={stopTranslateMicRecording}
+                            className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold flex items-center gap-1.5 animate-pulse shadow-md active:scale-95 transition-all"
+                          >
+                            <Square className="w-3 h-3 fill-white" />
+                            <span>🎙️ {translateMicSec}s ရပ်မည်</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={startTranslateMicRecording}
+                            disabled={isTranslateTranscribing || isTranslateLoading}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold flex items-center gap-1 active:scale-95 transition-all disabled:opacity-50"
+                            title="မြန်မြန် သို့မဟုတ် နှေးနှေးပြောသည့် အသံကို တိုက်ရိုက်ဖမ်းယူ၍ စာသားအဖြစ် ပြောင်းလဲမည်"
+                          >
+                            <Mic className="w-3.5 h-3.5" />
+                            <span>🎙️ စကားပြော၍ ဘာသာပြန်မည်</span>
+                          </button>
+                        )}
+
+                        {/* Audio File Import for Speech Recognition */}
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          id="translate_audio_file_input"
+                          className="hidden"
+                          onChange={handleTranslateAudioUpload}
+                        />
+                        <label
+                          htmlFor="translate_audio_file_input"
+                          className="px-2.5 py-1 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 text-indigo-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer active:scale-95 transition-all"
+                          title="အသံဖိုင် (MP3/WAV/WebM) တင်သွင်းပြီး စာသားပြောင်းလဲ ဘာသာပြန်မည်"
+                        >
+                          <Volume2 className="w-3.5 h-3.5" />
+                          <span>🎧 အသံဖိုင် တင်သွင်းမည်</span>
+                        </label>
+
                         {/* File Import Button */}
                         <input
                           type="file"
@@ -7421,7 +8238,7 @@ export const App: React.FC = () => {
                           className="px-2.5 py-1 rounded-lg bg-blue-950/60 hover:bg-blue-900/60 border border-blue-500/30 text-blue-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer active:scale-95 transition-all"
                         >
                           <Upload className="w-3 h-3" />
-                          <span>📁 စာသားဖိုင် တင်သွင်းမည် (.txt/.srt)</span>
+                          <span>📁 စာသားဖိုင် (.txt/.srt)</span>
                         </label>
 
                         {translateText && (
@@ -7436,12 +8253,29 @@ export const App: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* Transcribing Indicator */}
+                    {isTranslateTranscribing && (
+                      <div className="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-500/40 text-indigo-200 text-xs font-bold flex items-center gap-2 animate-pulse shadow-md">
+                        <RefreshCw className="w-4 h-4 animate-spin text-indigo-300" />
+                        <span>⚡ စကားသံ (မြန်မြန် သို့မဟုတ် နှေးနှေးပြောဆိုမှု) ကို AI ဖြင့် စာသားအဖြစ် တိကျစွာ ပြောင်းလဲနေပါသည်...</span>
+                      </div>
+                    )}
+
+                    {/* Fast and Slow Speech Recognition AI Notice */}
+                    <div className="p-2 rounded-xl bg-gradient-to-r from-emerald-950/30 via-slate-900/50 to-indigo-950/30 border border-white/5 text-[11px] text-slate-300 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span><strong>Acoustic Speed Recognition:</strong> တစ်ဖက်လူက မြန်မြန်ပြောသည်ဖြစ်စေ၊ နှေးနှေးပြောသည်ဖြစ်စေ အသံကို တိကျစွာ နားလည်နိုင်ပါသည်</span>
+                      </div>
+                      <span className="text-[10px] text-emerald-400 font-bold hidden sm:inline">🎙️ မိုက် သို့မဟုတ် အသံဖိုင် သုံးနိုင်သည်</span>
+                    </div>
+
                     <textarea
                       rows={5}
                       required
                       value={translateText}
                       onChange={(e) => setTranslateText(e.target.value)}
-                      placeholder="ဘာသာပြန်လိုသည့် မည်သည့်စာသားမဆို ထည့်သွင်းပါ (မြန်မာ၊ လာအို၊ အင်္ဂလိပ်၊ ထိုင်း သို့မဟုတ် ကမ္ဘာ့ဘာသာစကားများ - စာလုံးရေ အကန့်အသတ်မရှိ တစ်ပြိုင်နက် ဘာသာပြန်နိုင်ပါသည်)..."
+                      placeholder="ဘာသာပြန်လိုသည့် မည်သည့်စာသားမဆို ထည့်သွင်းပါ သို့မဟုတ် အထက်ပါ 'စကားပြော၍ ဘာသာပြန်မည်' ခလုတ်ကို နှိပ်ပြီး အသံဖြင့် တိုက်ရိုက်ပြောဆိုပါ (မြန်မာ၊ လာအို၊ အင်္ဂလိပ်၊ ထိုင်း သို့မဟုတ် ကမ္ဘာ့ဘာသာစကားများ)..."
                       className="w-full bg-[#0d101d] border border-white/10 rounded-xl p-3.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none leading-relaxed font-sans"
                     />
 
@@ -7623,26 +8457,110 @@ export const App: React.FC = () => {
                       </div>
 
                       {/* Translated Text Output */}
-                      <div className="p-4 bg-[#121520] rounded-xl border border-white/5 text-sm text-slate-100 font-medium leading-relaxed whitespace-pre-line select-text max-h-96 overflow-y-auto">
-                        {translateResult.translatedText}
+                      <div className="space-y-1.5">
+                        <span className="text-[11px] font-bold text-slate-400 block">
+                          ✨ နိုင်ငံခံ စကားပြောစစ်စစ် ဘာသာပြန်ချက် (Native Translation):
+                        </span>
+                        <div className="p-4 bg-[#121520] rounded-xl border border-white/5 text-base text-slate-100 font-semibold leading-relaxed whitespace-pre-line select-text max-h-96 overflow-y-auto">
+                          {translateResult.translatedText}
+                        </div>
                       </div>
 
-                      {/* Audio Player and Actions */}
-                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-                        <audio src={translateResult.audioUrl} controls className="w-full sm:w-2/3 h-9" />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            downloadAudioFile(
-                              translateResult.audioUrl,
-                              `VoiceMaster_Translated_${Date.now()}.mp3`
-                            )
-                          }
-                          className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95"
-                        >
-                          <Download className="w-4 h-4" />
-                          <span>10x Turbo Download (.MP3)</span>
-                        </button>
+                      {/* Native Spoken Pronunciation Guide (အသံထွက်ဖတ်နည်း / ပြောနိုင်ရန် လမ်းညွှန်) */}
+                      {translateResult.phoneticGuide && (
+                        <div className="p-4 bg-indigo-950/40 rounded-xl border border-indigo-500/30 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                              <Volume2 className="w-4 h-4 text-indigo-400" />
+                              <span>🗣️ Native Spoken Guide (အသံထွက်ဖတ်နည်း / ပြောနိုင်ရန် လမ်းညွှန်)</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(translateResult.phoneticGuide!, 'phonetic_guide')}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 text-[11px] font-bold border border-indigo-500/30 flex items-center gap-1 active:scale-95 transition-all"
+                            >
+                              {copiedType === 'phonetic_guide' ? (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                              <span>{copiedType === 'phonetic_guide' ? 'ကူးယူပြီး' : 'အသံထွက် ကူးမည်'}</span>
+                            </button>
+                          </div>
+                          <p className="font-mono text-sm text-indigo-100 font-semibold tracking-wide leading-relaxed bg-[#0b0f19] p-3 rounded-lg border border-indigo-500/20 select-text">
+                            {translateResult.phoneticGuide}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Cultural & Native Speaking Nuance Tip */}
+                      {translateResult.speakingTip && (
+                        <div className="p-3 bg-emerald-950/30 rounded-xl border border-emerald-500/30 flex items-start gap-2.5 text-xs text-emerald-200">
+                          <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold text-emerald-300">💡 Native Speaking & Cultural Nuance (လူချင်းစကားပြော လမ်းညွှန်):</span>
+                            <p className="mt-0.5 text-slate-300 leading-relaxed">{translateResult.speakingTip}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Audio Player, Playback Speed & Actions */}
+                      <div className="space-y-2 pt-2 border-t border-white/5">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5">
+                            <Volume2 className="w-3.5 h-3.5 text-blue-400" />
+                            <span>နိုင်ငံခံ လူသားအသံဖြင့် နားထောင်ပြီး လေ့ကျင့်ပြောဆိုရန်:</span>
+                          </span>
+
+                          {/* Speech Speed Switcher */}
+                          <div className="flex items-center gap-1 bg-[#121520] p-1 rounded-lg border border-white/10">
+                            <span className="text-[10px] text-slate-400 px-1 font-bold">Speed:</span>
+                            {[0.8, 1.0, 1.2].map((spd) => (
+                              <button
+                                key={spd}
+                                type="button"
+                                onClick={() => {
+                                  setTranslateAudioSpeed(spd);
+                                  if (translateAudioPlayerRef.current) {
+                                    translateAudioPlayerRef.current.playbackRate = spd;
+                                  }
+                                }}
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                                  translateAudioSpeed === spd
+                                    ? 'bg-blue-600 text-white'
+                                    : 'text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                {spd === 0.8 ? '0.8x (နှေး)' : spd === 1.0 ? '1.0x (ပုံမှန်)' : '1.2x (သွက်)'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+                          <audio
+                            ref={translateAudioPlayerRef}
+                            src={translateResult.audioUrl}
+                            controls
+                            className="w-full sm:w-2/3 h-9"
+                            onPlay={(e) => {
+                              e.currentTarget.playbackRate = translateAudioSpeed;
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              downloadAudioFile(
+                                translateResult.audioUrl,
+                                `VoiceMaster_Translated_${Date.now()}.mp3`
+                              )
+                            }
+                            className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 active:scale-95"
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>10x Turbo Download (.MP3)</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
