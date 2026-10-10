@@ -3871,8 +3871,8 @@ app.post('/api/translate-image', upload.single('imageFile'), async (req: Request
     const tempIn = `/tmp/img_in_${Date.now()}.img`;
     const tempOut = `/tmp/img_out_${Date.now()}.jpg`;
     fs.writeFileSync(tempIn, imgBuffer);
-    // Scale down max dimension to 2048px while keeping aspect ratio and high JPEG quality 90%
-    await execAsync(`ffmpeg -y -i "${tempIn}" -vf "scale='min(2048,iw)':'min(2048,ih)':force_original_aspect_ratio=decrease" -q:v 3 "${tempOut}"`);
+    // Scale down max dimension to 1280px while keeping aspect ratio and more aggressive JPEG compression (-q:v 8)
+    await execAsync(`ffmpeg -y -i "${tempIn}" -vf "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease" -q:v 8 "${tempOut}"`);
     if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
       processedBuffer = fs.readFileSync(tempOut);
       processedMime = 'image/jpeg';
@@ -4073,7 +4073,7 @@ CRITICAL INSTRUCTIONS FOR FAST AND SLOW SPEECH (အသံမြန်မြန�
 5. CLEAN OUTPUT:
    - Output ONLY the exact transcribed text. No quotation marks, no preamble, no explanations, no metadata.`;
 
-    const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-transcribe'];
+    const modelsToTry = ['gemini-1.5-pro-002', 'gemini-1.5-pro', 'gemini-flash-latest', 'gemini-3.8-flash'];
     let transcribedText = '';
 
     for (const m of modelsToTry) {
