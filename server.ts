@@ -1021,16 +1021,12 @@ export function resolveVoiceForText(
     }
   }
   // 2. Pure Burmese or predominantly Burmese text:
-  // MUST use authentic Burmese neural voices
+  // MUST use authentic Neural voices; prioritize Multilingual William/Andrew for superior quality
   else if (hasBurmese && (!hasLatin || burmeseChars >= latinChars)) {
     if (isFemale(finalVoice)) {
-      if (finalVoice !== 'pt-BR-ThalitaMultilingualNeural') {
-        finalVoice = 'my-MM-NilarNeural';
-      }
+      finalVoice = 'en-US-AvaMultilingualNeural'; // Use Ava for high-quality female neural
     } else {
-      if (finalVoice !== 'en-AU-WilliamMultilingualNeural' && finalVoice !== 'en-US-AndrewMultilingualNeural' && finalVoice !== 'en-US-BrianMultilingualNeural') {
-        finalVoice = 'my-MM-ThihaNeural';
-      }
+      finalVoice = 'en-US-AndrewMultilingualNeural'; // Use Andrew for high-quality male neural
     }
   }
   // 3. Fallback / Multilingual
@@ -5676,12 +5672,6 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
     const persistentVideoPath = path.join('/tmp/video_outputs', `${persistentVideoId}.mp4`);
     fs.copyFileSync(videoPath, persistentVideoPath);
 
-    const videoBuf = fs.readFileSync(videoPath);
-    let videoBase64 = '';
-    // Send base64 data URL for instant playback if video is under 15MB, else stream seamlessly
-    if (videoBuf.length < 15 * 1024 * 1024) {
-      videoBase64 = `data:video/mp4;base64,${videoBuf.toString('base64')}`;
-    }
 
     const streamUrl = `/api/video-stream/${persistentVideoId}`;
     const downloadUrl = `/api/video-stream/${persistentVideoId}?download=true`;
@@ -5694,7 +5684,7 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       title,
-      videoUrl: videoBase64 || streamUrl,
+      videoUrl: streamUrl,
       streamUrl,
       downloadUrl,
       srtText: generatedSrtText
@@ -7092,12 +7082,12 @@ Respond in JSON format:
   // 2. High-Quality Flux/Turbo AI Image Generation (Pollinations AI) with clean prompt & UNIQUE RANDOM SEED per scene
   try {
     const uniqueSeed = (Math.floor(Math.random() * 8000000) + (sceneIdx * 19371) + Date.now()) % 10000000;
-    const cleanPromptNoText = `${finalImagePrompt}, completely clean background, no letters, no typography`;
+    const cleanPromptNoText = `${finalImagePrompt}, completely clean background, no letters, no typography, cinematic masterpiece, high-resolution photography, 8k`;
     const encodedPrompt = encodeURIComponent(cleanPromptNoText);
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&nologo=true&seed=${uniqueSeed}`;
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&nologo=true&seed=${uniqueSeed}&unfiltered=true&enhance=true`;
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6500);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     const response = await fetch(pollinationsUrl, {
       signal: controller.signal,
