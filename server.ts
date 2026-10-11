@@ -1010,23 +1010,20 @@ export function resolveVoiceForText(
   }
 
   // 1. Pure English or predominantly English text:
-  // MUST use authentic native English neural voices so English words are never slurred or broken
+  // If user selected William or any English-capable voice, RESPECT THEIR EXACT CHOICE!
   if (!hasBurmese && hasLatin) {
-    if (isFemale(finalVoice)) {
+    if (finalVoice === 'my-MM-ThihaNeural') {
+      finalVoice = 'en-AU-WilliamMultilingualNeural';
+    } else if (finalVoice === 'my-MM-NilarNeural') {
       finalVoice = 'en-US-AvaMultilingualNeural';
-    } else {
-      if (finalVoice === 'my-MM-ThihaNeural' || !BURMESE_CAPABLE_VOICES.has(finalVoice)) {
-        finalVoice = 'en-US-AndrewMultilingualNeural';
-      }
     }
+    // Otherwise keep the user's selected voice (e.g. William, Brian, Andrew, Ava, etc.)
   }
   // 2. Pure Burmese or predominantly Burmese text:
-  // MUST use authentic Neural voices; prioritize Multilingual William/Andrew for superior quality
+  // If the user's chosen voice is already a Burmese-capable Multilingual voice (like William, Andrew, Brian, Hyunsu, Ava), KEEP IT!
   else if (hasBurmese && (!hasLatin || burmeseChars >= latinChars)) {
-    if (isFemale(finalVoice)) {
-      finalVoice = 'en-US-AvaMultilingualNeural'; // Use Ava for high-quality female neural
-    } else {
-      finalVoice = 'en-US-AndrewMultilingualNeural'; // Use Andrew for high-quality male neural
+    if (!BURMESE_CAPABLE_VOICES.has(finalVoice)) {
+      finalVoice = isFemale(finalVoice) ? 'en-US-AvaMultilingualNeural' : 'en-AU-WilliamMultilingualNeural';
     }
   }
   // 3. Fallback / Multilingual
@@ -1556,27 +1553,13 @@ async function synthesizeStream(txt: string, vName: string, rate: string = '+0%'
   const cleanTxt = normalizeTextForClearSpeech(txt);
   if (!cleanTxt) return Buffer.alloc(0);
 
-  // 1. Language-Aware Bilingual Check: If text contains BOTH English and Burmese sentences, synthesize each in its native voice!
-  const langSegments = splitIntoLanguageSegments(cleanTxt);
-  if (langSegments.length > 1) {
-    console.log(`[Smart Bilingual TTS] Found ${langSegments.length} segments with distinct languages. Synthesizing in native voices...`);
-    const parts = await runWithConcurrency(langSegments, async (seg) => {
-      const resolved = resolveVoiceForText(vName, rate, pitch, seg.text);
-      return await synthesizeSingleChunk(seg.text, resolved.engineVoice, resolved.rate, resolved.pitch);
-    }, 4);
-    const valid = parts.filter((p): p is Buffer => !!p && p.length > 0);
-    if (valid.length > 0) {
-      return await seamlessMergeAudioBuffers(valid);
-    }
-  }
-
   const resolved = resolveVoiceForText(vName, rate, pitch, cleanTxt);
   const engineVoice = resolved.engineVoice;
   const effectiveRate = resolved.rate || '+0%';
   const effectivePitch = resolved.pitch || '+0Hz';
 
   // If text is longer than 280 characters, split into natural sentences and synthesize concurrently
-  // This guarantees unlimited text length without network drop or timeout
+  // Using the SAME consistent engineVoice so voice never jumps or switches mid-sentence!
   if (cleanTxt.length > 280) {
     const subChunks = splitIntoNaturalSentenceChunks(cleanTxt, 250);
     if (subChunks.length > 1) {
@@ -1645,32 +1628,6 @@ async function synthesizeStreamWithSubtitles(txt: string, vName: string, rate: s
   const cleanTxt = normalizeTextForClearSpeech(txt);
   if (!cleanTxt) return { audioBuffer: Buffer.alloc(0), srtContent: '' };
 
-  // Language-aware bilingual check for subtitles synthesis
-  const langSegments = splitIntoLanguageSegments(cleanTxt);
-  if (langSegments.length > 1) {
-    const parts: Buffer[] = [];
-    let combinedSrt = '';
-    let accumulatedMs = 0;
-    let currentSrtIndex = 1;
-
-    for (const seg of langSegments) {
-      const resolved = resolveVoiceForText(vName, rate, pitch, seg.text);
-      const res = await synthesizeStreamWithSubtitles(seg.text, resolved.engineVoice, resolved.rate, resolved.pitch);
-      if (res.audioBuffer && res.audioBuffer.length > 0) {
-        parts.push(res.audioBuffer);
-        const dur = Math.max(1, res.audioBuffer.length / 32000);
-        const { shiftedSrt, nextIndex } = offsetSrtTimestamps(res.srtContent, accumulatedMs, currentSrtIndex);
-        if (shiftedSrt) {
-          combinedSrt = combinedSrt ? `${combinedSrt}\n\n${shiftedSrt}` : shiftedSrt;
-          currentSrtIndex = nextIndex;
-        }
-        accumulatedMs += Math.round(dur * 1000);
-      }
-    }
-    const finalAudio = await seamlessMergeAudioBuffers(parts);
-    return { audioBuffer: Buffer.from(finalAudio), srtContent: combinedSrt };
-  }
-
   const resolved = resolveVoiceForText(vName, rate, pitch, cleanTxt);
   const engineVoice = resolved.engineVoice;
   const effectiveRate = resolved.rate || '+0%';
@@ -1679,26 +1636,16 @@ async function synthesizeStreamWithSubtitles(txt: string, vName: string, rate: s
   // Split into natural sentence chunks
   const chunks = splitIntoNaturalSentenceChunks(cleanTxt, 250);
   
-  // Process all chunks in parallel with concurrency 6 for 10x-15x faster generation
-  // Uses Communicate + SubMaker with dynamic language voice selection for 100% natural accent & synchronized SRT
+  // Process all chunks in parallel using the SAME consistent engineVoice so voice never jumps or switches!
   const chunkResults = await runWithConcurrency(chunks, async (chk) => {
     let chunkAudio: Buffer = Buffer.alloc(0);
     let chunkSrt = '';
 
-    const chunkResolved = resolveVoiceForText(vName, rate, pitch, chk);
-    const chunkEngineVoice = chunkResolved.engineVoice;
-    const chunkRate = chunkResolved.rate || '+0%';
-    const chunkPitch = chunkResolved.pitch || '+0Hz';
-
     try {
-      // Dynamic expressive prosody: add natural variation per chunk for "human-like" engagement
-      const expressiveRate = chunkRate === '+0%' ? (Math.random() > 0.5 ? '+10%' : '-5%') : chunkRate;
-      const expressivePitch = chunkPitch === '+0Hz' ? (Math.random() > 0.5 ? '+2Hz' : '-1Hz') : chunkPitch;
-
       const comm = new Communicate(chk, {
-        voice: chunkEngineVoice,
-        rate: expressiveRate,
-        pitch: expressivePitch,
+        voice: engineVoice,
+        rate: effectiveRate,
+        pitch: effectivePitch,
       });
       const subMaker = new SubMaker();
       const parts: Buffer[] = [];
@@ -1730,13 +1677,13 @@ async function synthesizeStreamWithSubtitles(txt: string, vName: string, rate: s
       }
     } catch (_) {
       try {
-        chunkAudio = await synthesizeSingleChunk(chk, chunkEngineVoice, chunkRate, chunkPitch);
+        chunkAudio = await synthesizeSingleChunk(chk, engineVoice, effectiveRate, effectivePitch);
       } catch (_) {}
     }
 
     if (!chunkAudio || chunkAudio.length === 0) {
       try {
-        chunkAudio = await synthesizeSingleChunk(chk, chunkEngineVoice, chunkRate, chunkPitch);
+        chunkAudio = await synthesizeSingleChunk(chk, engineVoice, effectiveRate, effectivePitch);
       } catch (_) {}
     }
 
@@ -2772,6 +2719,32 @@ Output JSON:
 
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
+// 1.68 High-Accuracy Spoken Burmese Smoother & Colloquial Polish Engine
+// -------------------------------------------------------------------------------------
+export function smoothBurmeseSpokenText(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  if (!/[\u1000-\u109F\uAA60-\uAA7F]/.test(text)) return text;
+  return text
+    .replace(/ဖြစ်ပါသည်/g, 'ဖြစ်ပါတယ်')
+    .replace(/ဖြစ်သည်/g, 'ဖြစ်တယ်')
+    .replace(/ပါသည်/g, 'ပါတယ်')
+    .replace(/မရှိပါ/g, 'မရှိပါဘူး')
+    .replace(/မဟုတ်ပါ/g, 'မဟုတ်ပါဘူး')
+    .replace(/မရပါ/g, 'မရပါဘူး')
+    .replace(/မဖြစ်နိုင်ပါ/g, 'မဖြစ်နိုင်ပါဘူး')
+    .replace(/မသိပါ/g, 'မသိပါဘူး')
+    .replace(/သည်/g, 'တယ်')
+    .replace(/၏/g, 'ရဲ့')
+    .replace(/၌/g, 'မှာ')
+    .replace(/၍/g, 'ပြီး')
+    .replace(/သော်လည်း/g, 'ပေမယ့်')
+    .replace(/တည်းဟူသော/g, 'ဆိုတဲ့')
+    .replace(/ရာတွင်/g, 'တဲ့အခါမှာ')
+    .replace(/ခြင်းဖြစ်သည်/g, 'တာဖြစ်တယ်')
+    .replace(/ခြင်းဖြစ်ပါသည်/g, 'တာဖြစ်ပါတယ်');
+}
+
+// -------------------------------------------------------------------------------------
 // 1.69 High-Speed Fail-Safe Universal Google Translation Engine (100% Reliable, Unlimited)
 // -------------------------------------------------------------------------------------
 async function translateWithGoogleEngine(
@@ -2817,7 +2790,10 @@ async function translateWithGoogleEngine(
 
     if (cleanText.length <= 600) {
       const direct = await translateRawChunk(cleanText);
-      if (direct) return { translatedText: direct, detectedSourceLang: sourceLang };
+      if (direct) {
+        const finalDirect = (targetLang === 'my') ? smoothBurmeseSpokenText(direct) : direct;
+        return { translatedText: finalDirect, detectedSourceLang: sourceLang };
+      }
     }
 
     // Split text by sentence/phrase boundaries into safe chunks <= 550 characters
@@ -2841,7 +2817,8 @@ async function translateWithGoogleEngine(
 
     const fullTrans = translatedParts.join(' ').replace(/\s+/g, ' ').trim();
     if (fullTrans) {
-      return { translatedText: fullTrans, detectedSourceLang: sourceLang };
+      const finalTrans = (targetLang === 'my') ? smoothBurmeseSpokenText(fullTrans) : fullTrans;
+      return { translatedText: finalTrans, detectedSourceLang: sourceLang };
     }
   } catch (e) {
     console.warn('[Google Translate Engine] Warning:', e);
@@ -3164,14 +3141,15 @@ Translate accurately and idiomatically into 100% authentic, fluent ${targetLangN
 DO NOT OUTPUT BURMESE, DO NOT REPEAT SOURCE TEXT, AND DO NOT INCLUDE ANY BURMESE CHARACTERS.`;
 
     const translateSingleChunk = async (chunkText: string) => {
-      const prompt = `You are a certified master native localization expert, bilingual diplomat, and phonetic speech instructor specializing in ${targetLangName}.
+      const prompt = `You are an elite master native localization director, bilingual diplomat, and phonetic speech instructor specializing in ${targetLangName}.
 Your objective is to translate the source text with 100% absolute accuracy, semantic fidelity, native fluency, and conversational speakability so that:
-1. Native speakers of ${targetLangName} will understand it clearly, naturally, and comfortably without any awkwardness or robotic artifacts ("native လိုနားလည်ရမယ်").
-2. The user can also easily read, pronounce, and speak it aloud like a native local with an accurate phonetic pronunciation guide ("ပြောနိုင်ရမယ်").
+1. "ဘာသာပြန်ရင်လည်း တိကျရမယ်" - 100% absolute accuracy with ZERO semantic error or omission.
+2. Native speakers of ${targetLangName} will understand it clearly, naturally, and comfortably without any awkwardness or robotic artifacts ("native လိုနားလည်ရမယ်").
+3. The user can also easily read, pronounce, and speak it aloud like a native local with an accurate phonetic pronunciation guide ("ပြောနိုင်ရမယ်").
 
-GUIDELINES FOR NATIVE EXCELLENCE:
-1. Native Fluency & Nuance: Do not perform stiff word-for-word machine translation. Convey the exact meaning, tone, emotion, and context in phrasing that native locals actually speak and write.
-2. Accuracy & Completeness: Preserve all names, dates, numbers, facts, technical terms, and sentence intent accurately.
+GUIDELINES FOR NATIVE EXCELLENCE & UNCOMPROMISING ACCURACY:
+1. Absolute Semantic Accuracy: Faithfully convey every fact, name, quantity, measurement, date, question, and nuance. NEVER invert affirmative vs negative statements (e.g. "can" vs "cannot", "လုပ်တယ်" vs "မလုပ်ဘူး").
+2. Native Fluency & Nuance: Do not perform stiff word-for-word machine translation. Convey the exact meaning, tone, emotion, and context in phrasing that native locals actually speak and write.
 3. Target Language Specific Directive:
 ${specificRule}
 4. Phonetic Reading / Romanization Guide: Provide an accurate, easy-to-read pronunciation guide so any non-native speaker can read it out loud like a native:
@@ -3197,7 +3175,7 @@ Source text to translate:
 ${chunkText}
 """`;
 
-      const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+      const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
       for (const m of candidateModels) {
         if (depletedDailyModels.has(m)) continue;
         try {
@@ -3381,6 +3359,7 @@ app.post('/api/live-voice-interpret', upload.single('audioFile'), async (req: Re
   const targetLang = req.body?.targetLang || 'lo'; // e.g. 'lo' (Lao), 'my' (Burmese), 'th', 'en'
   const speakerRole = req.body?.speakerRole || 'personA'; // 'personA' or 'personB'
   const voiceGender = req.body?.voiceGender || 'male';
+  const voiceStyle = req.body?.voiceStyle || 'native'; // 'native' | 'anime_luffy' | 'anime_gojo' | 'anime'
 
   const reqId = `${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
   let tempAudioPath = file ? file.path : '';
@@ -3540,8 +3519,8 @@ Return strictly a valid JSON object:
   "speakingTip": "string (brief practical native speaking tip)"
 }`;
 
-        // Prioritize fast, high-quota models: gemini-3.1-flash-lite -> gemini-flash-latest -> gemini-3.8-flash
-        const acousticModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+        // Prioritize intelligent, high-accuracy models: gemini-3.8-flash -> gemini-flash-latest -> gemini-3.1-flash-lite
+        const acousticModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
         for (const m of acousticModels) {
           if (depletedDailyModels.has(m)) continue;
           try {
@@ -3651,7 +3630,7 @@ Return strictly a valid JSON object matching:
   "speakingTip": "string (brief 1-line guidance on native pronunciation or etiquette)"
 }`;
 
-      const transModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+      const transModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
       for (const m of transModels) {
         if (depletedDailyModels.has(m)) continue;
         try {
@@ -3711,7 +3690,7 @@ Return strictly a valid JSON object matching:
     }
 
     // 3. Synthesize Spoken Audio in Target Language's Native Neural Voice
-    const nativeVoices: Record<string, { male: string; female: string }> = {
+    const nativeVoices: Record<string, { male: string; female: string; anime?: string }> = {
       // Southeast Asia (အရှေ့တောင်အာရှ)
       'my': { male: 'my-MM-ThihaNeural', female: 'my-MM-NilarNeural' },
       'th': { male: 'th-TH-NiwatNeural', female: 'th-TH-PremwadeeNeural' },
@@ -3727,7 +3706,7 @@ Return strictly a valid JSON object matching:
       'tl': { male: 'id-ID-ArdiNeural', female: 'id-ID-GadisNeural' },
 
       // East Asia (အရှေ့အာရှ)
-      'ja': { male: 'ja-JP-KeitaNeural', female: 'ja-JP-NanamiNeural' },
+      'ja': { male: 'ja-JP-KeitaNeural', female: 'ja-JP-NanamiNeural', anime: 'ja-JP-NanamiNeural' },
       'ko': { male: 'ko-KR-InJoonNeural', female: 'ko-KR-SunHiNeural' },
       'zh': { male: 'zh-CN-YunxiNeural', female: 'zh-CN-XiaoxiaoNeural' },
       'zh-TW': { male: 'zh-TW-YunJheNeural', female: 'zh-TW-HsiaoChenNeural' },
@@ -3793,11 +3772,20 @@ Return strictly a valid JSON object matching:
     };
 
     const targetVoiceMap = nativeVoices[targetLang] || nativeVoices['en'];
-    const voiceToUse = voiceGender === 'female' ? targetVoiceMap.female : targetVoiceMap.male;
+    
+    let voiceToUse = targetVoiceMap.male;
+    let customRate = '+0%';
+    let customPitch = '+0Hz';
+
+    if (voiceGender === 'female') {
+      voiceToUse = targetVoiceMap.female;
+    } else {
+      voiceToUse = targetVoiceMap.male;
+    }
 
     let audioDataUrl: string | null = null;
     try {
-      let rawBuf = await synthesizeStream(translatedText, voiceToUse);
+      let rawBuf = await synthesizeStream(translatedText, voiceToUse, customRate, customPitch);
       if (rawBuf && rawBuf.length > 200) {
         rawBuf = Buffer.from(await applyStudioHumanMastering(rawBuf));
         audioDataUrl = `data:audio/mp3;base64,${rawBuf.toString('base64')}`;
@@ -3945,7 +3933,7 @@ Respond strictly in valid JSON format:
   let phoneticGuide = '';
   let speakingTip = '';
 
-  const visionModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+  const visionModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
   for (const m of visionModels) {
     if (depletedDailyModels.has(m)) continue;
     try {
@@ -4209,10 +4197,10 @@ app.post('/api/translate-srt', async (req: Request, res: Response) => {
 
     const cuesForAi = cues.map(c => ({ index: c.index, text: c.text }));
 
-    // 15x ULTRA-TURBO BATCHING:
-    // If <= 150 cues, process in 1 single ultra-fast prompt (~1-2s).
-    // If > 150 cues, use 120 cues per batch with 8 parallel worker threads for 15x speedup!
-    const batchSize = cuesForAi.length <= 150 ? cuesForAi.length : 120;
+    // High-Accuracy Parallel Batching:
+    // 30 cues per batch ensures 100% complete responses without token truncation,
+    // preserves conversational dialogue context between lines, and executes concurrently in ~1-2s!
+    const batchSize = 30;
     const batches: any[][] = [];
     for (let i = 0; i < cuesForAi.length; i += batchSize) {
       batches.push(cuesForAi.slice(i, i + batchSize));
@@ -4240,44 +4228,57 @@ app.post('/api/translate-srt', async (req: Request, res: Response) => {
     const translateBatch = async (batchCues: any[]) => {
       const batchMap = new Map<number, string>();
       const batchPrompt = targetLang === 'my'
-        ? `You are a master Myanmar subtitle localization director and native Burmese voice master specializing in authentic colloquial spoken Burmese (မြန်မာစကားပြော လေယူလေသိမ်း စစ်စစ်).
+        ? `You are an elite master film and video subtitle localization director and native Myanmar linguist specializing in authentic colloquial spoken Burmese (မြန်မာစကားပြော လေယူလေသိမ်း စစ်စစ်).
 
 TASK:
-Translate every numbered subtitle line into natural, engaging, and culturally authentic SPOKEN Burmese (မြန်မာစကားပြော လေသံ).
+Translate each numbered subtitle line into 100% ACCURATE, NATURAL, and ENGAGING spoken Burmese (မြန်မာစကားပြော လေသံ).
 
-BURMESE SPOKEN INTONATION & STYLE GUIDELINES (မြန်မာလေယူလေသိမ်း စည်းမျဉ်းများ):
-1. Use authentic, conversational, colloquial Burmese as spoken naturally in viral videos, YouTube documentaries, TikTok, and movies (e.g. "ကျွန်တော်တို့", "ဒီနေ့တော့", "ကြည့်ရှုပေးကြပါဦး", "ဟုတ်ကဲ့ပါ", "တကယ်တော့", "ဘယ်လိုလဲဆိုတော့", "အရမ်းမိုက်တယ်", "ဒါကြောင့်မို့လို့").
-2. ABSOLUTELY AVOID literal/robotic word-for-word translation and stiff bookish grammar (စာဆန်ဆန် တောင့်တောင့်ကြီးများ၊ "သည်/၏/၌/၍" အသုံးအနှုန်းများ မသုံးရ - စကားပြောလေသံ "တယ်/ပါ/မှာ/တဲ့/ဗျာ" သုံးပါ).
-3. Keep subtitle cues concise, punchy, and synchronized with video timing so it reads effortlessly on screen without overflowing.
-4. Output MUST use standard Myanmar Unicode script only.
-5. Preserve the exact index number for each cue.
+ABSOLUTE QUALITY & ACCURACY REQUIREMENTS (ဘာသာပြန် တိကျမှန်ကန်မှု စည်းမျဉ်းများ):
+1. ACCURACY FIRST (အဓိပ္ပာယ် အတိအကျ မှန်ကန်မှု):
+   - "ဘာသာပြန်ရင်လည်း တိကျရမယ်" - 100% absolute fidelity to meaning, facts, questions, and emotion.
+   - Never invert negative vs affirmative statements (e.g. "don't" vs "do", "cannot" vs "can", "မဟုတ်ဘူး" vs "ဟုတ်တယ်").
+   - Preserve all proper names, character names, numbers, dates, times, and technical terms precisely.
+2. DIALOGUE CONTINUITY & CONTEXT (ဇာတ်လမ်း / စကားဝိုင်း ဆက်စပ်မှု):
+   - These cues are sequential lines of continuous speech from a video, documentary, or movie.
+   - Maintain consistent conversational pronouns (e.g., ကျွန်တော်/မင်း/သူ/နင်/ငါ) and tone across adjacent cues.
+   - Do NOT translate lines as isolated fragments; understand the narrative storyline.
+3. AUTHENTIC COLLOQUIAL SPOKEN BURMESE (မြန်မာစကားပြော လေယူလေသိမ်း စစ်စစ်):
+   - Use natural spoken Burmese endings: "ပါတယ်", "တယ်", "မယ်", "မှာပါ", "နော်", "လား", "လဲ", "တာပေါ့", "ပါဘူး", "ဗျာ", "ရှင့်"။
+   - ABSOLUTELY NEVER use robotic, stiff, ancient literary book grammar: "သည်", "၏", "၌", "၍", "သော်လည်း", "ရာတွင်", "ဖြစ်ပါသည်" (လုံးဝ မသုံးရ).
+   - Keep subtitle lines punchy, concise, and easy to read while matching spoken duration.
+4. COMPLETE COVERAGE (လိုင်းတိုင်း ပြည့်စုံစွာ ပါဝင်ရမည်):
+   - Every single input cue MUST have its corresponding translation with exact index. Do not skip or merge cues.
 
 CRITICAL OUTPUT FORMAT:
 Return strictly a valid JSON array matching this schema:
 [
-  { "index": 1, "translatedText": "မြန်မာစကားပြော လေသံဖြင့် ဘာသာပြန်ချက်" }
+  { "index": 1, "translatedText": "မြန်မာစကားပြော လေသံဖြင့် တိကျသော ဘာသာပြန်ချက်" }
 ]
 
 Input Subtitles:
 ${JSON.stringify(batchCues)}`
-        : `You are a master subtitle localization director specializing in ${srtTargetName}.
+        : `You are an elite master subtitle localization director and native linguist specializing in ${srtTargetName}.
 
 TASK:
-Translate every numbered subtitle line into 100% authentic, natural fluent ${srtTargetName}.
-CRITICAL: The output MUST be 100% in ${srtTargetName}. Absolutely DO NOT output Burmese, source language, or any Burmese Unicode characters!
-Keep subtitle cues concise, punchy, and synchronized with video timing.
-Preserve the exact index number for each cue.
+Translate each numbered subtitle line into 100% ACCURATE, NATURAL, and FLUENT ${srtTargetName}.
+
+ABSOLUTE QUALITY & ACCURACY REQUIREMENTS:
+1. ACCURACY FIRST: Faithful semantic translation with zero distortion of names, numbers, facts, questions, and intent.
+2. DIALOGUE CONTINUITY: Maintain consistent character pronouns and narrative context across consecutive cues.
+3. NATIVE SPOKEN AUTHENTICITY: Use natural, conversational idioms that native locals actually speak. Avoid rigid machine translation.
+4. COMPLETE COVERAGE: Every single input cue MUST have its corresponding translation. Do not omit any index.
+5. SCRIPT DIRECTIVE: The output MUST be 100% in ${srtTargetName}. Absolutely DO NOT output Burmese, source language, or Burmese Unicode characters.
 
 CRITICAL OUTPUT FORMAT:
 Return strictly a valid JSON array matching this schema:
 [
-  { "index": 1, "translatedText": "Translated subtitle text strictly in ${srtTargetName}" }
+  { "index": 1, "translatedText": "Accurate, natural subtitle text strictly in ${srtTargetName}" }
 ]
 
 Input Subtitles:
 ${JSON.stringify(batchCues)}`;
 
-      const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'];
+      const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
       for (const m of modelsToTry) {
         if (depletedDailyModels.has(m)) continue;
         try {
@@ -4286,7 +4287,7 @@ ${JSON.stringify(batchCues)}`;
             contents: [{ role: 'user', parts: [{ text: batchPrompt }] }],
             config: {
               responseMimeType: 'application/json',
-              temperature: 0
+              temperature: 0.1
             }
           });
           if (geminiRes && geminiRes.text) {

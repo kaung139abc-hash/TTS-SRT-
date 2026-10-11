@@ -803,6 +803,7 @@ export const App: React.FC = () => {
         // Translation features: Trigger ad popup after every 4 translations (4, 8, 12, 16, ...)
         if (nextCount > 0 && nextCount % 4 === 0) {
           setAdCountdown(15);
+          setHasOpenedAd(false);
           setShowInAppAdModal(true);
         }
         return nextCount;
@@ -816,6 +817,7 @@ export const App: React.FC = () => {
         // Other features: Trigger ad popup after every 2 usages (2, 4, 6, 8, ...) as before
         if (nextCount > 0 && nextCount % 2 === 0) {
           setAdCountdown(15);
+          setHasOpenedAd(false);
           setShowInAppAdModal(true);
         }
         return nextCount;
@@ -986,6 +988,7 @@ export const App: React.FC = () => {
   const [interpLangA, setInterpLangA] = useState('my'); // 🇲🇲 Myanmar
   const [interpLangB, setInterpLangB] = useState('lo'); // 🇱🇦 Lao
   const [interpVoiceGender, setInterpVoiceGender] = useState<'male' | 'female'>('male');
+  const [interpVoiceStyle, setInterpVoiceStyle] = useState<'native' | 'anime_luffy' | 'anime_gojo'>('native');
   const [interpAutoPlay, setInterpAutoPlay] = useState(true);
   const [interpFaceToFace, setInterpFaceToFace] = useState(false);
   const [interpMessages, setInterpMessages] = useState<InterpretMessage[]>([
@@ -1445,16 +1448,25 @@ export const App: React.FC = () => {
   // Common UI State
   const [copiedType, setCopiedType] = useState<string | null>(null);
 
-  // Adsterra Direct Link provided by user: https://omg10.com/4/11846053
-  const adsterraDirectLink = 'https://omg10.com/4/11846053';
+  // Monetag Direct Link (SmartLink) configuration with persistent local storage
+  const [monetagDirectLink, setMonetagDirectLink] = useState<string>(() => {
+    try {
+      return localStorage.getItem('monetag_direct_link') || 'https://omg10.com/4/11846053';
+    } catch (_) {
+      return 'https://omg10.com/4/11846053';
+    }
+  });
+  const [showLinkConfigModal, setShowLinkConfigModal] = useState(false);
+  const [tempDirectLink, setTempDirectLink] = useState(monetagDirectLink);
+  const [hasOpenedAd, setHasOpenedAd] = useState(false);
 
-  // In-App Ad Modal state (so user stays 100% inside this app and never thrown out to browser)
+  // In-App Sponsor Ad Modal state
   const [showInAppAdModal, setShowInAppAdModal] = useState(false);
-  const [adCountdown, setAdCountdown] = useState(20);
+  const [adCountdown, setAdCountdown] = useState(15);
 
   const resultsSectionRef = useRef<HTMLDivElement | null>(null);
 
-  // 20-Second Mandatory Ad Countdown Timer
+  // 15-Second Ad Engagement Countdown Timer
   useEffect(() => {
     let timer: any;
     if (showInAppAdModal && adCountdown > 0) {
@@ -1466,6 +1478,29 @@ export const App: React.FC = () => {
       if (timer) clearInterval(timer);
     };
   }, [showInAppAdModal, adCountdown]);
+
+  // Launches Monetag Direct Link in external Chrome / Safari browser for 100% Impression & CPA Conversion
+  const openMonetagDirectLink = (urlToOpen?: string) => {
+    const targetUrl = urlToOpen || monetagDirectLink;
+    if (!targetUrl) return;
+    setHasOpenedAd(true);
+    try {
+      const a = document.createElement('a');
+      a.href = targetUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e) {
+      console.error('Anchor click failed:', e);
+    }
+    try {
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      console.error('window.open failed:', e);
+    }
+  };
 
   // Load voices, BGM tracks and Cloned Voice profiles on mount
   useEffect(() => {
@@ -1491,6 +1526,7 @@ export const App: React.FC = () => {
 
   const triggerMonetizationAd = () => {
     setAdCountdown(15);
+    setHasOpenedAd(false);
     setShowInAppAdModal(true);
   };
 
@@ -2932,6 +2968,7 @@ export const App: React.FC = () => {
     formData.append('targetLang', tLang);
     formData.append('speakerRole', speakerRole);
     formData.append('voiceGender', interpVoiceGender);
+    formData.append('voiceStyle', interpVoiceStyle);
 
     try {
       const res = await fetch('/api/live-voice-interpret', {
@@ -2997,7 +3034,8 @@ export const App: React.FC = () => {
           sourceLang: sLang,
           targetLang: tLang,
           speakerRole,
-          voiceGender: interpVoiceGender
+          voiceGender: interpVoiceGender,
+          voiceStyle: interpVoiceStyle
         })
       });
       const data = await res.json();
@@ -3213,6 +3251,16 @@ export const App: React.FC = () => {
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
             <span>{t.autoHealActive}</span>
           </div>
+
+          {/* Direct Monetag Sponsor Support Button */}
+          <button
+            onClick={triggerMonetizationAd}
+            title="Monetag Sponsor စပွန်ဆာ ဖွင့်မည်"
+            className="px-2.5 py-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md active:scale-95"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">စပွန်ဆာ</span>
+          </button>
 
           {/* Direct Header History Access Button */}
           <button
@@ -7805,7 +7853,7 @@ export const App: React.FC = () => {
                               onClick={() => setInterpVoiceGender('male')}
                               className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
                                 interpVoiceGender === 'male'
-                                  ? 'bg-blue-600 text-white'
+                                  ? 'bg-blue-600 text-white shadow-sm'
                                   : 'text-slate-400 hover:text-white'
                               }`}
                             >
@@ -7816,11 +7864,26 @@ export const App: React.FC = () => {
                               onClick={() => setInterpVoiceGender('female')}
                               className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${
                                 interpVoiceGender === 'female'
-                                  ? 'bg-pink-600 text-white'
+                                  ? 'bg-pink-600 text-white shadow-sm'
                                   : 'text-slate-400 hover:text-white'
                               }`}
                             >
                               👩 အမျိုးသမီးသံ
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Voice Style Selector (Native Standard) */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-400 text-[11px] font-bold">🎭 အသံစတိုင်လ်:</span>
+                          <div className="flex items-center bg-[#151926] p-0.5 rounded-lg border border-amber-500/30">
+                            <button
+                              type="button"
+                              onClick={() => setInterpVoiceStyle('native')}
+                              className="px-3 py-1 rounded-md text-[10px] font-bold bg-emerald-600 text-white shadow-sm"
+                              title="သဘာဝကျကျ အတိအကျ ပီသသော Native အသံ"
+                            >
+                              ✨ ပုံမှန် Native အသံ (Standard)
                             </button>
                           </div>
                         </div>
@@ -9078,40 +9141,139 @@ export const App: React.FC = () => {
         VoiceMaster Studio • 10k Chars Real Human TTS & AI Viral Scriptwriter
       </footer>
 
-      {/* In-App Ad Popup Modal (Mandatory 20-second viewing before closing) */}
+      {/* Monetag Direct Link (SmartLink) Sponsor Modal with External Browser Launch & Guidance */}
       {showInAppAdModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-[#121520] border border-white/20 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
+          <div className="bg-[#121520] border border-amber-500/30 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col my-auto max-h-[92vh]">
+            {/* Modal Header */}
             <div className="p-3.5 bg-[#171a29] border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-black">
                   SPONSORED
                 </span>
                 <span className="text-xs font-semibold text-slate-200">
-                  စပွန်ဆာ ကြော်ငြာ ကမ်းလှမ်းချက်
+                  Monetag SmartLink • စပွန်ဆာ ကမ်းလှမ်းချက်
                 </span>
               </div>
               
-              {/* Top Countdown indicator */}
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-[11px] font-mono text-indigo-300 font-bold">
-                <Clock className="w-3.5 h-3.5 text-indigo-400" />
-                <span>{adCountdown > 0 ? `${adCountdown}s ကျန်` : 'ပိတ်နိုင်ပါပြီ'}</span>
+              <div className="flex items-center gap-2">
+                {/* Link Configuration / Settings Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTempDirectLink(monetagDirectLink);
+                    setShowLinkConfigModal(true);
+                  }}
+                  title="Monetag Link အသစ် ပြောင်းလဲရန်"
+                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-[11px] font-bold flex items-center gap-1 border border-white/10 transition-all"
+                >
+                  <Settings2 className="w-3 h-3 text-amber-400" />
+                  <span className="hidden sm:inline">Link ပြင်ရန်</span>
+                </button>
+
+                {/* Top Countdown indicator */}
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-[11px] font-mono text-indigo-300 font-bold">
+                  <Clock className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>{adCountdown > 0 ? `${adCountdown}s ကျန်` : 'ပြီးစီးပါပြီ ✓'}</span>
+                </div>
               </div>
             </div>
 
-            {/* In-App Ad Content Container */}
-            <div className="flex-1 bg-black min-h-[360px] sm:min-h-[420px] relative">
-              <iframe
-                src={adsterraDirectLink}
-                title="Sponsor Offer"
-                sandbox="allow-scripts allow-same-origin allow-forms"
-                className="w-full h-full min-h-[360px] sm:min-h-[420px] border-none"
-              />
+            {/* Modal Body: High-Conversion Monetag Sponsor Card */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1">
+              {/* Highlight Hero Card */}
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-purple-500/10 border border-amber-500/30 text-center space-y-2">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 mx-auto flex items-center justify-center shadow-lg shadow-orange-500/30">
+                  <Sparkles className="w-6 h-6 text-black" />
+                </div>
+                <h3 className="text-sm font-extrabold text-white">
+                  အခမဲ့ AI ဝန်ဆောင်မှု ဆက်လက်ရယူရန် စပွန်ဆာကို ဖွင့်ပေးပါ
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Monetag Direct Link (CPM/CPA) စနစ်ဖြစ်သောကြောင့် ဖုန်း၏ ပြင်ပ Browser (Chrome) တွင် စာမျက်နှာ အပြည့်အဝ ပွင့်သွားမှသာ Impression ဝင်ရောက်မည် ဖြစ်ပါသည်။
+                </p>
+              </div>
+
+              {/* 3-Step Clear User Guidance (Impression & Conversion Success) */}
+              <div className="space-y-2 bg-[#0e1017] p-3.5 rounded-xl border border-white/5 text-xs">
+                <div className="font-bold text-amber-400 flex items-center gap-1.5 pb-1 border-b border-white/5">
+                  <Info className="w-3.5 h-3.5" />
+                  <span>လွယ်ကူသော အဆင့် ၃ ဆင့် လမ်းညွှန်ချက်-</span>
+                </div>
+
+                <div className="space-y-2 pt-1 text-slate-300">
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                      ၁
+                    </span>
+                    <p>
+                      အောက်ပါ <strong className="text-amber-300">"Chrome တွင် ကြော်ငြာ ဖွင့်မည်"</strong> ခလုတ်ကို နှိပ်၍ ကြော်ငြာ စာမျက်နှာသို့ သွားရောက်ပါ။
+                    </p>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                      ၂
+                    </span>
+                    <p>
+                      ကြော်ငြာ စာမျက်နှာတွင် <strong className="text-emerald-300">၁၀ မှ ၁၅ စက္ကန့်ခန့်</strong> စောင့်ဆိုင်းပေးပါ (သို့မဟုတ် ကြော်ငြာထဲရှိ ခလုတ်/App တစ်ခုခုကို ဆက်လက်နှိပ်ပါ)။
+                    </p>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                      ၃
+                    </span>
+                    <p>
+                      အချိန်ပြည့်ပါက ဤ App သို့ ပြန်လာပြီး အောက်ရှိ <strong className="text-teal-300">"ဆက်လက် အသုံးပြုမည်"</strong> ခလုတ်ကို နှိပ်ပါ။
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Primary Call-to-Action Button to launch External Browser */}
+              <div className="space-y-2 pt-1">
+                <a
+                  href={monetagDirectLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => {
+                    setHasOpenedAd(true);
+                  }}
+                  className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-xl shadow-orange-500/30 active:scale-98 transition-all animate-pulse text-center"
+                >
+                  <ExternalLink className="w-4.5 h-4.5 shrink-0" />
+                  <span>🌐 Chrome / Browser တွင် ကြော်ငြာ ဖွင့်မည် (Open Sponsor)</span>
+                </a>
+
+                {/* Status indicator */}
+                <div className="text-center">
+                  {hasOpenedAd ? (
+                    <p className="text-[11px] font-semibold text-emerald-400 flex items-center justify-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Chrome တွင် ဖွင့်ပြီးပါပြီ။ {adCountdown > 0 ? `${adCountdown} စက္ကန့် စောင့်ဆိုင်းနေပါသည်...` : 'အချိန်ပြည့်ပါပြီ!'}</span>
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-amber-300/80 flex items-center justify-center gap-1">
+                      <span>⚠️ Impression တက်စေရန် အထက်ပါ ခလုတ်ကို နှိပ်၍ Chrome တွင် ဖွင့်ပေးပါ</span>
+                    </p>
+                  )}
+                </div>
+
+                {/* Progress Bar */}
+                <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden border border-white/5">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 via-indigo-500 to-emerald-500 transition-all duration-1000"
+                    style={{ width: `${Math.min(100, Math.max(5, ((15 - adCountdown) / 15) * 100))}%` }}
+                  />
+                </div>
+              </div>
             </div>
 
+            {/* Modal Footer */}
             <div className="p-3.5 bg-[#121520] border-t border-white/10 flex items-center justify-between gap-3 text-xs">
               <span className="text-slate-400 text-[11px]">
-                {adCountdown > 0 ? `ကျေးဇူးပြု၍ ${adCountdown} စက္ကန့် ကြည့်ရှုပေးပါခင်ဗျာ...` : 'ကြော်ငြာ ကြည့်ရှုပြီးပါပြီ'}
+                {adCountdown > 0 ? `${adCountdown}s စက္ကန့် စောင့်ပါ...` : 'စပွန်ဆာ ကြည့်ရှုပြီးပါပြီ ✓'}
               </span>
 
               {adCountdown > 0 ? (
@@ -9124,12 +9286,83 @@ export const App: React.FC = () => {
                 </button>
               ) : (
                 <button
+                  type="button"
                   onClick={() => setShowInAppAdModal(false)}
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 active:scale-95 transition-all"
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 active:scale-95 transition-all flex items-center gap-1.5"
                 >
-                  ပိတ်မည် (Close Ad) ✓
+                  <Check className="w-4 h-4" />
+                  <span>ဆက်လက် အသုံးပြုမည် (Continue)</span>
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Monetag Direct Link Configuration / Customizer Modal */}
+      {showLinkConfigModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-[#121520] border border-amber-500/40 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <Settings2 className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-bold text-white">Monetag Direct Link ပြင်ဆင်ရန်</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLinkConfigModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <label className="font-bold text-slate-300 block">
+                Monetag Direct Link (SmartLink URL):
+              </label>
+              <input
+                type="url"
+                value={tempDirectLink}
+                onChange={(e) => setTempDirectLink(e.target.value)}
+                placeholder="https://..."
+                className="w-full px-3 py-2.5 rounded-xl bg-[#0a0c12] border border-white/15 text-white text-xs font-mono focus:outline-none focus:border-amber-400"
+              />
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                💡 Monetag Dashboard &gt; Direct Links မှ Link အသစ်တစ်ခု ပြန်ထုတ်၍ ဤနေရာတွင် ထည့်သွင်းသိမ်းဆည်းနိုင်ပါသည် (Anti-Adblock &amp; Clean Domain)။
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (tempDirectLink.trim()) {
+                    window.open(tempDirectLink.trim(), '_blank', 'noopener,noreferrer');
+                  }
+                }}
+                className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-xs font-bold flex items-center gap-1.5 transition-all"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
+                <span>စမ်းသပ်ဖွင့်မည် (Test)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const clean = tempDirectLink.trim();
+                  if (clean) {
+                    setMonetagDirectLink(clean);
+                    try {
+                      localStorage.setItem('monetag_direct_link', clean);
+                    } catch (_) {}
+                  }
+                  setShowLinkConfigModal(false);
+                }}
+                className="flex-1 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white text-xs font-bold shadow-lg shadow-orange-500/20 active:scale-95 transition-all text-center"
+              >
+                💾 သိမ်းဆည်းမည် (Save Link)
+              </button>
             </div>
           </div>
         </div>
