@@ -820,7 +820,12 @@ export const App: React.FC = () => {
           setAdCountdown(15);
           setHasOpenedAd(true);
           setShowInAppAdModal(true);
-          openMonetagDirectLink();
+          
+          // Inject the new ad script
+          const s = document.createElement('script');
+          s.dataset.zone = '12003279';
+          s.src = 'https://n6wxm.com/vignette.min.js';
+          document.body.appendChild(s);
         }
         return nextCount;
       });
