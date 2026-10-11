@@ -999,7 +999,7 @@ export function resolveVoiceForText(
     if (hasBurmese) {
       // If text contains Burmese, ensure voice can pronounce Burmese
       if (!BURMESE_CAPABLE_VOICES.has(finalVoice)) {
-        finalVoice = isFemale(finalVoice) ? 'my-MM-NilarNeural' : 'my-MM-ThihaNeural';
+        finalVoice = isFemale(finalVoice) ? 'en-US-AvaMultilingualNeural' : 'en-AU-WilliamMultilingualNeural';
       }
     } else if (finalVoice.startsWith('my-MM-') && hasLatin && !hasBurmese) {
       // Burmese voice requested but text is purely English/Latin -> switch to authentic English voice
@@ -1497,7 +1497,7 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
 
   // If primary voice failed and text contains Burmese, try the native Myanmar counterpart voice!
   if (isBurmese) {
-    const burmeseAltVoice = (engineVoice === 'my-MM-ThihaNeural' || engineVoice.includes('William')) ? 'my-MM-NilarNeural' : 'my-MM-ThihaNeural';
+    const burmeseAltVoice = (engineVoice === 'en-AU-WilliamMultilingualNeural' || engineVoice.includes('William')) ? 'en-US-AvaMultilingualNeural' : 'en-AU-WilliamMultilingualNeural';
     try {
       const commAlt = new Communicate(cleanTxt, {
         voice: burmeseAltVoice,
@@ -2592,49 +2592,49 @@ Output JSON:
     // 1. Add all uploaded images if provided by user
     bgImagePaths.forEach(p => finalBgPaths.push(p));
 
-    // 2. If user uploaded no images or fewer than 8, generate AI images for each story scene
-    const scenesToGenerate = (scriptData.scenes && Array.isArray(scriptData.scenes) && scriptData.scenes.length > 0)
-      ? scriptData.scenes
-      : [
-          scriptData.imagePrompt,
-          `Dramatic opening atmosphere and scenery for "${scriptData.title}", cinematic style`,
-          `Intense story progression and tension visual for "${scriptData.title}", photorealistic`,
-          `Mystery revelation and key interaction for "${scriptData.title}", stunning atmospheric lighting`,
-          `Story climax and pivotal drama scene for "${scriptData.title}", 8k masterpiece`,
-          `Emotional aftermath and powerful resolution scene for "${scriptData.title}", cinematic visual`
-        ];
-
-    // Determine how many images we need (aim for 6 to 10 scene images for complete storytelling)
-    const targetImageCount = Math.max(6, Math.min(10, scenesToGenerate.length));
-    const missingCount = targetImageCount - finalBgPaths.length;
-
-    if (missingCount > 0) {
-      console.log(`[Auto Pipeline ${reqId}] Generating ${missingCount} AI scene images for the story (strictly non-repeating)...`);
-      const promptsToGen = scenesToGenerate.slice(finalBgPaths.length, targetImageCount);
-      const pipelineUsedUrls = new Set<string>();
-      
-      const genResults = await runWithConcurrency(promptsToGen, async (scenePrompt: string, idx: number) => {
-        try {
-          const imgDataUrl = await generateAiImageBuffer(scenePrompt, aspectRatio, 'cinematic', {
-            sceneIndex: finalBgPaths.length + idx,
-            usedUrls: pipelineUsedUrls
-          });
-          if (imgDataUrl && imgDataUrl.includes('base64,')) {
-            const tempBgPath = `/tmp/ap_bg_${reqId}_${finalBgPaths.length + idx}.png`;
-            tempFiles.push(tempBgPath);
-            fs.writeFileSync(tempBgPath, Buffer.from(imgDataUrl.split('base64,')[1], 'base64'));
-            return tempBgPath;
-          }
-        } catch (imgErr) {
-          console.warn(`[Auto Pipeline ${reqId}] Scene image ${idx + 1} generation error:`, imgErr);
-        }
-        return null;
-      }, 2);
-
-      genResults.forEach(p => {
-        if (p && fs.existsSync(p)) finalBgPaths.push(p);
-      });
-    }
+    //     // 2. If user uploaded no images or fewer than 8, generate AI images for each story scene
+    //     const scenesToGenerate = (scriptData.scenes && Array.isArray(scriptData.scenes) && scriptData.scenes.length > 0)
+    //       ? scriptData.scenes
+    //       : [
+    //           scriptData.imagePrompt,
+    //           `Dramatic opening atmosphere and scenery for "${scriptData.title}", cinematic style`,
+    //           `Intense story progression and tension visual for "${scriptData.title}", photorealistic`,
+    //           `Mystery revelation and key interaction for "${scriptData.title}", stunning atmospheric lighting`,
+    //           `Story climax and pivotal drama scene for "${scriptData.title}", 8k masterpiece`,
+    //           `Emotional aftermath and powerful resolution scene for "${scriptData.title}", cinematic visual`
+    //         ];
+    
+    //     // Determine how many images we need (aim for 6 to 10 scene images for complete storytelling)
+    //     const targetImageCount = Math.max(6, Math.min(10, scenesToGenerate.length));
+    //     const missingCount = targetImageCount - finalBgPaths.length;
+    
+    //     if (missingCount > 0) {
+    //       console.log(`[Auto Pipeline ${reqId}] Generating ${missingCount} AI scene images for the story (strictly non-repeating)...`);
+    //       const promptsToGen = scenesToGenerate.slice(finalBgPaths.length, targetImageCount);
+    //       const pipelineUsedUrls = new Set<string>();
+          
+    //       const genResults = await runWithConcurrency(promptsToGen, async (scenePrompt: string, idx: number) => {
+    //         try {
+    //           const imgDataUrl = await generateAiImageBuffer(scenePrompt, aspectRatio, 'cinematic', {
+    //             sceneIndex: finalBgPaths.length + idx,
+    //             usedUrls: pipelineUsedUrls
+    //           });
+    //           if (imgDataUrl && imgDataUrl.includes('base64,')) {
+    //             const tempBgPath = `/tmp/ap_bg_${reqId}_${finalBgPaths.length + idx}.png`;
+    //             tempFiles.push(tempBgPath);
+    //             fs.writeFileSync(tempBgPath, Buffer.from(imgDataUrl.split('base64,')[1], 'base64'));
+    //             return tempBgPath;
+    //           }
+    //         } catch (imgErr) {
+    //           console.warn(`[Auto Pipeline ${reqId}] Scene image ${idx + 1} generation error:`, imgErr);
+    //         }
+    //         return null;
+    //       }, 2);
+    
+    //       genResults.forEach(p => {
+    //         if (p && fs.existsSync(p)) finalBgPaths.push(p);
+    //       });
+    //     }
 
     // 3. Guarantee at least 6 distinct atmospheric backdrops if AI generation returned fewer
     const fallbackGradients = ['0x0f172a', '0x1e1b4b', '0x31103f', '0x022c22', '0x3f1d24', '0x18181b', '0x172554', '0x2e1065'];
@@ -4624,12 +4624,12 @@ app.post('/api/audio-to-video', upload.fields([
 
     const alignment = subtitlePosition === 'middle' ? 5 : 2; // 2 = bottom-center, 5 = center
     const marginV = subtitlePosition === 'middle' ? 20 : (height >= 1000 ? 68 : 46);
-    const fontSize = Number(subtitleFontSize) && Number(subtitleFontSize) > 20 ? Number(subtitleFontSize) : (height >= 1000 ? 26 : 22);
+    const fontSize = Number(subtitleFontSize) && Number(subtitleFontSize) > 20 ? Number(subtitleFontSize) : (height >= 1000 ? 28 : 24);
 
     const escapedSrt = srtFilePath ? srtFilePath.replace(/\\/g, '/').replace(/:/g, '\\:') : '';
     const fontsDir = '/usr/share/fonts/truetype/noto';
     const subtitleFilter = escapedSrt
-      ? `,subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='Fontname=Noto Sans Myanmar,FontSize=${fontSize},Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=${alignment},MarginV=${marginV}'`
+      ? `,subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='Fontname=Noto Sans Myanmar,FontSize=${fontSize},Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=2.5,Shadow=1.0,Alignment=${alignment},MarginV=${marginV}'`
       : '';
 
     // Color Grading Filter
@@ -5288,16 +5288,17 @@ app.post('/api/generate-story-script', async (req: Request, res: Response) => {
     console.log(`Starting Pro Script Generation for topic: "${topic}" (${genre}) Template: ${template}...`);
 
     // Part 1: Act 1 & Act 2
-    const promptPart1 = `You are an acclaimed master novelist, film screenwriter, and viral storyteller in Myanmar.
-The user wants an EXTREMELY IMMERSIVE storytelling script in natural spoken Burmese Unicode (မြန်မာစကားပြော လေသံစစ်စစ်).
+    const promptPart1 = `You are an acclaimed master novelist, and creative writer in Myanmar, known for rich prose, deep emotional insight, and philosophical depth.
+The user wants an EXTREMELY IMMERSIVE storytelling script with high literary quality in natural, evocative spoken Burmese.
 ${templateInstruction}
 
 CRITICAL NARRATIVE RULES:
-1. 100% UNIQUE & FRESH PLOT (ဇာတ်လမ်း မထပ်စေရ): Create a totally original, unique, and unpredictable storyline. Never use generic or repeating clichés. Give distinct character names, authentic Burmese locations, and fresh plot twists so that every user's generated story is 100% one-of-a-kind.
-2. START IMMEDIATELY: Do NOT include any introductions, greetings (like "Hello everyone"), or meta-declarations.
-3. NO 'ဇာတ်ကောင်' META WORDS: NEVER use the word "ဇာတ်ကောင်" (character), "အဓိကဇာတ်ကောင်" (main character), or "ဇာတ်ကောင်ဖြစ်သူ". Use real names or natural pronouns like "သူ", "သူမ", "လူငယ်တစ်ယောက်", "ကိုအောင်".
-4. IMMERSIVE ONLY: Write ONLY the actual narrative story. Start with the first scene directly.
-5. AUTHENTIC SPEECH: Use natural Burmese spoken intonation (မြန်မာစကားပြော လေသံစစ်စစ် "တယ်/ပါ/မှာ/တဲ့/နော်"). Never use bookish "သည်/၏/၌/၍/သော်လည်း".
+1. LITERARY PROSE & RHYTHM: Write with the depth and structural variety of a professional novel. Use metaphors, vivid sensory details, strong imagery, and evocative prose rhythm to capture feelings and atmosphere, rather than just narrating events.
+2. DYNAMIC NARRATIVE VOICE & THEMATIC DEPTH: Let characters live their experiences. Show, don't tell. Explore underlying themes and motives. Use a variety of narrative techniques to make the scene feel alive and multi-dimensional.
+3. 100% UNIQUE & FRESH PLOT: Create a totally original, unique, and unpredictable storyline. Never use generic or repeating clichés.
+4. START IMMEDIATELY: Do NOT include any introductions, greetings (like "Hello everyone"), or meta-declarations.
+5. NO 'ဇာတ်ကောင်' META WORDS: NEVER use the word "ဇာတ်ကောင်" (character) or its variants. Use real names or natural pronouns like "သူ", "သူမ", "လူငယ်တစ်ယောက်", "ကိုအောင်".
+6. AUTHENTIC SPEECH & PROSE: Use natural Burmese spoken intonation in dialogues, but rich literary prose in descriptions. Never use bookish "သည်/၏/၌/၍/သော်လည်း".
 
 Topic/Theme: "${topic.trim()}"
 Genre: "${genre}"
@@ -5309,7 +5310,7 @@ INSTRUCTIONS FOR PART 1:
 {
   "title": "string (Creative Myanmar Title)",
   "category": "string",
-  "part1Text": "string (long spoken Burmese story text)"
+  "part1Text": "string (long literary spoken Burmese story text)"
 }`;
 
     let resPart1: any = null;
@@ -5346,8 +5347,9 @@ ${part1Story.slice(-1200)}
 
 INSTRUCTIONS FOR PART 2:
 - Write Part 2 covering Act 3 (Shocking climax, revelation of the true mystery, intense heart-pounding moments) and Act 4 (Emotional aftermath, realization, memorable lesson/conclusion).
+- IMPORTANT: Maintain the literary quality, emotional depth, and consistent narrative voice established in Part 1 throughout this part. Ensure the thematic progression from Part 1 is honored and deepened in the conclusion. Use sophisticated prose.
 - IMPORTANT: You MUST write exactly or at least ${partTargetChars} Myanmar Unicode characters for this Part 2 so the grand total reaches exactly ${totalTargetChars} characters (~${duration} runtime)!
-- Continue smoothly from Part 1.
+- Continue smoothly from Part 1, maintaining the same narrative perspective and literary depth.
 - Do NOT include any conclusions like "Thanks for watching" or "The end". Just end the story naturally.
 - Do NOT include bracketed directions like [Music] or [Ending].
 
@@ -6544,8 +6546,7 @@ app.post('/api/burn-subtitles', async (req: Request, res: Response) => {
 
     const fontsDir = '/usr/share/fonts/truetype/noto';
     const escapedSrt = tempSrt.replace(/\\/g, '/').replace(/:/g, '\\:');
-    const forceStyle = `Fontname=Noto Sans Myanmar,FontSize=24,Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=2,MarginV=45`;
-    const ffmpegCmd = `ffmpeg -y -i "${tempInVideo}" -vf "subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='${forceStyle}'" -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -pix_fmt yuv420p -c:a copy "${tempOutVideo}"`;
+    const ffmpegCmd = `ffmpeg -y -i "${tempInVideo}" -vf "subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='Fontname=Noto Sans Myanmar,FontSize=26,Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=2.5,Shadow=1.0,Alignment=2,MarginV=45'" -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 -pix_fmt yuv420p -c:a copy "${tempOutVideo}"`;
     
     await execAsync(ffmpegCmd);
 
@@ -6604,8 +6605,7 @@ app.post('/api/burn-subtitles-multipart', upload.single('videoFile'), async (req
 
     const fontsDir = '/usr/share/fonts/truetype/noto';
     const escapedSrt = tempSrt.replace(/\\/g, '/').replace(/:/g, '\\:');
-    const forceStyle = `Fontname=Noto Sans Myanmar,FontSize=24,Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=2,MarginV=45`;
-    const ffmpegCmd = `ffmpeg -y -i "${file.path}" -vf "subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='${forceStyle}'" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a copy "${tempOutVideo}"`;
+    const ffmpegCmd = `ffmpeg -y -i "${file.path}" -vf "subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='Fontname=Noto Sans Myanmar,FontSize=26,Bold=1,PrimaryColour=${primaryColour},OutlineColour=&H00000000,BorderStyle=1,Outline=2.5,Shadow=1.0,Alignment=2,MarginV=45'" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a copy "${tempOutVideo}"`;
     
     await execAsync(ffmpegCmd);
 
@@ -6816,7 +6816,7 @@ app.post('/api/dub-video-srt', upload.single('videoFile'), async (req: Request, 
       fs.writeFileSync(tempSrt, srtText.trim());
       const fontsDir = '/usr/share/fonts/truetype/noto';
       const escapedSrt = tempSrt.replace(/\\/g, '/').replace(/:/g, '\\:');
-      const forceStyle = "Fontname=Noto Sans Myanmar,FontSize=24,Bold=1,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3.2,Shadow=1.5,Alignment=2,MarginV=45";
+      const forceStyle = "Fontname=Noto Sans Myanmar,FontSize=26,Bold=1,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2.5,Shadow=1.0,Alignment=2,MarginV=45";
       filterComplexParts.push(`[0:v]subtitles=${escapedSrt}:fontsdir=${fontsDir}:force_style='${forceStyle}'[final_video]`);
       videoMap = '[final_video]';
     }
@@ -7340,6 +7340,63 @@ Respond ONLY in valid JSON matching:
   }
 });
 
+// // AI High Quality Image Generation & Editing API
+// app.post('/api/ai-image-generate', async (req: Request, res: Response) => {
+//   try {
+//     const { prompt, model = 'gemini-3.1-flash-lite-image', aspectRatio = '1:1', imageSize = '1K', sourceImage } = req.body;
+//     if (!prompt) {
+//       return res.status(400).json({ success: false, error: 'Prompt is required' });
+//     }
+//
+//     const ai = new GoogleGenAI({
+//       apiKey: process.env.GEMINI_API_KEY,
+//       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+//     });
+//
+//     const parts: any[] = [];
+//     if (sourceImage) {
+//       const base64Data = sourceImage.includes('base64,') ? sourceImage.split('base64,')[1] : sourceImage;
+//       const mimeType = sourceImage.includes('image/png') ? 'image/png' : 'image/jpeg';
+//       parts.push({
+//         inlineData: { data: base64Data, mimeType }
+//       });
+//     }
+//     parts.push({ text: prompt });
+//
+//     const response = await ai.models.generateContent({
+//       model: model,
+//       contents: { parts },
+//       config: {
+//         imageConfig: {
+//           aspectRatio,
+//           imageSize: (model === 'gemini-nano-banana-2.1' || model === 'gemini-3-pro-image') ? imageSize : undefined
+//         }
+//       }
+//     });
+//
+//     let imageUrl = '';
+//     let responseText = '';
+//     if (response.candidates?.[0]?.content?.parts) {
+//       for (const part of response.candidates[0].content.parts) {
+//         if (part.inlineData) {
+//           imageUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
+//         } else if (part.text) {
+//           responseText += part.text;
+//         }
+//       }
+//     }
+//
+//     if (!imageUrl) {
+//       return res.status(500).json({ success: false, error: 'No image generated by model', text: responseText });
+//     }
+//
+//     return res.json({ success: true, imageUrl, text: responseText });
+//   } catch (err: any) {
+//     console.error('AI Image Generation error:', err);
+//     return res.status(500).json({ success: false, error: err.message || 'Failed to generate image' });
+//   }
+// });
+
 // Guarantee all /api/* errors return JSON (never return Express default HTML error page)
 app.use((err: any, req: Request, res: Response, next: any) => {
   if (req.path.startsWith('/api') || req.url.startsWith('/api')) {
@@ -7376,6 +7433,34 @@ app.post('/api/ai-agent-auto-heal', async (req: Request, res: Response) => {
     health,
     timestamp: Date.now()
   });
+});
+
+// Monetag verification explicit routes
+app.get('/658d57c804c8d5ca0d0721f1518e4a9c.html', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send('658d57c804c8d5ca0d0721f1518e4a9c');
+});
+app.get('/monetag.html', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send('658d57c804c8d5ca0d0721f1518e4a9c');
+});
+app.get('/sw.js', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.send(`self.options = {
+    "domain": "5gvci.com",
+    "zoneId": 12002106
+};
+self.lary = "";
+importScripts('https://5gvci.com/act/files/service-worker.min.js?r=sw');`);
+});
+app.get('/service-worker.js', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.send(`self.options = {
+    "domain": "5gvci.com",
+    "zoneId": 12002106
+};
+self.lary = "";
+importScripts('https://5gvci.com/act/files/service-worker.min.js?r=sw');`);
 });
 
 // Guarantee all unhandled /api/* endpoints return JSON 404 (never return HTML)

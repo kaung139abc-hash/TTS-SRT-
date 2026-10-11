@@ -716,8 +716,8 @@ export const App: React.FC = () => {
     } catch (_) {}
   };
 
-  // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator' | 'silenceRemover' | 'subtitleBurner'
-  const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator' | 'silenceRemover' | 'subtitleBurner'>('tts');
+  // Main Navigation Modes: 'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator' | 'silenceRemover' | 'subtitleBurner' | 'aiImageStudio'
+  const [mainMode, setMainMode] = useState<'tts' | 'dialogue' | 'writer' | 'video' | 'voiceChanger' | 'history' | 'imager' | 'transcribe' | 'audioModifier' | 'autoPipeline' | 'translator' | 'silenceRemover' | 'subtitleBurner' | 'aiImageStudio'>('tts');
 
   // ----------------------------------------------------
   // Mode 1: Text-to-Speech (TTS) State
@@ -803,8 +803,9 @@ export const App: React.FC = () => {
         // Translation features: Trigger ad popup after every 4 translations (4, 8, 12, 16, ...)
         if (nextCount > 0 && nextCount % 4 === 0) {
           setAdCountdown(15);
-          setHasOpenedAd(false);
+          setHasOpenedAd(true);
           setShowInAppAdModal(true);
+          openMonetagDirectLink();
         }
         return nextCount;
       });
@@ -817,8 +818,9 @@ export const App: React.FC = () => {
         // Other features: Trigger ad popup after every 2 usages (2, 4, 6, 8, ...) as before
         if (nextCount > 0 && nextCount % 2 === 0) {
           setAdCountdown(15);
-          setHasOpenedAd(false);
+          setHasOpenedAd(true);
           setShowInAppAdModal(true);
+          openMonetagDirectLink();
         }
         return nextCount;
       });
@@ -922,6 +924,82 @@ export const App: React.FC = () => {
   const [editingCues, setEditingCues] = useState<Array<{ index: number; startTime: string; endTime: string; text: string }>>([]);
   const [isBurningSubtitles, setIsBurningSubtitles] = useState(false);
   const [burnError, setBurnError] = useState('');
+
+  // ----------------------------------------------------
+  // AI Image Studio State (High Quality AI Image Generation & Editing)
+  // ----------------------------------------------------
+  const [aiImagePrompt, setAiImagePrompt] = useState('A majestic futuristic cyberpunk city in Yangon at sunset, 4k resolution, photorealistic');
+  const [aiImageModel, setAiImageModel] = useState<'gemini-3.1-flash-lite-image' | 'gemini-nano-banana-2.1'>('gemini-3.1-flash-lite-image');
+  const [aiImageAspectRatio, setAiImageAspectRatio] = useState<'1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '1:4' | '4:1'>('1:1');
+  const [aiImageSize, setAiImageSize] = useState<'1K' | '2K' | '4K'>('1K');
+  const [aiImageSource, setAiImageSource] = useState('');
+  const [isAiImageLoading, setIsAiImageLoading] = useState(false);
+  const [aiImageResultUrl, setAiImageResultUrl] = useState('');
+  const [aiImageResultText, setAiImageResultText] = useState('');
+  const [aiImageError, setAiImageError] = useState('');
+  const [aiImageHistory, setAiImageHistory] = useState<Array<{ id: string; prompt: string; imageUrl: string; model: string; timestamp: number }>>(() => {
+    try {
+      const saved = localStorage.getItem('vm_ai_image_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch (_) {
+      return [];
+    }
+  });
+
+  const handleGenerateAiImage = async () => {
+    if (!aiImagePrompt.trim()) {
+      setAiImageError('ကျေးဇူးပြု၍ ပုံဖန်တီးရန် စာသား (Prompt) ထည့်ပါ။');
+      return;
+    }
+    setIsAiImageLoading(true);
+    setAiImageError('');
+    setAiImageResultUrl('');
+    setAiImageResultText('');
+
+    try {
+      const res = await fetch('/api/ai-image-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: aiImagePrompt,
+          model: aiImageModel,
+          aspectRatio: aiImageAspectRatio,
+          imageSize: aiImageSize,
+          sourceImage: aiImageSource || undefined
+        })
+      });
+      const data = await res.json();
+      if (!data.success || !data.imageUrl) {
+        throw new Error(data.error || 'ပုံဖန်တီး၍ မရပါ။');
+      }
+
+      setAiImageResultUrl(data.imageUrl);
+      setAiImageResultText(data.text || '');
+
+      const newRecord = {
+        id: 'img_' + Date.now(),
+        prompt: aiImagePrompt,
+        imageUrl: data.imageUrl,
+        model: aiImageModel,
+        timestamp: Date.now()
+      };
+
+      setAiImageHistory(prev => {
+        const updated = [newRecord, ...prev.slice(0, 29)];
+        try {
+          localStorage.setItem('vm_ai_image_history', JSON.stringify(updated));
+        } catch (_) {}
+        return updated;
+      });
+
+      registerGenerationAndCheckAd('ai_image_generation');
+    } catch (err: any) {
+      console.error(err);
+      setAiImageError(err.message || 'ပုံဖန်တီးရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။');
+    } finally {
+      setIsAiImageLoading(false);
+    }
+  };
 
   // Auto-populate subtitle cues if empty to guarantee editor is always visible
   useEffect(() => {
@@ -1526,8 +1604,9 @@ export const App: React.FC = () => {
 
   const triggerMonetizationAd = () => {
     setAdCountdown(15);
-    setHasOpenedAd(false);
+    setHasOpenedAd(true);
     setShowInAppAdModal(true);
+    openMonetagDirectLink();
   };
 
   const downloadAudioFile = (audioUrl: string, filename: string) => {
@@ -3391,6 +3470,7 @@ export const App: React.FC = () => {
             <span>🎬 MP4 Generator</span>
           </button>
 
+
           <button
             onClick={() => setMainMode('voiceChanger')}
             className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
@@ -3469,6 +3549,212 @@ export const App: React.FC = () => {
             <span>{t.tabAudioModifier}</span>
           </button>
         </div>
+
+        {/* ========================================================================= */}
+        {/* AI IMAGE STUDIO MODE: High Quality AI Image Generation & Editing            */}
+        {/* ========================================================================= */}
+        {false && mainMode === 'aiImageStudio' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="bg-[#151926] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-5">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div>
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-cyan-400" />
+                    <span>🎨 AI ပုံစတူဒီယို (High-Quality AI Image Studio)</span>
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Gemini 3.1 Flash-Lite Image နှင့် Nano Banana 2.1 တို့ကို အသုံးပြု၍ အရည်အသွေးမြင့် AI ပုံများကို စိတ်ကြိုက် ဖန်တီးပါ၊ တည်းဖြတ်ပါ
+                  </p>
+                </div>
+              </div>
+
+              {aiImageError && (
+                <div className="p-3 bg-rose-950/60 border border-rose-500/40 text-rose-300 rounded-xl text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{aiImageError}</span>
+                </div>
+              )}
+
+              {/* Prompt Input */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <span>✍️ ပုံဖန်တီးရန် စာသား (Prompt) ရေးပါ</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={aiImagePrompt}
+                  onChange={e => setAiImagePrompt(e.target.value)}
+                  placeholder="ဥပမာ - ရန်ကုန်မြို့ သီတင်းကျွတ်လပြည့်ညက ရွှေတိဂုံစေတီတော်ကြီးရဲ့ ခမ်းနားထည်ဝါပုံ၊ 4K resolution, photorealistic..."
+                  className="w-full bg-[#0d1017] border border-white/15 rounded-xl p-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500/60 leading-relaxed"
+                />
+              </div>
+
+              {/* Settings Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Model Selector */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-400">🤖 AI မော်ဒယ်</label>
+                  <select
+                    value={aiImageModel}
+                    onChange={e => setAiImageModel(e.target.value as any)}
+                    className="w-full bg-[#0d1017] border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/60"
+                  >
+                    <option value="gemini-3.1-flash-lite-image">Gemini 3.1 Flash-Lite Image (မြန်ဆန်)</option>
+                    <option value="gemini-nano-banana-2.1">Gemini Nano Banana 2.1 (4K အရည်အသွေးမြင့်)</option>
+                  </select>
+                </div>
+
+                {/* Aspect Ratio */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-400">📐 ပုံစံအချိုး (Aspect Ratio)</label>
+                  <select
+                    value={aiImageAspectRatio}
+                    onChange={e => setAiImageAspectRatio(e.target.value as any)}
+                    className="w-full bg-[#0d1017] border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/60"
+                  >
+                    <option value="1:1">1:1 (စတုရန်း - Instagram / Avatar)</option>
+                    <option value="16:9">16:9 (ဘေးတိုက် - YouTube / Hero Banner)</option>
+                    <option value="9:16">9:16 (ဒေါင်လိုက် - TikTok / Reels / Shorts)</option>
+                    <option value="4:3">4:3 (Card Thumbnail)</option>
+                    <option value="3:4">3:4 (Portrait)</option>
+                    <option value="1:4">1:4 (Ultra Tall)</option>
+                    <option value="4:1">4:1 (Ultra Wide Banner)</option>
+                  </select>
+                </div>
+
+                {/* Image Size */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-400">🔍 ပုံအရွယ်အစား (Image Size)</label>
+                  <select
+                    value={aiImageSize}
+                    onChange={e => setAiImageSize(e.target.value as any)}
+                    className="w-full bg-[#0d1017] border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/60"
+                  >
+                    <option value="1K">1K Standard</option>
+                    <option value="2K">2K High Definition</option>
+                    <option value="4K">4K Ultra HD</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Source Image for Editing (Optional) */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <span>📸 ပုံတည်းဖြတ်ရန် မူရင်းပုံ (Image-to-Image / Optional)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = () => setAiImageSource(reader.result as string);
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    className="text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-cyan-600 file:text-white hover:file:bg-cyan-500 cursor-pointer"
+                  />
+                  {aiImageSource && (
+                    <button
+                      onClick={() => setAiImageSource('')}
+                      className="px-2.5 py-1 rounded-lg bg-rose-950/80 text-rose-300 text-xs font-bold border border-rose-500/30"
+                    >
+                      ဖယ်ရှားမည်
+                    </button>
+                  )}
+                </div>
+                {aiImageSource && (
+                  <div className="w-24 h-24 rounded-xl border border-white/15 overflow-hidden mt-2 relative">
+                    <img src={aiImageSource} alt="Source" className="w-full h-full object-cover" />
+                  </div>
+                )}
+              </div>
+
+              {/* Generate Button */}
+              <button
+                onClick={handleGenerateAiImage}
+                disabled={isAiImageLoading}
+                className="w-full py-3.5 bg-gradient-to-r from-cyan-600 via-teal-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-cyan-600/30 active:scale-[0.99] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isAiImageLoading ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                    <span>AI ဖြင့် ပုံဖန်တီးနေပါပြီ (ခဏစောင့်ပါ)...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5 text-amber-300" />
+                    <span>✨ AI ပုံအသစ် ဖန်တီးမည် (Generate AI Image)</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Result Display */}
+            {aiImageResultUrl && (
+              <div className="bg-[#151926] border border-cyan-500/40 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>ဖန်တီးပြီးသော AI ပုံ</span>
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => downloadFile(aiImageResultUrl, `AI_Studio_${Date.now()}.png`, 'image/png')}
+                      className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 shadow active:scale-95"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>ဒေါင်းလုဒ် (.png)</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 overflow-hidden bg-black/50 flex items-center justify-center p-2">
+                  <img src={aiImageResultUrl} alt="AI Generated" className="max-h-[500px] object-contain rounded-xl" referrerPolicy="no-referrer" />
+                </div>
+                {aiImageResultText && (
+                  <p className="text-xs text-slate-300 bg-black/40 p-3 rounded-xl border border-white/5">
+                    {aiImageResultText}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Gallery History */}
+            {aiImageHistory.length > 0 && (
+              <div className="bg-[#151926] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <History className="w-4 h-4 text-indigo-400" />
+                  <span>ဖန်တီးခဲ့သော ပုံများ မှတ်တမ်း (AI Image Gallery)</span>
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {aiImageHistory.map(item => (
+                    <div
+                      key={item.id}
+                      onClick={() => {
+                        setAiImageResultUrl(item.imageUrl);
+                        setAiImagePrompt(item.prompt);
+                      }}
+                      className="group relative bg-[#0d1017] rounded-xl border border-white/10 overflow-hidden cursor-pointer hover:border-cyan-500/50 transition-all shadow-md"
+                    >
+                      <div className="w-full h-32 bg-black/40 overflow-hidden">
+                        <img src={item.imageUrl} alt={item.prompt} className="w-full h-full object-cover group-hover:scale-105 transition-transform" referrerPolicy="no-referrer" />
+                      </div>
+                      <div className="p-2 space-y-1">
+                        <p className="text-[11px] text-slate-200 line-clamp-2 font-medium">{item.prompt}</p>
+                        <span className="text-[9px] font-mono text-cyan-400 bg-cyan-950/60 px-1.5 py-0.5 rounded">
+                          {new Date(item.timestamp).toLocaleTimeString('my-MM', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ========================================================================= */}
         {/* MODE 1: TEXT-TO-SPEECH (TTS) - Unlimited Chars, 9 Human Voices            */}
@@ -4461,7 +4747,12 @@ export const App: React.FC = () => {
 
                 {/* Script Content */}
                 <div className="bg-[#0c0e14] p-4 sm:p-5 rounded-2xl border border-white/10 max-h-96 overflow-y-auto leading-relaxed text-sm text-slate-200 whitespace-pre-line font-sans select-text">
-                  {generatedScript.script}
+                  <textarea
+                    value={generatedScript.script}
+                    onChange={(e) => setGeneratedScript(prev => prev ? { ...prev, script: e.target.value } : null)}
+                    className="w-full h-full bg-transparent border-none focus:outline-none focus:ring-0 resize-none font-sans leading-relaxed text-slate-200"
+                    rows={15}
+                  />
                 </div>
 
                 <div className="p-3 bg-indigo-950/30 border border-indigo-500/20 rounded-xl flex items-center justify-between text-xs text-indigo-300">
