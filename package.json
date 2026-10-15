@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch server.ts",
-    "build": "vite build",
+    "build": "rm -rf dist && vite build",
     "lint": "tsc --noEmit",
     "preview": "vite preview",
     "start": "node --import tsx server.ts"
