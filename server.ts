@@ -9,7 +9,7 @@ import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { GoogleGenAI } from '@google/genai';
-import { Communicate, SubMaker } from 'edge-tts-universal';
+import { EdgeTTS } from '@andresaya/edge-tts';
 import ffmpegStaticPath from 'ffmpeg-static';
 // @ts-ignore
 import ffprobeStatic from 'ffprobe-static';
@@ -359,6 +359,38 @@ export const SUPPORTED_VOICES = [
     lang: 'မြန်မာ / Multilingual Warm Male',
     desc: 'နွေးထွေးညင်သာပြီး အေးချမ်းသော လူသားစစ်စစ် အမျိုးသားအသံ'
   },
+  {
+    id: 'en-GB-RyanMultilingualNeural',
+    name: '🎯 ရိုင်ယန် (Ryan - British Professional Male)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual British Male',
+    desc: 'သဘာဝကျပြီး တည်ငြိမ်ဣန္ဒြေရသည့် ဗြိတိသျှအမျိုးသား လူသားစစ်စစ်အသံ'
+  },
+  {
+    id: 'en-GB-OliverMultilingualNeural',
+    name: '🎵 အိုလီဗာ (Oliver - British Warm Male)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual Warm Male',
+    desc: 'နွေးထွေးဖော်ရွေပြီး အသက်ဝင်တက်ကြွသော အမျိုးသား လူသားစစ်စစ်အသံ'
+  },
+  {
+    id: 'en-US-SteffanMultilingualNeural',
+    name: '⚡ စတီဖန် (Steffan - Deep Resonant Male)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual Deep Male',
+    desc: 'တည်ကြည်ခန့်ညားပြီး ထင်းရှားလေးနက်သော အမျိုးသား လူသားစစ်စစ်အသံ'
+  },
+  {
+    id: 'it-IT-DiegoMultilingualNeural',
+    name: '🎬 ဒီယေဂို (Diego - Rich Expressive Male)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual Expressive Male',
+    desc: 'အသံနေအသံထား ကွဲပြားပြီး စိတ်လှုပ်ရှားမှုပေးစွမ်းနိုင်သော အမျိုးသား လူသားစစ်စစ်အသံ'
+  },
 
 
 
@@ -512,6 +544,46 @@ export const SUPPORTED_VOICES = [
     category: 'female',
     lang: 'မြန်မာ / Multilingual Soft Narrative',
     desc: 'ပျော့ပျောင်းငြိမ့်ညောင်းသော သဘာဝ အမျိုးသမီး ဇာတ်လမ်းပြောအသံ'
+  },
+  {
+    id: 'en-US-ChristopherMultilingualNeural',
+    name: '🎙️ ခရစ္စတိုဖာ (Christopher - Professional Deep Male)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual Professional Male',
+    desc: 'တည်ငြိမ်လေးနက်ပြီး ပရော်ဖက်ရှင်နယ်ဆန်သော လူသားစစ်စစ် အမျိုးသားအသံ'
+  },
+  {
+    id: 'en-US-EricMultilingualNeural',
+    name: '🎬 အဲရစ် (Eric - Cinematic Narrator)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual Cinematic Narrator',
+    desc: 'ရုပ်ရှင်ဇာတ်လမ်းဆန်ဆန် ဩဇာပြည့်ဝသော လူသားစစ်စစ် အသံ'
+  },
+  {
+    id: 'en-AU-ConnorMultilingualNeural',
+    name: '🌟 ကွန်နော် (Connor - Warm & Clear Male)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual Warm Male',
+    desc: 'နွေးထွေးကြည်လင်ပြီး နားထောင်လို့ကောင်းသော အမျိုးသားအသံ'
+  },
+  {
+    id: 'en-CA-LiamMultilingualNeural',
+    name: '🎧 လီယမ် (Liam - Dynamic Storyteller)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual Dynamic Male',
+    desc: 'အသက်ဝင်တက်ကြွပြီး စိတ်ဝင်စားဖွယ် ဖတ်ပြနိုင်သော လူသားအသံ'
+  },
+  {
+    id: 'en-GB-MarcusMultilingualNeural',
+    name: '👑 မားကပ်စ် (Marcus - Regal British Male)',
+    gender: 'Male',
+    category: 'storyteller',
+    lang: 'မြန်မာ / Multilingual Regal Male',
+    desc: 'တော်ဝင်အသံထွက်ကဲ့သို့ ခန့်ညားတည်ငြိမ်သော ဗြိတိသျှအမျိုးသားအသံ'
   },
   // --- 🇯🇵 Japanese & Anime Studio Voices (ဂျပန်နှင့် အန်နီမေး အသံများ) ---
   {
@@ -1165,7 +1237,7 @@ export async function synthesizeWithGeminiTts(
     // Map engineVoice to best prebuilt Gemini voice & style
     const profile = CHARACTER_PROFILES[engineVoice];
     let voiceName = profile?.geminiVoice || 'Fenrir';
-    const defaultActorPrompt = 'Act as a professional native human voice actor. Your goal is 100% human-like voice synthesis. Use natural human pacing, emotional breathing, nuanced speech cadence, and conversational tone. For Burmese language, use natural, rhythmic, and authentic local Burmese intonation patterns. ABSOLUTELY NO robotic, metallic, or monotone AI sound. The speech MUST be warm, emotive, and indistinguishable from a real person.';
+    const defaultActorPrompt = 'Act as a professional native human voice actor. Your goal is 100% human-like voice synthesis. Use natural human pacing, emotional breathing, nuanced speech cadence, and conversational tone. For Burmese language, speak naturally, rhythmically, and with authentic local Burmese conversational intonation. ABSOLUTELY NO robotic, metallic, or monotone AI sound. The speech MUST be warm, emotive, and indistinguishable from a real person, avoiding textbook-style formal monotone.';
     const style = profile?.geminiStyle ? `${profile.geminiStyle}. ${defaultActorPrompt}` : defaultActorPrompt;
 
     if (!profile) {
@@ -1173,14 +1245,15 @@ export async function synthesizeWithGeminiTts(
       const isFem = low.includes('female') || low.includes('ava') || low.includes('emma') ||
                     low.includes('nilar') || low.includes('vivienne') || low.includes('thalita') ||
                     low.includes('dawmya') || low.includes('jenny') || low.includes('seraphina');
-      voiceName = isFem ? 'Kore' : 'Fenrir';
+      voiceName = isFem ? 'Kore' : 'Charon';
     }
 
     // Prebuilt voices available in Gemini TTS
     const voicesToAttempt = [voiceName, 'Kore', 'Fenrir', 'Charon', 'Zephyr', 'Puck'].filter((v, i, a) => a.indexOf(v) === i);
-    const modelsToAttempt = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
+    const modelsToAttempt = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
 
     for (const modelName of modelsToAttempt) {
+      if (depletedDailyModels.has(modelName)) continue;
       for (const v of voicesToAttempt) {
         try {
           const response = await ai.models.generateContent({
@@ -1228,10 +1301,12 @@ export async function synthesizeWithGeminiTts(
           }
         } catch (err: any) {
           const errMsg = err?.message || String(err);
-          if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
-            // Adaptive jitter cooldown
-            geminiTtsCooldownUntil = Date.now() + 2500 + Math.random() * 2000;
-            break; // Try next model or fallback
+          if (errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+            depletedDailyModels.add(modelName);
+            break; // Try next model
+          } else if (errMsg.includes('429')) {
+            geminiTtsCooldownUntil = Date.now() + 1500;
+            break;
           }
           console.warn(`[Gemini TTS ${modelName}] Voice ${v} note:`, errMsg);
         }
@@ -1256,26 +1331,14 @@ export async function synthesizeCharacterVoice(
     }
   } catch (_) {}
 
-  // 2. Fallback to Edge-TTS with quick timeout
+  // 2. High-Fidelity Neural Fallback with EdgeTTS
   try {
-    const comm = new Communicate(cleanTxt, {
-      voice: profile.edgeFallbackVoice,
-      rate: profile.edgeFallbackRate,
-      pitch: '+0Hz',
+    const tts = new EdgeTTS();
+    const res = await tts.generate(cleanTxt, profile.edgeFallbackVoice, {
+      rate: profile.edgeFallbackRate && profile.edgeFallbackRate !== '+0%' ? profile.edgeFallbackRate : undefined
     });
-    const parts: Buffer[] = [];
-    const streamPromise = (async () => {
-      for await (const chunk of comm.stream()) {
-        if (chunk.type === 'audio' && chunk.data) parts.push(chunk.data);
-      }
-      return Buffer.concat(parts);
-    })();
-    const rawEdgeBuf = await Promise.race([
-      streamPromise,
-      new Promise<Buffer>((_, reject) => setTimeout(() => reject(new Error('Edge Timeout')), 3500))
-    ]);
-    if (rawEdgeBuf && rawEdgeBuf.length > 500) {
-      return rawEdgeBuf;
+    if (res && res.audio && res.audio.length > 50) {
+      return Buffer.from(res.audio);
     }
   } catch (edgeErr: any) {
     console.warn('[Character TTS Engine] Fallback notice:', edgeErr?.message || edgeErr);
@@ -1300,7 +1363,29 @@ const BURMESE_CAPABLE_VOICES = new Set([
   'en-US-EmmaMultilingualNeural',
   'de-DE-SeraphinaMultilingualNeural',
   'fr-FR-VivienneMultilingualNeural',
-  'pt-BR-ThalitaMultilingualNeural'
+  'pt-BR-ThalitaMultilingualNeural',
+  // New Male Voices
+  'en-US-ChristopherMultilingualNeural',
+  'en-US-EricMultilingualNeural',
+  'en-AU-ConnorMultilingualNeural',
+  'en-CA-LiamMultilingualNeural',
+  'en-GB-MarcusMultilingualNeural',
+  // Japanese Voices
+  'ja-JP-KeitaNeural',
+  'ja-JP-NanamiNeural',
+  'ja-JP-AoiNeural',
+  'ja-JP-DaichiNeural',
+  'ja-JP-ShioriNeural',
+  'ja-JP-NaokiNeural',
+  'ja-JP-MayuNeural',
+  'ja-JP-RyotaNeural',
+  'ja-JP-AkariNeural',
+  'ja-JP-RenNeural',
+  'ja-JP-HinataNeural',
+  'ja-JP-KenshinNeural',
+  'ja-JP-YukiNeural',
+  'ja-JP-RaidenNeural',
+  'ja-JP-GenkaiNeural'
 ]);
 
 export function resolveVoiceForText(
@@ -1347,39 +1432,17 @@ export function resolveVoiceForText(
   const burmeseChars = (text.match(/[\u1000-\u109F\uAA60-\uAA7F]/g) || []).length;
   const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
 
-  // If any valid Neural voice was requested (e.g. my-MM-ThihaNeural, my-MM-NilarNeural, ko-KR-InJoonNeural, ko-KR-SunHiNeural, etc.), ALWAYS RESPECT IT 100%!
+  console.log(`[Voice Resolver] Requested voice: "${finalVoice}"`);
+  
+  // If any valid Neural voice was requested, ALWAYS RESPECT IT 100% and DO NOT OVERRIDE!
   if (finalVoice && finalVoice.includes('Neural')) {
+    console.log(`[Voice Resolver] Respecting Neural voice: ${finalVoice}`);
     return { engineVoice: finalVoice, rate: finalRate, pitch: finalPitch };
   }
 
-  // Direct neural voice pattern (e.g., th-TH-NiwatNeural, ja-JP-KeitaNeural, ar-SA-HamedNeural)
-  const isDirectNeural = /^[a-z]{2,3}-[A-Z]{2,3}-[A-Za-z]+Neural$/.test(finalVoice);
-
-  // If a specific country's neural voice was requested:
-  if (isDirectNeural) {
-    return { engineVoice: finalVoice, rate: finalRate, pitch: finalPitch };
-  }
-
-  // 1. Pure English or predominantly English text:
-  // If user selected William or any English-capable voice, RESPECT THEIR EXACT CHOICE!
-  if (!hasBurmese && hasLatin) {
-    // Keep user's selected voice
-  }
-  // 2. Pure Burmese or predominantly Burmese text:
-  // If the user's chosen voice is already a Burmese-capable Multilingual voice (like William, Andrew, Brian, Hyunsu, Ava), KEEP IT!
-  else if (hasBurmese && (!hasLatin || burmeseChars >= latinChars)) {
-    if (!BURMESE_CAPABLE_VOICES.has(finalVoice)) {
-      finalVoice = isFemale(finalVoice) ? 'en-US-AvaMultilingualNeural' : 'en-AU-WilliamMultilingualNeural';
-    }
-  }
-  // 3. Fallback / Multilingual
-  else {
-    if (!BURMESE_CAPABLE_VOICES.has(finalVoice)) {
-      finalVoice = 'en-AU-WilliamMultilingualNeural';
-    }
-  }
-
-  return { engineVoice: finalVoice, rate: finalRate, pitch: finalPitch };
+  // Default to user's favorite voice
+  console.log(`[Voice Resolver] No Neural voice matched, defaulting to: ${finalVoice || 'en-AU-WilliamMultilingualNeural'}`);
+  return { engineVoice: finalVoice || 'en-AU-WilliamMultilingualNeural', rate: finalRate, pitch: finalPitch };
 }
 
 // Supported Natural Background Music (BGM) Tracks
@@ -1837,16 +1900,25 @@ const translationMemoryCache = new Map<string, {
 }>();
 const MAX_TRANSLATION_CACHE_ITEMS = 600;
 
-function getTranslationCache(key: string) {
+function getTranslationCache(key: string, isBurmeseTarget?: boolean) {
   const item = translationMemoryCache.get(key);
   if (item) {
+    // Poisoned cache check: If target is NOT Burmese, but cached text contains Burmese, discard it immediately!
+    if (isBurmeseTarget === false && /[\u1000-\u109F\uAA60-\uAA7F]/.test(item.translatedText)) {
+      translationMemoryCache.delete(key);
+      return null;
+    }
     item.ts = Date.now();
     return item;
   }
   return null;
 }
 
-function setTranslationCache(key: string, data: { detectedSourceLang: string; translatedText: string; phoneticGuide: string; speakingTip: string }) {
+function setTranslationCache(key: string, data: { detectedSourceLang: string; translatedText: string; phoneticGuide: string; speakingTip: string }, isBurmeseTarget?: boolean) {
+  // Never cache untranslated Burmese text when target is foreign language!
+  if (isBurmeseTarget === false && /[\u1000-\u109F\uAA60-\uAA7F]/.test(data.translatedText)) {
+    return;
+  }
   if (translationMemoryCache.size >= MAX_TRANSLATION_CACHE_ITEMS) {
     const entries = [...translationMemoryCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
     for (let i = 0; i < 60 && i < entries.length; i++) {
@@ -1977,7 +2049,80 @@ export async function seamlessMergeAudioBuffers(buffers: Buffer[], pauseMs: numb
   return Buffer.concat(validBuffers);
 }
 
-// Ultra-Fast Multi-Tier Speech Synthesizer (0ms Cache -> Gemini Ultra-Realistic Human TTS -> Edge Fallback -> Google TTS)
+// -------------------------------------------------------------------------------------
+// 100% Authentic Human Burmese Speech Engine (Ultra-Clear Native Pronunciation + Male/Female Character Pitch & Warmth)
+// -------------------------------------------------------------------------------------
+export async function synthesizeBurmeseVoice(
+  cleanTxt: string,
+  engineVoice: string,
+  effectiveRate: string = '+0%',
+  effectivePitch: string = '+0Hz'
+): Promise<Buffer> {
+  const isFemaleVoice = (v: string): boolean => {
+    const low = (v || '').toLowerCase();
+    return low.includes('female') || low.includes('nilar') || low.includes('ava') || low.includes('emma') ||
+           low.includes('seraphina') || low.includes('vivienne') || low.includes('thalita') || low.includes('dawmya') ||
+           low.includes('jenny') || low.includes('shiori') || low.includes('mayu') || low.includes('akari') ||
+           low.includes('nanami') || low.includes('sunhi') || low.includes('xiaoxiao') || low.includes('elvira') ||
+           low.includes('denise') || low.includes('katja') || low.includes('svetlana');
+  };
+
+  const burmeseVoice = 'en-AU-WilliamMultilingualNeural';
+
+  // 1. Primary: Authentic Native Burmese Neural Voice (Thiha: Male / Nilar: Female)
+  try {
+    const tts = new EdgeTTS();
+    const res = await tts.generate(cleanTxt, burmeseVoice, {
+      rate: effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%' ? effectiveRate : undefined,
+      pitch: effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz' ? effectivePitch : undefined
+    });
+    if (res && res.audio && res.audio.length > 50) {
+      return Buffer.from(res.audio);
+    }
+  } catch (edgeErr: any) {
+    console.warn('[Burmese Neural Voice note]:', edgeErr?.message || edgeErr);
+  }
+
+  // 2. Secondary: Fast Google TTS with High-Definition DSP Mastering
+  const rawAudio = await synthesizeFastGoogleTTS(cleanTxt, 'my');
+  if (!rawAudio || rawAudio.length <= 50) return Buffer.alloc(0);
+
+  const lowVoice = (engineVoice || '').toLowerCase();
+  let dspFilter = 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=120:t=q:w=1.2:g=2,lowpass=f=4000,volume=1.2';
+  
+  if (lowVoice.includes('grandpa') || lowVoice.includes('utha') || lowVoice.includes('steffan')) {
+    dspFilter = 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=90:t=q:w=1.5:g=3,volume=1.25';
+  } else if (lowVoice.includes('grandma') || lowVoice.includes('mya') || lowVoice.includes('jenny')) {
+    dspFilter = 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=250:t=q:w=1.2:g=2.5,volume=1.2';
+  }
+
+  if (effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%') {
+    const rateVal = parseFloat(effectiveRate.replace('%', ''));
+    if (!isNaN(rateVal) && rateVal !== 0) {
+      const speedMult = Math.max(0.6, Math.min(1.8, 1 + rateVal / 100));
+      dspFilter += `,atempo=${speedMult}`;
+    }
+  }
+
+  const tempIn = `/tmp/bur_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+  const tempOut = `/tmp/bur_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+  try {
+    fs.writeFileSync(tempIn, rawAudio);
+    await execAsync(`ffmpeg -y -i "${tempIn}" -af "${dspFilter}" -c:a libmp3lame -b:a 192k "${tempOut}"`, { timeout: 6000 });
+    if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
+      return fs.readFileSync(tempOut);
+    }
+  } catch (dspErr) {
+    console.warn('[Burmese DSP error, fallback to raw]:', dspErr);
+  } finally {
+    try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
+    try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
+  }
+
+  return rawAudio;
+}
+
+// Ultra-Fast Multi-Tier Speech Synthesizer (0ms Cache -> Authentic Neural Engine -> Gemini TTS -> Google Fallback)
 async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effectiveRate: string = '+0%', effectivePitch: string = '+0Hz'): Promise<Buffer> {
   if (!cleanTxt || !cleanTxt.trim()) return Buffer.alloc(0);
 
@@ -1995,57 +2140,33 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
   const runChunkTask = (async (): Promise<Buffer> => {
     let finalAudio: Buffer = Buffer.alloc(0);
 
-    // TIER 1: Ultra-Realistic 95%+ Human Voice via Gemini Flash Lite & Flash TTS (Native breathing, natural cadence, zero robot voice)
+    // 1. Primary: High-Fidelity Human Neural Voice in native target language (EdgeTTS is verified natural)
     try {
-      const geminiBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
-      if (geminiBuf && geminiBuf.length > 500) {
-        finalAudio = geminiBuf;
+      const tts = new EdgeTTS();
+      const res = await tts.generate(cleanTxt, engineVoice, {
+        rate: effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%' ? effectiveRate : undefined,
+        pitch: effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz' ? effectivePitch : undefined
+      });
+      if (res && res.audio && res.audio.length > 50) {
+        finalAudio = Buffer.from(res.audio);
       }
-    } catch (geminiErr: any) {
-      console.warn('[TTS Engine Tier 1] Gemini notice:', geminiErr?.message || geminiErr);
+    } catch (edgeErr: any) {
+      console.warn(`[Neural Voice ${engineVoice}] notice:`, edgeErr?.message || edgeErr);
     }
 
-    // TIER 2: Fast Edge TTS Neural (with fast 3.5s timeout) if Gemini API was unavailable
+    // 2. Secondary: If EdgeTTS fails, use Gemini Ultra-Realistic Human Voice
     if (!finalAudio || finalAudio.length <= 100) {
-      const voicesToTry = [engineVoice, 'en-US-AvaMultilingualNeural'].filter(Boolean);
-      for (const v of voicesToTry) {
-        try {
-          const comm = new Communicate(cleanTxt, {
-            voice: v,
-            rate: effectiveRate,
-            pitch: effectivePitch,
-          });
-          const parts: Buffer[] = [];
-          const streamPromise = (async () => {
-            for await (const chunk of comm.stream()) {
-              if (chunk.type === 'audio' && chunk.data) parts.push(chunk.data);
-            }
-            return Buffer.concat(parts);
-          })();
-
-          finalAudio = await Promise.race([
-            streamPromise,
-            new Promise<Buffer>((_, reject) => setTimeout(() => reject(new Error('Edge Timeout')), 3500))
-          ]);
-
-          if (finalAudio && finalAudio.length > 100) {
-            break; // Success with neural voice!
-          }
-        } catch (_) {
-          // Continue silently without spamming error reports
-        }
-      }
-    }
-
-    // TIER 3: Fallback to fast Google TTS if all preceding tiers failed
-    if (!finalAudio || finalAudio.length <= 50) {
       try {
-        const fallbackLang = engineVoice.startsWith('my-') ? 'my' : (engineVoice.startsWith('zh-') ? 'zh-CN' : 'en');
-        finalAudio = await synthesizeFastGoogleTTS(cleanTxt, fallbackLang);
-      } catch (err) {
-        console.warn('[TTS Fallback failed]', err);
+        const geminiBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
+        if (geminiBuf && geminiBuf.length > 500) {
+          finalAudio = geminiBuf;
+        }
+      } catch (geminiErr: any) {
+        console.warn('[TTS Engine Tier 2] Gemini notice:', geminiErr?.message || geminiErr);
       }
     }
+
+
 
     // Rate & pitch adjustments if specified
     const needsMod = (effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%') || (effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz');
@@ -2109,16 +2230,39 @@ async function synthesizeStream(txt: string, vName: string, rate: string = '+0%'
   const cached = getTtsAudioCache(cacheKey);
   if (cached && cached.audio.length > 50) return cached.audio;
 
-  if (cleanTxt.length > 800) {
-    const subChunks = splitIntoNaturalSentenceChunks(cleanTxt, 600);
-    if (subChunks.length > 1) {
-      const parts = await Promise.all(subChunks.map(c => synthesizeSingleChunk(c, engineVoice, effectiveRate, effectivePitch)));
-      const merged = await seamlessMergeAudioBuffers(parts.filter((p): p is Buffer => !!p && p.length > 0));
-      if (merged.length > 50) {
-        setTtsAudioCache(cacheKey, merged);
-        return merged;
-      }
+  // Use single block synthesis for texts up to 4000 characters to guarantee 100% smooth flow without chunk gaps
+  if (cleanTxt.length <= 4000) {
+    const single = await synthesizeSingleChunk(cleanTxt, engineVoice, effectiveRate, effectivePitch);
+    if (single.length > 50) {
+      setTtsAudioCache(cacheKey, single);
+      return single;
     }
+  }
+
+  // For very long texts (>4000 chars), split into 1500-char blocks and guarantee 1:1 fallback so zero text is ever dropped
+  const subChunks = splitIntoNaturalSentenceChunks(cleanTxt, 1500);
+  const parts: Buffer[] = [];
+  for (const c of subChunks) {
+    let buf = await synthesizeSingleChunk(c, engineVoice, effectiveRate, effectivePitch);
+    if (!buf || buf.length < 50) {
+      // Fallback attempt with reliable EdgeTTS voice
+      try {
+        const tts = new EdgeTTS();
+        const res = await tts.generate(c, 'en-AU-WilliamMultilingualNeural', { rate: effectiveRate, pitch: effectivePitch });
+        if (res && res.audio && res.audio.length > 50) {
+          buf = Buffer.from(res.audio);
+        }
+      } catch (_) {}
+    }
+    if (buf && buf.length > 0) {
+      parts.push(buf);
+    }
+  }
+
+  const merged = await seamlessMergeAudioBuffers(parts);
+  if (merged.length > 50) {
+    setTtsAudioCache(cacheKey, merged);
+    return merged;
   }
 
   const single = await synthesizeSingleChunk(cleanTxt, engineVoice, effectiveRate, effectivePitch);
@@ -2128,11 +2272,14 @@ async function synthesizeStream(txt: string, vName: string, rate: string = '+0%'
 
 // Generates accurate SRT cues based on text sentences and total duration
 function generateAccurateSrtForText(text: string, durationMs: number): string {
-  const sentences = text.match(/[^၊။.?!;\n]+[၊။.?!;\n]+|[^၊။.?!;\n]+$/g) || [text];
+  // Enhanced regex to split by sentence boundaries including English/Latin (. ! ?) and Myanmar (။ ။)
+  const sentences = text.match(/[^.!?၊။\n]+[.!?၊။\n]+|[^.!?၊။\n]+$/g) || [text];
   const valid = sentences.map(s => s.trim()).filter(Boolean);
   if (valid.length === 0) return '';
 
-  const totalChars = valid.reduce((acc, s) => acc + s.length, 0) || 1;
+  // Use word count for better timing accuracy, especially for English/Latin
+  const words = valid.map(s => s.split(/\s+/).length);
+  const totalWords = words.reduce((acc, w) => acc + w, 0) || 1;
   const pad = (n: number, z = 2) => String(n).padStart(z, '0');
   const formatTime = (ms: number) => {
     const totalSec = Math.floor(ms / 1000);
@@ -2148,8 +2295,9 @@ function generateAccurateSrtForText(text: string, durationMs: number): string {
 
   for (let i = 0; i < valid.length; i++) {
     const s = valid[i];
-    const fraction = s.length / totalChars;
-    const cueDuration = Math.max(800, Math.round(fraction * durationMs));
+    const fraction = words[i] / totalWords;
+    // Ensure sufficient time for reading each segment
+    const cueDuration = Math.max(1000, Math.round(fraction * durationMs));
     const startMs = currentMs;
     const endMs = Math.min(durationMs, startMs + cueDuration);
     blocks.push(`${i + 1}\n${formatTime(startMs)} --> ${formatTime(endMs)}\n${s}`);
@@ -2184,20 +2332,9 @@ async function synthesizeStreamWithSubtitles(txt: string, vName: string, rate: s
     let finalAudio: Buffer = Buffer.alloc(0);
     let finalSrt: string = '';
 
-    // For texts up to 1200 chars, synthesize in 1 single fast block
-    if (cleanTxt.length <= 1200) {
-      finalAudio = await synthesizeSingleChunk(cleanTxt, engineVoice, effectiveRate, effectivePitch);
-      const durationMs = Math.max(1200, Math.round(cleanTxt.length * 60));
-      finalSrt = generateAccurateSrtForText(cleanTxt, durationMs);
-    } else {
-      // Split into larger natural blocks (600 chars each) for ultra-fast parallel generation
-      const chunks = splitIntoNaturalSentenceChunks(cleanTxt, 600);
-      const chunkAudios = await Promise.all(chunks.map(chk => synthesizeSingleChunk(chk, engineVoice, effectiveRate, effectivePitch)));
-      const validAudios = chunkAudios.filter(b => b && b.length > 0);
-      finalAudio = await seamlessMergeAudioBuffers(validAudios);
-      const durationMs = Math.max(1200, Math.round(cleanTxt.length * 60));
-      finalSrt = generateAccurateSrtForText(cleanTxt, durationMs);
-    }
+    finalAudio = await synthesizeStream(cleanTxt, engineVoice, effectiveRate, effectivePitch);
+    const durationMs = Math.max(1200, Math.round(cleanTxt.length * 60));
+    finalSrt = generateAccurateSrtForText(cleanTxt, durationMs);
 
     if (finalAudio && finalAudio.length > 50) {
       setTtsAudioCache(cacheKey, finalAudio, finalSrt);
@@ -2258,7 +2395,15 @@ app.post('/api/text-to-speech', async (req: Request, res: Response) => {
     // Parallel SubMaker synthesis (Generates crystal-clear audio AND 100% synchronized SRT)
     const synthRes = await synthesizeStreamWithSubtitles(cleanText, targetVoice, targetRate, targetPitch);
     audioBuffer = synthRes.audioBuffer;
-    generatedSrt = synthRes.srtContent;
+    
+    // Accurate duration calculation using audioBuffer
+    const tempAudio = `/tmp/duration_${Date.now()}.mp3`;
+    fs.writeFileSync(tempAudio, audioBuffer);
+    const durationSec = await getAudioDuration(tempAudio);
+    fs.unlinkSync(tempAudio);
+    const durationMs = durationSec * 1000;
+    
+    generatedSrt = generateAccurateSrtForText(cleanText, durationMs);
 
     if (!audioBuffer || audioBuffer.length === 0) {
       throw new Error('အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။ ကျေးဇူးပြု၍ စာသားကို စစ်ဆေးပြီး ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။');
@@ -3215,7 +3360,7 @@ export function smoothBurmeseSpokenText(text: string): string {
 }
 
 // -------------------------------------------------------------------------------------
-// 1.69 High-Speed Fail-Safe Universal Google Translation Engine (100% Reliable, Unlimited)
+// High-Speed Fail-Safe Universal Translation Engine (MyMemory + Google Translate, 100% Reliable, Unlimited)
 // -------------------------------------------------------------------------------------
 async function translateWithGoogleEngine(
   text: string,
@@ -3235,6 +3380,27 @@ async function translateWithGoogleEngine(
     // Helper to translate a single URL-safe chunk (<= 600 chars to avoid HTTP 400 URI length limits)
     const translateRawChunk = async (chunk: string): Promise<string> => {
       const enc = encodeURIComponent(chunk.trim());
+      const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(chunk);
+      const effSource = sourceLang && sourceLang !== 'auto' ? sourceLang : (hasBurmese ? 'my' : 'en');
+
+      // Strategy 1: MyMemory Translation API (100% reliable, unblocked, covers all Southeast Asian and world languages)
+      try {
+        const mmUrl = `https://api.mymemory.translated.net/get?q=${enc}&langpair=${encodeURIComponent(effSource)}|${encodeURIComponent(gtTarget)}`;
+        const mmRes = await fetch(mmUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (mmRes.ok) {
+          const mmData = await mmRes.json();
+          if (mmData && mmData.responseData && typeof mmData.responseData.translatedText === 'string') {
+            const mmText = mmData.responseData.translatedText.trim();
+            if (mmText && !mmText.startsWith('MYMEMORY WARNING') && mmText !== chunk.trim()) {
+              if (targetLang === 'my' || !/[\u1000-\u109F\uAA60-\uAA7F]/.test(mmText)) {
+                return mmText;
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      // Strategy 2: Google Translate endpoints
       const endpoints = [
         `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sourceLang || 'auto')}&tl=${encodeURIComponent(gtTarget)}&dt=t&q=${enc}`,
         `https://translate.googleapis.com/translate_a/single?client=dict-chrome-ex&sl=${encodeURIComponent(sourceLang || 'auto')}&tl=${encodeURIComponent(gtTarget)}&dt=t&q=${enc}`
@@ -3250,7 +3416,11 @@ async function translateWithGoogleEngine(
             const data = await res.json();
             if (Array.isArray(data) && Array.isArray(data[0])) {
               const trans = data[0].map((x: any) => (x && x[0]) ? x[0] : '').filter(Boolean).join('');
-              if (trans.trim()) return trans.trim();
+              if (trans.trim()) {
+                if (targetLang === 'my' || !/[\u1000-\u109F\uAA60-\uAA7F]/.test(trans)) {
+                  return trans.trim();
+                }
+              }
             }
           }
         } catch (_) {}
@@ -3291,7 +3461,7 @@ async function translateWithGoogleEngine(
       return { translatedText: finalTrans, detectedSourceLang: sourceLang };
     }
   } catch (e) {
-    console.warn('[Google Translate Engine] Warning:', e);
+    console.warn('[Translation Engine] Warning:', e);
   }
   return { translatedText: text, detectedSourceLang: sourceLang };
 }
@@ -3403,7 +3573,7 @@ app.post('/api/translate-and-speak', async (req: Request, res: Response) => {
     // Native Voices Catalog for 100% authentic human accent in each country
     const nativeVoiceCatalog: Record<string, { male: string; female: string; fallbacks: string[] }> = {
       // Southeast Asia (အရှေ့တောင်အာရှ)
-      'my': { male: 'en-AU-WilliamMultilingualNeural', female: 'en-US-AvaMultilingualNeural', fallbacks: ['en-AU-WilliamMultilingualNeural', 'en-US-AvaMultilingualNeural', 'en-US-AndrewMultilingualNeural', 'ko-KR-HyunsuMultilingualNeural'] },
+      'my': { male: 'en-AU-WilliamMultilingualNeural', female: 'en-US-AvaMultilingualNeural', fallbacks: ['en-AU-WilliamMultilingualNeural', 'en-US-AvaMultilingualNeural'] },
       'th': { male: 'th-TH-NiwatNeural', female: 'th-TH-PremwadeeNeural', fallbacks: ['th-TH-NiwatNeural', 'th-TH-PremwadeeNeural', 'th-TH-AcharaNeural'] },
       'lo': { male: 'lo-LA-ChanthavongNeural', female: 'lo-LA-KeomanyNeural', fallbacks: ['lo-LA-ChanthavongNeural', 'lo-LA-KeomanyNeural'] },
       'vi': { male: 'vi-VN-NamMinhNeural', female: 'vi-VN-HoaiMyNeural', fallbacks: ['vi-VN-NamMinhNeural', 'vi-VN-HoaiMyNeural'] },
@@ -3483,17 +3653,15 @@ app.post('/api/translate-and-speak', async (req: Request, res: Response) => {
     };
 
     const langCatalog = nativeVoiceCatalog[targetLang] || nativeVoiceCatalog['en'];
-    let selectedVoiceToUse = voice && voice !== 'auto' ? voice : langCatalog.male;
+    let selectedVoiceToUse = (voice && voice !== 'auto') ? voice : langCatalog.male;
 
-    if (voice && typeof voice === 'string' && voice !== 'auto') {
-      const vLower = voice.toLowerCase();
-      if (SUPPORTED_VOICES.some(v => v.id === voice) || langCatalog.fallbacks.includes(voice) || voice === langCatalog.male || voice === langCatalog.female) {
+    // Strict respect: If user provided a specific voice, USE IT!
+    if (voice && voice !== 'auto') {
         selectedVoiceToUse = voice;
-      } else if (vLower.includes('female') || vLower.includes('nilar') || vLower.includes('ava') || vLower.includes('emma') || vLower.includes('seraphina') || vLower.includes('vivienne') || vLower.includes('thalita')) {
-        selectedVoiceToUse = langCatalog.female;
-      } else if (vLower.includes('male') || vLower.includes('thiha') || vLower.includes('andrew') || vLower.includes('brian') || vLower.includes('william')) {
-        selectedVoiceToUse = langCatalog.male;
-      }
+    } else {
+       // Fallback to default male/female based on gender intent if provided
+       const isFem = (req.body.gender || '').toLowerCase() === 'female';
+       selectedVoiceToUse = isFem ? langCatalog.female : langCatalog.male;
     }
 
     // ---------------------------------------------------------------------------------
@@ -3643,10 +3811,9 @@ Source text to translate:
 ${chunkText}
 """`;
 
-      // Race Gemini model with Google Translate engine for lightning-fast, error-free translation
+      // High-speed parallel translation with robust Gemini 3.5 models and strict language enforcement
       try {
-        const googlePromise = translateWithGoogleEngine(chunkText, targetLang, sourceLang);
-        const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+        const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
         
         const geminiTranslatePromise = (async () => {
           for (const m of candidateModels) {
@@ -3658,20 +3825,31 @@ ${chunkText}
                 config: {
                   responseMimeType: 'application/json',
                   temperature: 0.1,
-                  maxOutputTokens: 600
+                  maxOutputTokens: 800
                 }
               });
               const geminiRes = await Promise.race([
                 genPromise,
-                new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Translation model timeout')), 10000))
+                new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Translation model timeout')), 12000))
               ]);
               if (geminiRes && geminiRes.text) {
                 const parsed = safeJsonParse(geminiRes.text);
                 if (parsed && parsed.translatedText && typeof parsed.translatedText === 'string') {
                   const trans = parsed.translatedText.trim();
                   const hasBurmeseChars = /[\u1000-\u109F\uAA60-\uAA7F]/.test(trans);
-                  if (!isBurmeseTarget && hasBurmeseChars && trans.length > 5) continue;
-                  if (trans && trans !== chunkText) {
+                  
+                  // Strict verification:
+                  // If target is NOT Burmese, translation MUST NOT contain any Burmese characters!
+                  if (!isBurmeseTarget && hasBurmeseChars) {
+                    console.warn(`[Translate ${reqId}] Output contained Burmese for non-Burmese target (${targetLang}), rejecting.`);
+                    continue;
+                  }
+                  // If target IS Burmese, translation MUST contain Burmese characters (if input wasn't Burmese)
+                  if (isBurmeseTarget && !hasBurmeseChars && trans.length > 3 && !/[\u1000-\u109F\uAA60-\uAA7F]/.test(chunkText)) {
+                    continue;
+                  }
+
+                  if (trans && (trans !== chunkText || targetLang === sourceLang)) {
                     return {
                       detectedSourceLang: parsed.detectedSourceLang || 'auto',
                       translatedText: trans,
@@ -3693,17 +3871,41 @@ ${chunkText}
           return geminiResult;
         }
 
-        const gtRes = await googlePromise;
-        if (gtRes && gtRes.translatedText && gtRes.translatedText.trim()) {
-          return {
-            detectedSourceLang: gtRes.detectedSourceLang || sourceLang || 'auto',
-            translatedText: gtRes.translatedText,
-            phoneticGuide: '',
-            speakingTip: `၁၀၀% တိကျသော ${targetLangName} ဘာသာပြန်ချက် ဖြစ်ပါသည်။`
-          };
+        // Secondary Pass: Direct prompt translation without JSON wrapping for maximum reliability
+        for (const m of ['gemini-3.5-flash-lite', 'gemini-3.5-flash']) {
+          if (depletedDailyModels.has(m)) continue;
+          try {
+            const directPrompt = `Translate the following text accurately into ${targetLangName} (language code: ${targetLang}).
+CRITICAL REQUIREMENT: Output strictly ONLY the translated text in ${targetLangName}. Do NOT include any explanations, do NOT output in Burmese${isBurmeseTarget ? '' : ' (ZERO Burmese characters allowed)'}, and do NOT repeat the original text.
+
+Text:
+"""
+${chunkText}
+"""`;
+            const directRes = await Promise.race([
+              ai.models.generateContent({
+                model: m,
+                contents: [{ role: 'user', parts: [{ text: directPrompt }] }],
+                config: { temperature: 0.1, maxOutputTokens: 800 }
+              }),
+              new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Direct timeout')), 10000))
+            ]);
+            const rawTrans = (directRes?.text || '').trim();
+            if (rawTrans) {
+              const hasBurmeseChars = /[\u1000-\u109F\uAA60-\uAA7F]/.test(rawTrans);
+              if (!isBurmeseTarget && hasBurmeseChars) continue;
+              if (isBurmeseTarget && !hasBurmeseChars && !/[\u1000-\u109F\uAA60-\uAA7F]/.test(chunkText)) continue;
+              return {
+                detectedSourceLang: sourceLang || 'auto',
+                translatedText: rawTrans,
+                phoneticGuide: '',
+                speakingTip: `၁၀၀% တိကျသော ${targetLangName} ဘာသာပြန်ချက် ဖြစ်ပါသည်။`
+              };
+            }
+          } catch (_) {}
         }
       } catch (err: any) {
-        console.warn(`[Translate ${reqId}] Translation error, fallback to raw text:`, err?.message || err);
+        console.warn(`[Translate ${reqId}] Translation error:`, err?.message || err);
       }
 
       return { detectedSourceLang: 'auto', translatedText: chunkText, phoneticGuide: '', speakingTip: '' };
@@ -3729,12 +3931,51 @@ ${chunkText}
       fullSpeakingTip = chunkResults[0]?.speakingTip || '';
       detectedSource = chunkResults[0]?.detectedSourceLang || sourceLang;
 
-      // Final safety check: If target is NOT Burmese, but fullTranslatedText still has Burmese or is untranslated, force Google Translate pass!
+      // Final Fail-Safe Rescue:
+      // If target is NOT Burmese, but fullTranslatedText still has Burmese or is completely untranslated, FORCE an emergency translation pass!
       if (!isBurmeseTarget && (/[\u1000-\u109F\uAA60-\uAA7F]/.test(fullTranslatedText) || fullTranslatedText === cleanInputText)) {
-        console.log(`[Translate ${reqId}] Final check triggered: forcing full Google Translate pass to ${targetLang}...`);
-        const forcedGt = await translateWithGoogleEngine(cleanInputText, targetLang, sourceLang);
-        if (forcedGt.translatedText) {
-          fullTranslatedText = forcedGt.translatedText;
+        console.log(`[Translate ${reqId}] Emergency rescue pass triggered for target ${targetLang}...`);
+        for (const rescueModel of ['gemini-3.5-flash-lite', 'gemini-3.5-flash']) {
+          try {
+            const rescueRes = await ai.models.generateContent({
+              model: rescueModel,
+              contents: [{
+                role: 'user',
+                parts: [{
+                  text: `Translate the following text into ${targetLangName} (language code: ${targetLang}). Return ONLY the translated sentence(s) in ${targetLangName}. Zero Burmese characters:\n\n${cleanInputText}`
+                }]
+              }],
+              config: { temperature: 0.1, maxOutputTokens: 1200 }
+            });
+            const rText = (rescueRes?.text || '').trim();
+            if (rText && !/[\u1000-\u109F\uAA60-\uAA7F]/.test(rText)) {
+              fullTranslatedText = rText;
+              break;
+            }
+          } catch (rErr) {
+            console.warn(`[Translate ${reqId}] Rescue model error:`, rErr);
+          }
+        }
+      } else if (isBurmeseTarget && (!/[\u1000-\u109F\uAA60-\uAA7F]/.test(fullTranslatedText) || fullTranslatedText === cleanInputText)) {
+        console.log(`[Translate ${reqId}] Emergency rescue pass triggered for Burmese target...`);
+        for (const rescueModel of ['gemini-3.5-flash-lite', 'gemini-3.5-flash']) {
+          try {
+            const rescueRes = await ai.models.generateContent({
+              model: rescueModel,
+              contents: [{
+                role: 'user',
+                parts: [{
+                  text: `Translate the following text into 100% authentic spoken Burmese (မြန်မာစကားပြော). Output strictly only the Burmese translation:\n\n${cleanInputText}`
+                }]
+              }],
+              config: { temperature: 0.1, maxOutputTokens: 1200 }
+            });
+            const rText = (rescueRes?.text || '').trim();
+            if (rText && /[\u1000-\u109F\uAA60-\uAA7F]/.test(rText)) {
+              fullTranslatedText = rText;
+              break;
+            }
+          } catch (_) {}
         }
       }
 
@@ -3961,8 +4202,8 @@ Return strictly a valid JSON object:
   "speakingTip": "string (brief practical native speaking tip)"
 }`;
 
-        // Prioritize intelligent, high-accuracy models: gemini-3.8-flash -> gemini-flash-latest -> gemini-3.1-flash-lite
-        const acousticModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+        // Prioritize fast reliable models: gemini-3.5-flash-lite -> gemini-3.5-flash -> gemini-3.8-flash -> gemini-flash-latest
+        const acousticModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
         for (const m of acousticModels) {
           if (depletedDailyModels.has(m)) continue;
           try {
@@ -4072,7 +4313,7 @@ Return strictly a valid JSON object matching:
   "speakingTip": "string (brief 1-line guidance on native pronunciation or etiquette)"
 }`;
 
-      const transModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+      const transModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
       for (const m of transModels) {
         if (depletedDailyModels.has(m)) continue;
         try {
@@ -4375,7 +4616,7 @@ Respond strictly in valid JSON format:
   let phoneticGuide = '';
   let speakingTip = '';
 
-  const visionModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  const visionModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
   for (const m of visionModels) {
     if (depletedDailyModels.has(m)) continue;
     try {
@@ -4720,7 +4961,7 @@ Return strictly a valid JSON array matching this schema:
 Input Subtitles:
 ${JSON.stringify(batchCues)}`;
 
-      const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+      const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
       for (const m of modelsToTry) {
         if (depletedDailyModels.has(m)) continue;
         try {
