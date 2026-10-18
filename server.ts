@@ -684,47 +684,39 @@ export const SUPPORTED_VOICES = [
   }
 ];
 
-// Character voice configuration mapping to ensure 100% Burmese speech synthesis without English-only voice failures
+// Character voice configuration mapping to ensure 100% human speech synthesis
 export const VOICE_PRESET_MAP: Record<string, { baseVoice: string; presetRate?: string; presetPitch?: string }> = {
   // Grandpa Presets (အဖိုး - Deep, slow, wise grandfather storytelling tone)
-  'my-MM-GrandpaUTha': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-10%', presetPitch: '-15Hz' },
-  'elderly-roger': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-10%', presetPitch: '-15Hz' },
-  'en-US-RogerNeural': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-10%', presetPitch: '-15Hz' },
-  'elderly-steffan': { baseVoice: 'en-US-BrianMultilingualNeural', presetRate: '-11%', presetPitch: '-18Hz' },
-  'en-US-SteffanNeural': { baseVoice: 'en-US-BrianMultilingualNeural', presetRate: '-11%', presetPitch: '-18Hz' },
-  'elderly-thomas': { baseVoice: 'fr-FR-RemyMultilingualNeural', presetRate: '-9%', presetPitch: '-14Hz' },
-  'en-GB-ThomasNeural': { baseVoice: 'fr-FR-RemyMultilingualNeural', presetRate: '-9%', presetPitch: '-14Hz' },
-  'elderly-christopher': { baseVoice: 'de-DE-FlorianMultilingualNeural', presetRate: '-10%', presetPitch: '-16Hz' },
-  'en-US-ChristopherNeural': { baseVoice: 'de-DE-FlorianMultilingualNeural', presetRate: '-10%', presetPitch: '-16Hz' },
-  'my-MM-UTha': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-10%', presetPitch: '-15Hz' },
+  'my-MM-GrandpaUTha': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-5%', presetPitch: '-8Hz' },
+  'my-MM-UTha': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-5%', presetPitch: '-8Hz' },
+  'elderly-roger': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-5%', presetPitch: '-8Hz' },
+  'en-US-RogerNeural': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-5%', presetPitch: '-8Hz' },
+  'elderly-steffan': { baseVoice: 'en-US-SteffanMultilingualNeural', presetRate: '-6%', presetPitch: '-10Hz' },
+  'en-US-SteffanNeural': { baseVoice: 'en-US-SteffanMultilingualNeural', presetRate: '-6%', presetPitch: '-10Hz' },
+  'elderly-thomas': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-5%', presetPitch: '-6Hz' },
+  'elderly-christopher': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '-5%', presetPitch: '-8Hz' },
 
   // Grandma Presets (အဖွား - Gentle, loving, comforting bedtime grandmother voice)
-  'my-MM-GrandmaDawMya': { baseVoice: 'en-US-EmmaMultilingualNeural', presetRate: '-9%', presetPitch: '-10Hz' },
-  'elderly-jenny': { baseVoice: 'en-US-EmmaMultilingualNeural', presetRate: '-9%', presetPitch: '-10Hz' },
-  'en-US-JennyMultilingualNeural': { baseVoice: 'en-US-EmmaMultilingualNeural', presetRate: '-9%', presetPitch: '-10Hz' },
-  'elderly-jane': { baseVoice: 'de-DE-SeraphinaMultilingualNeural', presetRate: '-10%', presetPitch: '-12Hz' },
-  'en-US-JaneNeural': { baseVoice: 'de-DE-SeraphinaMultilingualNeural', presetRate: '-10%', presetPitch: '-12Hz' },
-  'elderly-sonia': { baseVoice: 'fr-FR-VivienneMultilingualNeural', presetRate: '-9%', presetPitch: '-8Hz' },
-  'en-GB-SoniaMultilingualNeural': { baseVoice: 'fr-FR-VivienneMultilingualNeural', presetRate: '-9%', presetPitch: '-8Hz' },
-  'elderly-nancy': { baseVoice: 'pt-BR-ThalitaMultilingualNeural', presetRate: '-11%', presetPitch: '-10Hz' },
-  'en-US-NancyNeural': { baseVoice: 'pt-BR-ThalitaMultilingualNeural', presetRate: '-11%', presetPitch: '-10Hz' },
-  'my-MM-DawMya': { baseVoice: 'en-US-EmmaMultilingualNeural', presetRate: '-9%', presetPitch: '-10Hz' },
-
-  // Brisk & Energetic Narrator / Studio Host Presets (သွက်သွက်လက်လက် စကားပြော သဘာဝအသံများ)
-  'en-US-AndrewMultilingualNeural': { baseVoice: 'en-US-AndrewMultilingualNeural', presetRate: '+3%', presetPitch: '+0Hz' },
-  'en-US-AvaMultilingualNeural': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '+2%', presetPitch: '+0Hz' },
-  'ko-KR-HyunsuMultilingualNeural': { baseVoice: 'ko-KR-HyunsuMultilingualNeural', presetRate: '+2%', presetPitch: '+0Hz' },
-
-  // Standard Multilingual Voice Aliases
-  'en-AU-WilliamMultilingualNeural': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '+0%', presetPitch: '+0Hz' },
+  'my-MM-GrandmaDawMya': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '-4%', presetPitch: '-4Hz' },
+  'my-MM-DawMya': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '-4%', presetPitch: '-4Hz' },
+  'elderly-jenny': { baseVoice: 'en-US-EmmaMultilingualNeural', presetRate: '-4%', presetPitch: '-4Hz' },
+  'en-US-JennyMultilingualNeural': { baseVoice: 'en-US-EmmaMultilingualNeural', presetRate: '-4%', presetPitch: '-4Hz' },
+  'elderly-jane': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '-5%', presetPitch: '-6Hz' },
+  'elderly-sonia': { baseVoice: 'en-US-EmmaMultilingualNeural', presetRate: '-4%', presetPitch: '-4Hz' },
+  'elderly-nancy': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '-5%', presetPitch: '-6Hz' },
 
   // Children Presets (ကလေး - Bright, cute & cheerful kids)
-  'child-ana': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '+8%', presetPitch: '+20Hz' },
-  'en-US-AnaNeural': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '+8%', presetPitch: '+20Hz' },
-  'child-kevin': { baseVoice: 'en-US-AndrewMultilingualNeural', presetRate: '+8%', presetPitch: '+18Hz' },
-  'en-US-KevinNeural': { baseVoice: 'en-US-AndrewMultilingualNeural', presetRate: '+8%', presetPitch: '+18Hz' },
-  'child-maisie': { baseVoice: 'pt-BR-ThalitaMultilingualNeural', presetRate: '+7%', presetPitch: '+20Hz' },
-  'en-GB-MaisieNeural': { baseVoice: 'pt-BR-ThalitaMultilingualNeural', presetRate: '+7%', presetPitch: '+20Hz' },
+  'child-ana': { baseVoice: 'en-GB-RyanMultilingualNeural', presetRate: '+5%', presetPitch: '+12Hz' },
+  'en-US-AnaNeural': { baseVoice: 'en-GB-RyanMultilingualNeural', presetRate: '+5%', presetPitch: '+12Hz' },
+  'child-kevin': { baseVoice: 'en-GB-RyanMultilingualNeural', presetRate: '+5%', presetPitch: '+10Hz' },
+  'en-US-KevinNeural': { baseVoice: 'en-GB-RyanMultilingualNeural', presetRate: '+5%', presetPitch: '+10Hz' },
+  'child-maisie': { baseVoice: 'en-GB-RyanMultilingualNeural', presetRate: '+5%', presetPitch: '+12Hz' },
+
+  // Standard Multilingual Voice Aliases
+  'en-US-AndrewMultilingualNeural': { baseVoice: 'en-US-AndrewMultilingualNeural', presetRate: '+0%', presetPitch: '+0Hz' },
+  'en-US-AvaMultilingualNeural': { baseVoice: 'en-US-AvaMultilingualNeural', presetRate: '+0%', presetPitch: '+0Hz' },
+  'ko-KR-HyunsuMultilingualNeural': { baseVoice: 'ko-KR-HyunsuMultilingualNeural', presetRate: '+0%', presetPitch: '+0Hz' },
+  'en-AU-WilliamMultilingualNeural': { baseVoice: 'en-AU-WilliamMultilingualNeural', presetRate: '+0%', presetPitch: '+0Hz' },
 };
 
 // Character Voice Profiles for 90%+ Human Realism (အဖိုး / အဖွား / ကလေး / အမျိုးသား / အမျိုးသမီး / ဂျပန် / အန်နီမေး)
@@ -739,6 +731,14 @@ export interface CharacterProfile {
 
 export const CHARACTER_PROFILES: Record<string, CharacterProfile> = {
   // --- 👴 အဖိုး (Grandfather / Wise Elder - Built on William Deep Cinema Voice) ---
+  'my-MM-GrandpaUTha': {
+    category: 'elderly_male',
+    geminiVoice: 'Charon',
+    geminiStyle: 'Deep, slow, raspy, wise grandfather speaking warm colloquial Burmese folk tales with elder cadence and mature breathing',
+    edgeFallbackVoice: 'en-AU-WilliamMultilingualNeural',
+    edgeFallbackRate: '-5%',
+    dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=120:t=q:w=1.2:g=2.5,volume=1.1'
+  },
   'elderly-roger': {
     category: 'elderly_male',
     geminiVoice: 'Fenrir',
@@ -805,6 +805,14 @@ export const CHARACTER_PROFILES: Record<string, CharacterProfile> = {
   },
 
   // --- 👵 အဖွား (Grandmother / Gentle Elder - Built on Thalita, Emma, Seraphina) ---
+  'my-MM-GrandmaDawMya': {
+    category: 'elderly_female',
+    geminiVoice: 'Zephyr',
+    geminiStyle: 'Loving, gentle, soft-spoken grandmother telling bedtime stories in warm, soothing, affectionate Burmese',
+    edgeFallbackVoice: 'en-US-AvaMultilingualNeural',
+    edgeFallbackRate: '-4%',
+    dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=270:t=q:w=1.2:g=2,volume=1.1'
+  },
   'elderly-jenny': {
     category: 'elderly_female',
     geminiVoice: 'Zephyr',
@@ -1044,6 +1052,48 @@ export const CHARACTER_PROFILES: Record<string, CharacterProfile> = {
     dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=320:t=q:w=1.2:g=3,volume=1.2'
   },
 
+  // --- 🎙️ Professional & Cinematic Storytellers (အဆင့်မြင့် အမျိုးသားအသံများ) ---
+  'en-US-ChristopherMultilingualNeural': {
+    category: 'storyteller',
+    geminiVoice: 'Fenrir',
+    geminiStyle: 'Polished, professional, authoritative male narrator speaking smooth, articulate, clear colloquial Burmese',
+    edgeFallbackVoice: 'en-AU-WilliamMultilingualNeural',
+    edgeFallbackRate: '+0%',
+    dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=160:t=q:w=1.2:g=2,volume=1.2'
+  },
+  'en-US-EricMultilingualNeural': {
+    category: 'storyteller',
+    geminiVoice: 'Charon',
+    geminiStyle: 'Cinematic, dramatic, intense narrator speaking powerful, theatrical, compelling spoken Burmese',
+    edgeFallbackVoice: 'en-US-AndrewMultilingualNeural',
+    edgeFallbackRate: '+0%',
+    dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=130:t=q:w=1:g=3.5,volume=1.25'
+  },
+  'en-AU-ConnorMultilingualNeural': {
+    category: 'storyteller',
+    geminiVoice: 'Puck',
+    geminiStyle: 'Warm, clear, optimistic young gentleman speaking fluent, natural, engaging Burmese',
+    edgeFallbackVoice: 'en-GB-RyanMultilingualNeural',
+    edgeFallbackRate: '+0%',
+    dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=180:t=q:w=1.2:g=1.8,volume=1.2'
+  },
+  'en-CA-LiamMultilingualNeural': {
+    category: 'storyteller',
+    geminiVoice: 'Puck',
+    geminiStyle: 'Dynamic, fast-paced, enthusiastic male storyteller speaking vivid, modern spoken Burmese',
+    edgeFallbackVoice: 'en-GB-RyanMultilingualNeural',
+    edgeFallbackRate: '+0%',
+    dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=200:t=q:w=1.2:g=2,volume=1.2'
+  },
+  'en-GB-MarcusMultilingualNeural': {
+    category: 'storyteller',
+    geminiVoice: 'Fenrir',
+    geminiStyle: 'Regal, prestigious, deep and steady British gentleman speaking refined, noble, natural Burmese',
+    edgeFallbackVoice: 'en-AU-WilliamMultilingualNeural',
+    edgeFallbackRate: '+0%',
+    dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=140:t=q:w=1.2:g=2.5,volume=1.2'
+  },
+
   // --- 🇯🇵 Japanese Native & Anime Voices (အဆင့်မြင့် ဂျပန်နှင့် အန်နီမေးအသံများ) ---
   'ja-JP-KeitaNeural': {
     category: 'japanese',
@@ -1063,26 +1113,26 @@ export const CHARACTER_PROFILES: Record<string, CharacterProfile> = {
   },
   'ja-JP-AoiNeural': {
     category: 'japanese',
-    geminiVoice: 'Zephyr',
-    geminiStyle: 'Gentle, polite, soothing native Japanese voice, respectful and soft',
-    edgeFallbackVoice: 'ja-JP-AoiNeural',
+    geminiVoice: 'Aoede',
+    geminiStyle: 'Gentle, polite, soothing native Japanese voice, respectful and soft, Tokyo standard Japanese',
+    edgeFallbackVoice: 'ja-JP-NanamiNeural',
     edgeFallbackRate: '+0%',
     dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=300:t=q:w=1.2:g=2.0,volume=1.1'
   },
   'ja-JP-DaichiNeural': {
     category: 'anime',
     geminiVoice: 'Puck',
-    geminiStyle: 'Passionate, energetic Japanese anime shonen hero protagonist voice, bold, heroic, determined',
+    geminiStyle: 'Passionate, energetic Japanese anime shonen hero protagonist voice, bold, heroic, determined, anime voice acting performance',
     edgeFallbackVoice: 'ja-JP-KeitaNeural',
     edgeFallbackRate: '+2%',
     dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=220:t=q:w=1.2:g=2.2,volume=1.15'
   },
   'ja-JP-ShioriNeural': {
     category: 'anime',
-    geminiVoice: 'Kore',
-    geminiStyle: 'Expressive Japanese anime tsundere / waifu heroine voice, charming, melodic, emotionally vivid',
+    geminiVoice: 'Aoede',
+    geminiStyle: 'Expressive Japanese anime tsundere / waifu heroine voice, charming, melodic, emotionally vivid, cute and flustered',
     edgeFallbackVoice: 'ja-JP-NanamiNeural',
-    edgeFallbackRate: '+0%',
+    edgeFallbackRate: '+1%',
     dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=320:t=q:w=1.2:g=2.5,volume=1.15'
   },
   'ja-JP-NaokiNeural': {
@@ -1095,9 +1145,9 @@ export const CHARACTER_PROFILES: Record<string, CharacterProfile> = {
   },
   'ja-JP-MayuNeural': {
     category: 'anime',
-    geminiVoice: 'Zephyr',
+    geminiVoice: 'Aoede',
     geminiStyle: 'Ultra kawaii Japanese anime chibi / younger sister voice, bubbly, high-energy, cute, lively',
-    edgeFallbackVoice: 'ja-JP-AoiNeural',
+    edgeFallbackVoice: 'ja-JP-NanamiNeural',
     edgeFallbackRate: '+4%',
     dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=350:t=q:w=1.2:g=3.0,volume=1.15'
   },
@@ -1237,79 +1287,101 @@ export async function synthesizeWithGeminiTts(
     // Map engineVoice to best prebuilt Gemini voice & style
     const profile = CHARACTER_PROFILES[engineVoice];
     let voiceName = profile?.geminiVoice || 'Fenrir';
-    const defaultActorPrompt = 'Act as a professional native human voice actor. Your goal is 100% human-like voice synthesis. Use natural human pacing, emotional breathing, nuanced speech cadence, and conversational tone. For Burmese language, speak naturally, rhythmically, and with authentic local Burmese conversational intonation. ABSOLUTELY NO robotic, metallic, or monotone AI sound. The speech MUST be warm, emotive, and indistinguishable from a real person, avoiding textbook-style formal monotone.';
-    const style = profile?.geminiStyle ? `${profile.geminiStyle}. ${defaultActorPrompt}` : defaultActorPrompt;
 
     if (!profile) {
       const low = (engineVoice || '').toLowerCase();
       const isFem = low.includes('female') || low.includes('ava') || low.includes('emma') ||
                     low.includes('nilar') || low.includes('vivienne') || low.includes('thalita') ||
-                    low.includes('dawmya') || low.includes('jenny') || low.includes('seraphina');
-      voiceName = isFem ? 'Kore' : 'Charon';
+                    low.includes('dawmya') || low.includes('jenny') || low.includes('seraphina') ||
+                    low.includes('nanami') || low.includes('shiori') || low.includes('mayu') ||
+                    low.includes('hinata') || low.includes('yuki') || low.includes('akari');
+      voiceName = isFem ? 'Aoede' : 'Fenrir';
     }
 
-    // Prebuilt voices available in Gemini TTS
-    const voicesToAttempt = [voiceName, 'Kore', 'Fenrir', 'Charon', 'Zephyr', 'Puck'].filter((v, i, a) => a.indexOf(v) === i);
+    // Language-aware authentic voice actor directive
+    let langActorPrompt = '';
+    const hasJapanese = /[\u3040-\u30FF\u31F0-\u31FF\u4E00-\u9FAF]/.test(cleanTxt);
+    const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(cleanTxt);
+    const hasThai = /[\u0E00-\u0E7F]/.test(cleanTxt);
+    const hasVietnamese = /[\u00C0-\u1EF9]/.test(cleanTxt);
+
+    if (hasJapanese) {
+      if (profile?.category === 'anime') {
+        langActorPrompt = 'Professional Japanese anime voice actor performing with intense emotional expression, authentic Tokyo anime pitch-accent, vivid anime character nuance, expressive breath control, and theatrical energy. Indistinguishable from a top anime production.';
+      } else {
+        langActorPrompt = 'Professional native Japanese voice actor in standard Tokyo Japanese. Warm, natural, polite, articulate, conversational human speech with natural breathing.';
+      }
+    } else if (hasBurmese) {
+      langActorPrompt = 'Professional native Burmese voice actor. Natural human pacing, emotional breathing, nuanced speech cadence, and conversational tone. Speak rhythmically with authentic local Burmese conversational intonation. 100% human-like voice synthesis.';
+    } else if (hasThai) {
+      langActorPrompt = 'Professional native Thai speaker with authentic Bangkok tonal inflection, natural fluid pacing, and warm conversational tone.';
+    } else if (hasVietnamese) {
+      langActorPrompt = 'Professional native Vietnamese speaker with accurate tonal accents and fluent conversational cadence.';
+    } else {
+      langActorPrompt = 'Professional native human voice actor. Deliver natural human pacing, emotional breathing, clear articulation, and authentic conversational cadence.';
+    }
+
+    const style = profile?.geminiStyle ? `${profile.geminiStyle}. ${langActorPrompt}` : langActorPrompt;
+
     const modelsToAttempt = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
 
     for (const modelName of modelsToAttempt) {
       if (depletedDailyModels.has(modelName)) continue;
-      for (const v of voicesToAttempt) {
-        try {
-          const response = await ai.models.generateContent({
-            model: modelName,
-            contents: [{
-              role: 'user',
-              parts: [{
-                text: cleanTxt,
-                speechMetadata: {
-                  style: style
-                }
-              }]
-            }],
-            config: {
-              responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: v }
-                }
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [{
+            role: 'user',
+            parts: [{
+              text: cleanTxt,
+              speechMetadata: {
+                style: style
+              }
+            }]
+          }],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: voiceName }
               }
             }
-          });
+          }
+        });
 
-          const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-          if (base64Audio) {
-            const rawWav = Buffer.from(base64Audio, 'base64');
-            if (rawWav.length > 500) {
-              // Convert WAV (24kHz mono) to MP3 192k for seamless playback and BGM mixing
-              const tempWav = `/tmp/gem_wav_${Date.now()}_${Math.random().toString(36).substr(2, 6)}.wav`;
-              const tempMp3 = `/tmp/gem_mp3_${Date.now()}_${Math.random().toString(36).substr(2, 6)}.mp3`;
-              try {
-                fs.writeFileSync(tempWav, rawWav);
-                await execAsync(`ffmpeg -y -i "${tempWav}" -c:a libmp3lame -b:a 192k "${tempMp3}"`, { timeout: 6000 });
-                if (fs.existsSync(tempMp3) && fs.statSync(tempMp3).size > 100) {
-                  return fs.readFileSync(tempMp3);
-                }
-              } catch (convErr) {
-                console.warn('[Gemini TTS WAV->MP3 conversion fallback]:', convErr);
-                return rawWav;
-              } finally {
-                try { if (fs.existsSync(tempWav)) fs.unlinkSync(tempWav); } catch (_) {}
-                try { if (fs.existsSync(tempMp3)) fs.unlinkSync(tempMp3); } catch (_) {}
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (base64Audio) {
+          const rawWav = Buffer.from(base64Audio, 'base64');
+          if (rawWav.length > 500) {
+            const tempWav = `/tmp/gem_wav_${Date.now()}_${Math.random().toString(36).substr(2, 6)}.wav`;
+            const tempMp3 = `/tmp/gem_mp3_${Date.now()}_${Math.random().toString(36).substr(2, 6)}.mp3`;
+            try {
+              fs.writeFileSync(tempWav, rawWav);
+              const dsp = profile?.dspFilter ? `-af "${profile.dspFilter}"` : '';
+              await execAsync(`ffmpeg -y -i "${tempWav}" ${dsp} -c:a libmp3lame -b:a 192k "${tempMp3}"`, { timeout: 6000 });
+              if (fs.existsSync(tempMp3) && fs.statSync(tempMp3).size > 100) {
+                return fs.readFileSync(tempMp3);
               }
+            } catch (convErr) {
+              console.warn('[Gemini TTS WAV->MP3 conversion fallback]:', convErr);
+              return rawWav;
+            } finally {
+              try { if (fs.existsSync(tempWav)) fs.unlinkSync(tempWav); } catch (_) {}
+              try { if (fs.existsSync(tempMp3)) fs.unlinkSync(tempMp3); } catch (_) {}
             }
           }
-        } catch (err: any) {
-          const errMsg = err?.message || String(err);
-          if (errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
-            depletedDailyModels.add(modelName);
-            break; // Try next model
-          } else if (errMsg.includes('429')) {
-            geminiTtsCooldownUntil = Date.now() + 1500;
-            break;
-          }
-          console.warn(`[Gemini TTS ${modelName}] Voice ${v} note:`, errMsg);
         }
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        if (errMsg.includes('Quota exceeded') || errMsg.includes('GenerateRequestsPerDayPerProjectPerModel-FreeTier')) {
+          console.warn(`[Gemini TTS ${modelName}] Daily quota depleted for this model, caching.`);
+          depletedDailyModels.add(modelName);
+          continue; // Try next model immediately
+        }
+        if (errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('429')) {
+          continue; // Try next candidate model
+        }
+        console.warn(`[Gemini TTS ${modelName}] Voice ${voiceName} note:`, errMsg);
       }
     }
   } finally {
@@ -1398,10 +1470,9 @@ export function resolveVoiceForText(
   let finalRate = requestedRate;
   let finalPitch = requestedPitch;
 
-  // Check preset mapping first (e.g. Grandpa/Grandma presets built on William/Brian/Ava/Thalita)
-  if (VOICE_PRESET_MAP[finalVoice]) {
+  // Check preset mapping for default rate and pitch
+  if (finalVoice && VOICE_PRESET_MAP[finalVoice]) {
     const preset = VOICE_PRESET_MAP[finalVoice];
-    finalVoice = preset.baseVoice;
     if (!finalRate || finalRate === '+0%' || finalRate === '0%') {
       finalRate = preset.presetRate || '+0%';
     }
@@ -1410,39 +1481,8 @@ export function resolveVoiceForText(
     }
   }
 
-  const isFemale = (v: string): boolean => {
-    const low = (v || '').toLowerCase();
-    return low.includes('female') || low.includes('nilar') || low.includes('ava') || low.includes('emma') ||
-           low.includes('seraphina') || low.includes('vivienne') || low.includes('thalita') || low.includes('dawmya') ||
-           low.includes('jenny') || low.includes('premwadee') || low.includes('keomany') || low.includes('nanami') ||
-           low.includes('sunhi') || low.includes('xiaoxiao') || low.includes('elvira') || low.includes('denise') ||
-           low.includes('katja') || low.includes('svetlana') || low.includes('hoaimy') || low.includes('gadis') ||
-           low.includes('swara') || low.includes('zariyah') || low.includes('fatima') || low.includes('amal') ||
-           low.includes('noura') || low.includes('laila') || low.includes('aysha') || low.includes('rana') ||
-           low.includes('sana') || low.includes('layla') || low.includes('amany') || low.includes('maryam') ||
-           low.includes('hila') || low.includes('dilara') || low.includes('emel') || low.includes('banu') ||
-           low.includes('eka') || low.includes('siti') || low.includes('yesui') || low.includes('neerja') ||
-           low.includes('pallavi') || low.includes('shruti') || low.includes('nabanita') || low.includes('uzma') ||
-           low.includes('thilini') || low.includes('saranya') || low.includes('hemkala') || low.includes('latifa') ||
-           low.includes('aigul') || low.includes('madina');
-  };
-
-  const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(text || '');
-  const hasLatin = /[a-zA-Z]/.test(text || '');
-  const burmeseChars = (text.match(/[\u1000-\u109F\uAA60-\uAA7F]/g) || []).length;
-  const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
-
-  console.log(`[Voice Resolver] Requested voice: "${finalVoice}"`);
-  
-  // If any valid Neural voice was requested, ALWAYS RESPECT IT 100% and DO NOT OVERRIDE!
-  if (finalVoice && finalVoice.includes('Neural')) {
-    console.log(`[Voice Resolver] Respecting Neural voice: ${finalVoice}`);
-    return { engineVoice: finalVoice, rate: finalRate, pitch: finalPitch };
-  }
-
-  // Default to user's favorite voice
-  console.log(`[Voice Resolver] No Neural voice matched, defaulting to: ${finalVoice || 'en-AU-WilliamMultilingualNeural'}`);
-  return { engineVoice: finalVoice || 'en-AU-WilliamMultilingualNeural', rate: finalRate, pitch: finalPitch };
+  // Strictly preserve the user's selected voice! Zero unwanted voice changes!
+  return { engineVoice: finalVoice, rate: finalRate, pitch: finalPitch };
 }
 
 // Supported Natural Background Music (BGM) Tracks
@@ -1689,11 +1729,13 @@ function splitIntoNaturalSentenceChunks(text: string, maxChunkLen: number = 250)
 // -------------------------------------------------------------------------------------
 // High-Traffic Concurrency Shield (လူသုံးများချိန်တွင်လည်း Error မတက်စေရန် ကာကွယ်ပေးသော စနစ်)
 // Manages concurrent active synthesis requests to prevent network overload, rate limit spikes or WebSocket resets
-// -------------------------------------------------------------------------------------
 export class HighLoadConcurrencyLimiter {
   private active = 0;
   private queue: (() => void)[] = [];
-  constructor(private maxConcurrent: number = 16) {}
+  private maxConcurrent: number;
+  constructor(maxConcurrent: number = 16) {
+    this.maxConcurrent = maxConcurrent;
+  }
 
   async acquire(timeoutMs: number = 25000): Promise<() => void> {
     if (this.active < this.maxConcurrent) {
@@ -2067,23 +2109,26 @@ export async function synthesizeBurmeseVoice(
            low.includes('denise') || low.includes('katja') || low.includes('svetlana');
   };
 
-  const burmeseVoice = 'en-AU-WilliamMultilingualNeural';
-
-  // 1. Primary: Authentic Native Burmese Neural Voice (Thiha: Male / Nilar: Female)
+  // 1. Primary: Gemini Ultra-Realistic Human Speech Engine (100% human voice, zero robot sound)
   try {
-    const tts = new EdgeTTS();
-    const res = await tts.generate(cleanTxt, burmeseVoice, {
-      rate: effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%' ? effectiveRate : undefined,
-      pitch: effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz' ? effectivePitch : undefined
-    });
-    if (res && res.audio && res.audio.length > 50) {
-      return Buffer.from(res.audio);
+    const geminiBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
+    if (geminiBuf && geminiBuf.length > 500) {
+      return geminiBuf;
     }
-  } catch (edgeErr: any) {
-    console.warn('[Burmese Neural Voice note]:', edgeErr?.message || edgeErr);
+  } catch (gemErr: any) {
+    console.warn('[Burmese Gemini Voice note]:', gemErr?.message || gemErr);
   }
 
-  // 2. Secondary: Fast Google TTS with High-Definition DSP Mastering
+  // Retry once with a brief backoff if throttled
+  try {
+    await new Promise(r => setTimeout(r, 1200));
+    const retryBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
+    if (retryBuf && retryBuf.length > 500) {
+      return retryBuf;
+    }
+  } catch (_) {}
+
+  // 2. Secondary Fallback: Fast Google TTS with High-Definition DSP Mastering
   const rawAudio = await synthesizeFastGoogleTTS(cleanTxt, 'my');
   if (!rawAudio || rawAudio.length <= 50) return Buffer.alloc(0);
 
@@ -2139,30 +2184,94 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
 
   const runChunkTask = (async (): Promise<Buffer> => {
     let finalAudio: Buffer = Buffer.alloc(0);
+    const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(cleanTxt);
+    const hasJapanese = /[\u3040-\u30FF\u31F0-\u31FF\u4E00-\u9FAF]/.test(cleanTxt);
+    const profile = CHARACTER_PROFILES[engineVoice];
+    const isCharacterProfile = Boolean(profile);
 
-    // 1. Primary: High-Fidelity Human Neural Voice in native target language (EdgeTTS is verified natural)
-    try {
-      const tts = new EdgeTTS();
-      const res = await tts.generate(cleanTxt, engineVoice, {
-        rate: effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%' ? effectiveRate : undefined,
-        pitch: effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz' ? effectivePitch : undefined
-      });
-      if (res && res.audio && res.audio.length > 50) {
-        finalAudio = Buffer.from(res.audio);
-      }
-    } catch (edgeErr: any) {
-      console.warn(`[Neural Voice ${engineVoice}] notice:`, edgeErr?.message || edgeErr);
-    }
-
-    // 2. Secondary: If EdgeTTS fails, use Gemini Ultra-Realistic Human Voice
-    if (!finalAudio || finalAudio.length <= 100) {
+    if (hasBurmese || isCharacterProfile || (hasJapanese && profile?.category === 'anime')) {
+      // 1. Primary: Gemini Ultra-Realistic Human Speech Engine (Superior expressiveness for anime acting & human speech)
       try {
         const geminiBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
         if (geminiBuf && geminiBuf.length > 500) {
           finalAudio = geminiBuf;
         }
       } catch (geminiErr: any) {
-        console.warn('[TTS Engine Tier 2] Gemini notice:', geminiErr?.message || geminiErr);
+        console.warn(`[Gemini TTS Primary for ${engineVoice}] notice:`, geminiErr?.message || geminiErr);
+      }
+
+      // If brief cooldown or initial attempt failed, wait 1.2s and retry once with Gemini TTS to guarantee human speech
+      if (!finalAudio || finalAudio.length <= 100) {
+        try {
+          await new Promise(r => setTimeout(r, 1200));
+          const retryBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
+          if (retryBuf && retryBuf.length > 500) {
+            finalAudio = retryBuf;
+          }
+        } catch (_) {}
+      }
+
+      // Fallback Tier 2: Neural EdgeTTS with character's verified edgeFallbackVoice and DSP filter
+      if (!finalAudio || finalAudio.length <= 100) {
+        if (hasBurmese) {
+          try {
+            finalAudio = await synthesizeBurmeseVoice(cleanTxt, engineVoice, effectiveRate, effectivePitch);
+          } catch (_) {}
+        } else if (profile) {
+          try {
+            const tts = new EdgeTTS();
+            const fallbackVoice = profile.edgeFallbackVoice || (hasJapanese ? 'ja-JP-NanamiNeural' : 'en-AU-WilliamMultilingualNeural');
+            const res = await tts.generate(cleanTxt, fallbackVoice, {
+              rate: profile.edgeFallbackRate || effectiveRate,
+              pitch: effectivePitch && effectivePitch !== '+0Hz' ? effectivePitch : undefined
+            });
+            if (res && res.audio && res.audio.length > 50) {
+              finalAudio = Buffer.from(res.audio);
+              if (profile.dspFilter) {
+                const tempIn = `/tmp/fb_dsp_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+                const tempOut = `/tmp/fb_dsp_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+                try {
+                  fs.writeFileSync(tempIn, finalAudio);
+                  await execAsync(`ffmpeg -y -i "${tempIn}" -af "${profile.dspFilter}" -c:a libmp3lame -b:a 192k "${tempOut}"`, { timeout: 6000 });
+                  if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
+                    finalAudio = fs.readFileSync(tempOut);
+                  }
+                } catch (_) {} finally {
+                  try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
+                  try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
+                }
+              }
+            }
+          } catch (edgeErr: any) {
+            console.warn(`[Fallback EdgeTTS for ${engineVoice}] notice:`, edgeErr?.message || edgeErr);
+          }
+        }
+      }
+    } else {
+      // Standard Native Language Neural Voice (e.g. ja-JP-KeitaNeural, th-TH-NiwatNeural, vi-VN-NamMinhNeural, etc.)
+      try {
+        const tts = new EdgeTTS();
+        const res = await tts.generate(cleanTxt, engineVoice, {
+          rate: effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%' ? effectiveRate : undefined,
+          pitch: effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz' ? effectivePitch : undefined
+        });
+        if (res && res.audio && res.audio.length > 50) {
+          finalAudio = Buffer.from(res.audio);
+        }
+      } catch (edgeErr: any) {
+        console.warn(`[Neural Voice ${engineVoice}] notice:`, edgeErr?.message || edgeErr);
+      }
+
+      // If EdgeTTS fails, use Gemini Ultra-Realistic Human Voice
+      if (!finalAudio || finalAudio.length <= 100) {
+        try {
+          const geminiBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
+          if (geminiBuf && geminiBuf.length > 500) {
+            finalAudio = geminiBuf;
+          }
+        } catch (geminiErr: any) {
+          console.warn('[TTS Engine Tier 2] Gemini notice:', geminiErr?.message || geminiErr);
+        }
       }
     }
 
@@ -2245,10 +2354,23 @@ async function synthesizeStream(txt: string, vName: string, rate: string = '+0%'
   for (const c of subChunks) {
     let buf = await synthesizeSingleChunk(c, engineVoice, effectiveRate, effectivePitch);
     if (!buf || buf.length < 50) {
-      // Fallback attempt with reliable EdgeTTS voice
+      // Fallback attempt with language-appropriate voice to never alter voice characteristics
       try {
         const tts = new EdgeTTS();
-        const res = await tts.generate(c, 'en-AU-WilliamMultilingualNeural', { rate: effectiveRate, pitch: effectivePitch });
+        let fallbackVoice = engineVoice;
+        const profile = CHARACTER_PROFILES[engineVoice];
+        if (profile?.edgeFallbackVoice) {
+          fallbackVoice = profile.edgeFallbackVoice;
+        } else if (/[\u3040-\u30FF\u31F0-\u31FF\u4E00-\u9FAF]/.test(c)) {
+          fallbackVoice = 'ja-JP-NanamiNeural';
+        } else if (/[\u0E00-\u0E7F]/.test(c)) {
+          fallbackVoice = 'th-TH-NiwatNeural';
+        } else if (/[\u00C0-\u1EF9]/.test(c)) {
+          fallbackVoice = 'vi-VN-NamMinhNeural';
+        } else if (/[\u1000-\u109F\uAA60-\uAA7F]/.test(c)) {
+          fallbackVoice = 'en-AU-WilliamMultilingualNeural';
+        }
+        const res = await tts.generate(c, fallbackVoice, { rate: effectiveRate, pitch: effectivePitch });
         if (res && res.audio && res.audio.length > 50) {
           buf = Buffer.from(res.audio);
         }
@@ -3572,9 +3694,8 @@ app.post('/api/translate-and-speak', async (req: Request, res: Response) => {
 
     // Native Voices Catalog for 100% authentic human accent in each country
     const nativeVoiceCatalog: Record<string, { male: string; female: string; fallbacks: string[] }> = {
-      // Southeast Asia (အရှေ့တောင်အာရှ)
-      'my': { male: 'en-AU-WilliamMultilingualNeural', female: 'en-US-AvaMultilingualNeural', fallbacks: ['en-AU-WilliamMultilingualNeural', 'en-US-AvaMultilingualNeural'] },
-      'th': { male: 'th-TH-NiwatNeural', female: 'th-TH-PremwadeeNeural', fallbacks: ['th-TH-NiwatNeural', 'th-TH-PremwadeeNeural', 'th-TH-AcharaNeural'] },
+      'my': { male: 'en-AU-WilliamMultilingualNeural', female: 'en-US-AvaMultilingualNeural', fallbacks: ['en-US-AndrewMultilingualNeural', 'en-US-EmmaMultilingualNeural', 'en-GB-RyanMultilingualNeural', 'de-DE-SeraphinaMultilingualNeural'] },
+      'th': { male: 'th-TH-NiwatNeural', female: 'th-TH-PremwadeeNeural', fallbacks: ['th-TH-NiwatNeural', 'th-TH-PremwadeeNeural'] },
       'lo': { male: 'lo-LA-ChanthavongNeural', female: 'lo-LA-KeomanyNeural', fallbacks: ['lo-LA-ChanthavongNeural', 'lo-LA-KeomanyNeural'] },
       'vi': { male: 'vi-VN-NamMinhNeural', female: 'vi-VN-HoaiMyNeural', fallbacks: ['vi-VN-NamMinhNeural', 'vi-VN-HoaiMyNeural'] },
       'ms': { male: 'ms-MY-OsmanNeural', female: 'ms-MY-YasminNeural', fallbacks: ['ms-MY-OsmanNeural', 'ms-MY-YasminNeural'] },
@@ -3587,7 +3708,7 @@ app.post('/api/translate-and-speak', async (req: Request, res: Response) => {
       'tl': { male: 'id-ID-ArdiNeural', female: 'id-ID-GadisNeural', fallbacks: ['id-ID-ArdiNeural', 'id-ID-GadisNeural'] },
 
       // East Asia (အရှေ့အာရှ)
-      'ja': { male: 'ja-JP-KeitaNeural', female: 'ja-JP-NanamiNeural', fallbacks: ['ja-JP-KeitaNeural', 'ja-JP-NanamiNeural', 'ja-JP-AoiNeural', 'ja-JP-DaichiNeural', 'ja-JP-ShioriNeural', 'ja-JP-NaokiNeural', 'ja-JP-MayuNeural', 'ja-JP-RyotaNeural', 'ja-JP-AkariNeural'] },
+      'ja': { male: 'ja-JP-KeitaNeural', female: 'ja-JP-NanamiNeural', fallbacks: ['ja-JP-KeitaNeural', 'ja-JP-NanamiNeural', 'ja-JP-DaichiNeural', 'ja-JP-ShioriNeural', 'ja-JP-NaokiNeural', 'ja-JP-MayuNeural'] },
       'ko': { male: 'ko-KR-InJoonNeural', female: 'ko-KR-SunHiNeural', fallbacks: ['ko-KR-InJoonNeural', 'ko-KR-SunHiNeural', 'ko-KR-HyunsuMultilingualNeural'] },
       'zh': { male: 'zh-CN-YunxiNeural', female: 'zh-CN-XiaoxiaoNeural', fallbacks: ['zh-CN-YunxiNeural', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunjianNeural'] },
       'zh-TW': { male: 'zh-TW-YunJheNeural', female: 'zh-TW-HsiaoChenNeural', fallbacks: ['zh-TW-YunJheNeural', 'zh-TW-HsiaoChenNeural'] },

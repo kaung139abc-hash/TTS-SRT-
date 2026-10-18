@@ -469,20 +469,28 @@ export const TARGET_LANGUAGES = [
 export const TARGET_LANG_VOICES: Record<string, { id: string; name: string; desc: string; country: string }[]> = {
   // Southeast Asia (အရှေ့တောင်အာရှ)
   my: [
-    { id: 'en-AU-WilliamMultilingualNeural', name: '🌟 ဝီလျံ (William - Advanced Neural Cinema Male)', desc: 'အဆင့်မြင့် AI Multilingual Model ဖြင့် ထွက်ရှိသော ၁၀၀% လူသားစစ်စစ် တည်ကြည်လေးနက်သော အမျိုးသားအသံ', country: '🇲🇲' },
-    { id: 'en-US-AndrewMultilingualNeural', name: '🔥 အင်ဒရူး (Andrew - Pro Multilingual Storyteller)', desc: 'သဘာဝကျပြီး သွက်လက်ချက်ချာသော အဆင့်မြင့် AI အမျိုးသားအသံ', country: '🇲🇲' },
-    { id: 'en-GB-RyanMultilingualNeural', name: '🎯 ရိုင်ယန် (Ryan - British Professional Male)', desc: 'သဘာဝကျပြီး တည်ငြိမ်ဣန္ဒြေရသည့် ဗြိတိသျှအမျိုးသားအသံ', country: '🇲🇲' },
-    { id: 'en-GB-OliverMultilingualNeural', name: '🎵 အိုလီဗာ (Oliver - British Warm Male)', desc: 'နွေးထွေးဖော်ရွေပြီး အသက်ဝင်တက်ကြွသော အမျိုးသားအသံ', country: '🇲🇲' },
-    { id: 'en-US-SteffanMultilingualNeural', name: '⚡ စတီဖန် (Steffan - Deep Resonant Male)', desc: 'တည်ကြည်ခန့်ညားပြီး ထင်းရှားလေးနက်သော အမျိုးသားအသံ', country: '🇲🇲' },
-    { id: 'it-IT-DiegoMultilingualNeural', name: '🎬 ဒီယေဂို (Diego - Rich Expressive Male)', desc: 'အသံနေအသံထား ကွဲပြားပြီး စိတ်လှုပ်ရှားမှုပေးစွမ်းနိုင်သော အမျိုးသားအသံ', country: '🇲🇲' },
-    { id: 'en-US-BrianMultilingualNeural', name: '🎙️ ဘရိုင်ယန် (Brian - Cinematic Broadcast Male)', desc: 'ရုပ်ရှင်စတူဒီယိုအဆင့် အဆင့်မြင့် AI လူသားအသံ', country: '🇲🇲' },
-    { id: 'ko-KR-HyunsuMultilingualNeural', name: '✨ ဟျွန်ဆူ (Hyunsu - Ultra-HD Neural Voice)', desc: 'အလွန်သဘာဝကျပြီး နူးညံ့သိမ်မွေ့သော AI လူသားစစ်စစ်အသံ', country: '🇲🇲' },
-    { id: 'en-US-AvaMultilingualNeural', name: '🌸 အဗာ (Ava - Elite Neural Natural Female)', desc: 'နားဝင်ချိုပြီး ချိုသာကြည်လင်သော ၁၀၀% လူသားစစ်စစ် အမျိုးသမီးအသံ', country: '🇲🇲' }
+    { id: 'en-AU-WilliamMultilingualNeural', name: '🌟 ဝီလျံ (William - Pure Human Cinema Deep)', desc: '၁၀၀% လူသားစစ်စစ် တည်ကြည်လေးနက်သော Deep Baritone အမျိုးသားအသံ (ရုပ်ရှင်ဇာတ်လမ်းဖတ်ပြ)', country: '🇲🇲' },
+    { id: 'en-US-AndrewMultilingualNeural', name: '🔥 အင်ဒရူး (Andrew - Expressive Storyteller)', desc: '၁၀၀% လူသားစစ်စစ် စိတ်လှုပ်ရှားဖွယ် သွက်လက်ချက်ချာသော အမျိုးသားအသံ', country: '🇲🇲' },
+    { id: 'en-US-AvaMultilingualNeural', name: '🌸 အဗာ (Ava - Warm & Soothing Natural Female)', desc: '၁၀၀% လူသားစစ်စစ် နားဝင်ချိုပြီး နူးညံ့ချိုသာကြည်လင်သော အမျိုးသမီးအသံ', country: '🇲🇲' },
+    { id: 'en-US-EmmaMultilingualNeural', name: '💖 အမ်မာ (Emma - Sweet & Melodious Female)', desc: '၁၀၀% လူသားစစ်စစ် ချိုမြိန်ကြည်လင်သော အိပ်ရာဝင်ပုံပြင် အမျိုးသမီးအသံ', country: '🇲🇲' },
+    { id: 'en-GB-RyanMultilingualNeural', name: '🎯 ရိုင်ယန် (Ryan - Youthful & Bright Male)', desc: '၁၀၀% လူသားစစ်စစ် သွက်လက်တက်ကြွပြီး ဖော်ရွေသော လူငယ်အမျိုးသားအသံ', country: '🇲🇲' },
+    { id: 'my-MM-GrandpaUTha', name: '👴 အဘိုး ဦးသာ (Grandpa U Tha - Wise Elder)', desc: '၁၀၀% လူသားစစ်စစ် သက်ကြီးရွယ်အို ပီသသော ပုံပြင်ပြော အဘိုးအိုအသံ', country: '🇲🇲' },
+    { id: 'my-MM-GrandmaDawMya', name: '👵 အဖွား ဒေါ်မြ (Grandma Daw Mya - Bedtime Story Elder)', desc: '၁၀၀% လူသားစစ်စစ် ကြင်နာနွေးထွေးသော အိပ်ရာဝင်ပုံပြင် အဖွားအသံ', country: '🇲🇲' },
+    { id: 'child-ana', name: '👧 ကလေးမလေး အာနာ (Little Ana - Cute Girl Kid)', desc: '၁၀၀% လူသားစစ်စစ် ချစ်စဖွယ် သွက်လက်ရွှင်လန်းသော သမီးငယ်လေးအသံ', country: '🇲🇲' },
+    { id: 'child-kevin', name: '👦 ကလေးလေး ကယ်ဗင် (Little Kevin - Cheerful Boy Kid)', desc: '၁၀၀% လူသားစစ်စစ် ရွှင်လန်းတက်ကြွပြီး ချစ်စရာကောင်းသော သားငယ်လေးအသံ', country: '🇲🇲' },
+    { id: 'de-DE-SeraphinaMultilingualNeural', name: '✨ ဆာရာဖီနာ (Seraphina - Elegant & Clear Female)', desc: '၁၀၀% လူသားစစ်စစ် သတင်းနှင့် ဆောင်းပါးဖတ်ပြ ရှင်းလင်းပြတ်သားသော အမျိုးသမီးအသံ', country: '🇲🇲' },
+    { id: 'en-GB-OliverMultilingualNeural', name: '🎵 အိုလီဗာ (Oliver - Calm & Wise Male)', desc: '၁၀၀% လူသားစစ်စစ် တည်ငြိမ်အေးချမ်းပြီး ပညာရှိဆန်သော အမျိုးသားအသံ', country: '🇲🇲' },
+    { id: 'en-US-SteffanMultilingualNeural', name: '⚡ စတီဖန် (Steffan - Ultra-Deep Resonant Male)', desc: '၁၀၀% လူသားစစ်စစ် ရင်ဘတ်သံပါသော အလွန်နက်ရှိုင်းသည့် Deep Bass အမျိုးသားအသံ', country: '🇲🇲' },
+    { id: 'fr-FR-VivienneMultilingualNeural', name: '🌺 ဗီဗီယန် (Vivienne - Graceful Soft Female)', desc: '၁၀၀% လူသားစစ်စစ် ယဉ်ကျေးနူးညံ့သိမ်မွေ့သော အမျိုးသမီးအသံ', country: '🇲🇲' },
+    { id: 'en-US-BrianMultilingualNeural', name: '🎙️ ဘရိုင်ယန် (Brian - Broadcast Documentary Male)', desc: '၁၀၀% လူသားစစ်စစ် မှတ်တမ်းရုပ်ရှင်အဆင့် ရုပ်သံကြေညာဟန် အမျိုးသားအသံ', country: '🇲🇲' },
+    { id: 'pt-BR-ThalitaMultilingualNeural', name: '🌙 သလီတာ (Thalita - Gentle Whispering Female)', desc: '၁၀၀% လူသားစစ်စစ် အလွန်ညင်သာသိမ်မွေ့သော စကားပြော အမျိုးသမီးအသံ', country: '🇲🇲' },
+    { id: 'ko-KR-HyunsuMultilingualNeural', name: '✨ ဟျွန်ဆူ (Hyunsu - Modern Gentle Male)', desc: '၁၀၀% လူသားစစ်စစ် ယဉ်ကျေးသိမ်မွေ့သော ခေတ်မီလူငယ်အမျိုးသားအသံ', country: '🇲🇲' },
+    { id: 'en-US-EricMultilingualNeural', name: '🎬 အဲရစ် (Eric - Cinematic Narrator)', desc: '၁၀၀% လူသားစစ်စစ် ရုပ်ရှင်ဇာတ်လမ်းဆန်ဆန် ဩဇာပြည့်ဝသော အသံ', country: '🇲🇲' },
+    { id: 'en-GB-MarcusMultilingualNeural', name: '👑 မားကပ်စ် (Marcus - Regal British Male)', desc: '၁၀၀% လူသားစစ်စစ် တော်ဝင်အသံထွက်ကဲ့သို့ ခန့်ညားတည်ငြိမ်သော အသံ', country: '🇲🇲' }
   ],
   th: [
     { id: 'th-TH-NiwatNeural', name: 'Niwat (နိဝတ် - ထိုင်းအမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော ထိုင်းစကားပြော လေသံစစ်စစ်', country: '🇹🇭' },
-    { id: 'th-TH-PremwadeeNeural', name: 'Premwadee (ပရမ်ဝတီ - ထိုင်းအမျိုးသမီး)', desc: 'ချိုသာသော ထိုင်းစကားပြော အမျိုးသမီးအသံ', country: '🇹🇭' },
-    { id: 'th-TH-AcharaNeural', name: 'Achara (အာချာရာ - သဘာဝထိုင်းအသံ)', desc: 'ကြည်လင်ရှင်းလင်းသော ထိုင်းအသံ', country: '🇹🇭' }
+    { id: 'th-TH-PremwadeeNeural', name: 'Premwadee (ပရမ်ဝတီ - ထိုင်းအမျိုးသမီး)', desc: 'ချိုသာသော ထိုင်းစကားပြော အမျိုးသမီးအသံ', country: '🇹🇭' }
   ],
   lo: [
     { id: 'lo-LA-ChanthavongNeural', name: 'Chanthavong (ချန်သာဗွန် - လာအို အမျိုးသား)', desc: '၁၀၀% သဘာဝကျသော လာအိုစကားပြော အမျိုးသားလေသံ', country: '🇱🇦' },
