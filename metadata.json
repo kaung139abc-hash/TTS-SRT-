@@ -1,6 +1,6 @@
 {
   "name": "Voice Master Studio",
-  "description": "Voice Master Studio is a premium full-stack TTS synthesis and AI video generation platform featuring real human speech up to 10k chars, multi-speaker dialogue podcast recording, AI storyboard scenes, and auto-captioned viral video visualizers.",
+  "description": "Voice Master Studio is an all-in-one unlimited AI audio, voice synthesis, multi-speaker dialogue, video visualizer, subtitle translation and viral video production platform with 100% human-like neural voices.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

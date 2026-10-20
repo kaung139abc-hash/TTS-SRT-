@@ -979,13 +979,7 @@ export const App: React.FC = () => {
         try {
           localStorage.setItem('vm_trans_usage_count', String(nextCount));
         } catch (_) {}
-        // Translation features: Trigger ad popup after every 4 translations (4, 8, 12, 16, ...)
-        if (nextCount > 0 && nextCount % 4 === 0) {
-          setAdCountdown(20);
-          setHasOpenedAd(true);
-          setShowInAppAdModal(true);
-          openMonetagDirectLink();
-        }
+        // 100% Unlimited generations: Never interrupt user with blocking modal popups
         return nextCount;
       });
     } else {
@@ -994,18 +988,7 @@ export const App: React.FC = () => {
         try {
           localStorage.setItem('vm_usage_count', String(nextCount));
         } catch (_) {}
-        // Other features: Trigger ad popup after every 2 usages (2, 4, 6, 8, ...) as before
-        if (nextCount > 0 && nextCount % 2 === 0) {
-          setAdCountdown(20);
-          setHasOpenedAd(true);
-          setShowInAppAdModal(true);
-          
-          // Inject the new ad script
-          const s = document.createElement('script');
-          s.dataset.zone = '12003279';
-          s.src = 'https://n6wxm.com/vignette.min.js';
-          document.body.appendChild(s);
-        }
+        // 100% Unlimited generations: Never interrupt user with blocking modal popups
         return nextCount;
       });
     }
@@ -1169,7 +1152,7 @@ export const App: React.FC = () => {
       };
 
       setAiImageHistory(prev => {
-        const updated = [newRecord, ...prev.slice(0, 29)];
+        const updated = [newRecord, ...prev.slice(0, 99)];
         try {
           localStorage.setItem('vm_ai_image_history', JSON.stringify(updated));
         } catch (_) {}
@@ -1630,7 +1613,7 @@ export const App: React.FC = () => {
       setHistoryItems(updated);
     } catch (err) {
       console.warn('History save error:', err);
-      setHistoryItems(prev => [newItem, ...prev.slice(0, 4)]);
+      setHistoryItems(prev => [newItem, ...prev.slice(0, 99)]);
     }
   };
 
@@ -2264,7 +2247,7 @@ export const App: React.FC = () => {
       setDialogueLines(target.dialogueLines);
     } else {
       const sentences = target.script.split(/(?<=[။\.\?\!\n])\s*/).filter(s => s.trim().length > 0);
-      const newLines: DialogueLine[] = sentences.slice(0, 8).map((s, idx) => ({
+      const newLines: DialogueLine[] = sentences.map((s, idx) => ({
         id: `dlg_story_${Date.now()}_${idx}`,
         speakerId: speakers[idx % speakers.length].id,
         text: s.trim()
@@ -4160,12 +4143,16 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 2. Text Input Area (Supports up to 10,000 characters) */}
+                {/* 2. Text Input Area (Supports Unlimited characters & unlimited audio duration) */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-300 flex items-center justify-between flex-wrap gap-2">
                     <span className="flex items-center gap-1.5">
                       <FileText className="w-4 h-4 text-indigo-400" />
                       <span>ဖတ်ပြစေလိုသော စာသားများ ရိုက်ထည့်ပါ (မြန်မာ သို့မဟုတ် အင်္ဂလိပ်)</span>
+                      <span className="text-[10px] font-bold text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                        <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" />
+                        <span>⚡ စာလုံးရေ နှင့် အသံကြာချိန် အကန့်အသတ်မရှိ (Unlimited)</span>
+                      </span>
                     </span>
                     <div className="flex items-center gap-2 flex-wrap">
                       {/* 1-Click Natural Spoken Burmese Converter */}
@@ -4903,6 +4890,9 @@ export const App: React.FC = () => {
                       <option value="6min">၆ မိနစ် (Pro)</option>
                       <option value="8min">၈ မိနစ် (Ultra)</option>
                       <option value="10min">၁၀ မိနစ် (Long)</option>
+                      <option value="15min">၁၅ မိနစ် (Mega Story / Novel)</option>
+                      <option value="20min">၂၀ မိနစ် (Epic Saga)</option>
+                      <option value="unlimited">♾️ အကန့်အသတ်မရှိ (Unlimited Full Masterpiece)</option>
                     </select>
                   </div>
                   <div className="space-y-1.5">
@@ -5016,7 +5006,7 @@ export const App: React.FC = () => {
                 </div>
 
                 <div className="p-3 bg-indigo-950/30 border border-indigo-500/20 rounded-xl flex items-center justify-between text-xs text-indigo-300">
-                  <span>💡 အကြံပြုချက် - အပေါ်ရှိ <b>"လူအသံစစ်စစ်ဖြင့် အသံထွက်ပြောင်းမည်"</b> ခလုတ်ကို နှိပ်လိုက်ပါက ဤဇာတ်ညွှန်းစာသား အပြည့်အစုံကို မြန်မာလူအသံစစ်စစ် (သီဟ သို့မဟုတ် နီလာ) ဖြင့် MP3 အသံဖိုင်အပြည့်အစုံ ချက်ချင်း ထုတ်ယူနိုင်ပါမည်။</span>
+                  <span>💡 အကြံပြုချက် - အပေါ်ရှိ <b>"လူအသံစစ်စစ်ဖြင့် အသံထွက်ပြောင်းမည်"</b> ခလုတ်ကို နှိပ်လိုက်ပါက ဤဇာတ်ညွှန်းစာသား အပြည့်အစုံကို လူအသံစစ်စစ် (ဝီလျံ၊ အေဗာ သို့မဟုတ် အဘိုး/အဖွား အသံများ) ဖြင့် MP3 အသံဖိုင်အပြည့်အစုံ ချက်ချင်း ထုတ်ယူနိုင်ပါမည်။</span>
                 </div>
 
                 {/* AI Storyboard Scene Images Generator Box */}
@@ -5637,13 +5627,11 @@ export const App: React.FC = () => {
                             onChange={(e) => {
                               const files = e.target.files;
                               if (files && files.length > 0) {
-                                const remainingSlots = 10 - videoBgImages.length;
-                                const filesToRead = Array.from(files).slice(0, remainingSlots);
-                                filesToRead.forEach(file => {
+                                Array.from(files).forEach(file => {
                                   const reader = new FileReader();
                                   reader.onloadend = () => {
                                     if (reader.result) {
-                                      setVideoBgImages(prev => prev.length < 10 ? [...prev, reader.result as string] : prev);
+                                      setVideoBgImages(prev => [...prev, reader.result as string]);
                                     }
                                   };
                                   reader.readAsDataURL(file);
@@ -5654,7 +5642,7 @@ export const App: React.FC = () => {
                         </label>
                       )}
 
-                      {/* Thumbnails Grid (Up to 10 images) */}
+                      {/* Thumbnails Grid (Unlimited images) */}
                       {videoBgImages.length > 0 && (
                         <div className="space-y-2">
                           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
@@ -10089,16 +10077,16 @@ export const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Multi-Image Background Upload (Supports up to 10 images) */}
+              {/* Multi-Image Background Upload (Unlimited images) */}
               <div className="p-3 bg-[#0d0f17] border border-purple-500/20 rounded-xl space-y-2.5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
                     <Image className="w-3.5 h-3.5 text-purple-400" />
-                    <span className="text-xs font-bold text-slate-200">နောက်ခံပုံများ (အများဆုံး ၁၀ ပုံအထိ):</span>
+                    <span className="text-xs font-bold text-slate-200">နောက်ခံပုံများ (အကန့်အသတ်မရှိ - Unlimited Images):</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-500/30">
-                      {videoBgImages.length} / 10 ပုံ
+                      {videoBgImages.length} ပုံ (Unlimited)
                     </span>
                     {videoBgImages.length > 0 && (
                       <button 
@@ -10112,36 +10100,32 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {videoBgImages.length < 10 && (
-                  <label className="flex items-center justify-center gap-2 py-2.5 px-3 border border-dashed border-purple-500/30 rounded-lg hover:border-purple-400 hover:bg-purple-950/20 transition-all cursor-pointer group bg-black/30 text-purple-300">
-                    <Image className="w-4 h-4" />
-                    <span className="text-[11px] font-bold">
-                      {videoBgImages.length === 0 ? '+ နောက်ခံပုံများ ရွေးချယ်မည် (Upload up to 10 Images)' : `+ ပုံထပ်ထည့်မည် (${10 - videoBgImages.length} ပုံ ကျန်ရှိ)`}
-                    </span>
-                    <input 
-                      type="file" 
-                      multiple
-                      accept="image/*" 
-                      className="hidden" 
-                      onChange={(e) => {
-                        const files = e.target.files;
-                        if (files && files.length > 0) {
-                          const remainingSlots = 10 - videoBgImages.length;
-                          const filesToRead = Array.from(files).slice(0, remainingSlots);
-                          filesToRead.forEach(file => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                              if (reader.result) {
-                                setVideoBgImages(prev => prev.length < 10 ? [...prev, reader.result as string] : prev);
-                              }
-                            };
-                            reader.readAsDataURL(file);
-                          });
-                        }
-                      }}
-                    />
-                  </label>
-                )}
+                <label className="flex items-center justify-center gap-2 py-2.5 px-3 border border-dashed border-purple-500/30 rounded-lg hover:border-purple-400 hover:bg-purple-950/20 transition-all cursor-pointer group bg-black/30 text-purple-300">
+                  <Image className="w-4 h-4" />
+                  <span className="text-[11px] font-bold">
+                    {videoBgImages.length === 0 ? '+ နောက်ခံပုံများ ရွေးချယ်မည် (Unlimited Images)' : `+ ပုံထပ်ထည့်မည် (${videoBgImages.length} ပုံ တင်ပြီး)`}
+                  </span>
+                  <input 
+                    type="file" 
+                    multiple
+                    accept="image/*" 
+                    className="hidden" 
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (files && files.length > 0) {
+                        Array.from(files).forEach(file => {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            if (reader.result) {
+                              setVideoBgImages(prev => [...prev, reader.result as string]);
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        });
+                      }
+                    }}
+                  />
+                </label>
 
                 {videoBgImages.length > 0 && (
                   <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 pt-1">

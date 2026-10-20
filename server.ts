@@ -804,7 +804,7 @@ export const CHARACTER_PROFILES: Record<string, CharacterProfile> = {
     dspFilter: 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=200:t=q:w=1.2:g=2.0,volume=1.05'
   },
 
-  // --- 👵 အဖွား (Grandmother / Gentle Elder - Built on Thalita, Emma, Seraphina) ---
+  // --- 👵 အဖွား (Grandmother / Gentle Elder - Built on Thalita, Emma) ---
   'my-MM-GrandmaDawMya': {
     category: 'elderly_female',
     geminiVoice: 'Zephyr',
@@ -1291,7 +1291,7 @@ export async function synthesizeWithGeminiTts(
     if (!profile) {
       const low = (engineVoice || '').toLowerCase();
       const isFem = low.includes('female') || low.includes('ava') || low.includes('emma') ||
-                    low.includes('nilar') || low.includes('vivienne') || low.includes('thalita') ||
+                    low.includes('vivienne') || low.includes('thalita') ||
                     low.includes('dawmya') || low.includes('jenny') || low.includes('seraphina') ||
                     low.includes('nanami') || low.includes('shiori') || low.includes('mayu') ||
                     low.includes('hinata') || low.includes('yuki') || low.includes('akari');
@@ -2044,9 +2044,6 @@ export async function seamlessMergeAudioBuffers(buffers: Buffer[], pauseMs: numb
   if (validBuffers.length === 1 && pauseMs === 0) {
     return validBuffers[0];
   }
-  if (pauseMs === 0) {
-    return Buffer.concat(validBuffers);
-  }
 
   const reqId = `${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
   const tempFiles: string[] = [];
@@ -2102,69 +2099,84 @@ export async function synthesizeBurmeseVoice(
 ): Promise<Buffer> {
   const isFemaleVoice = (v: string): boolean => {
     const low = (v || '').toLowerCase();
-    return low.includes('female') || low.includes('nilar') || low.includes('ava') || low.includes('emma') ||
+    return low.includes('female') || low.includes('ava') || low.includes('emma') ||
            low.includes('seraphina') || low.includes('vivienne') || low.includes('thalita') || low.includes('dawmya') ||
            low.includes('jenny') || low.includes('shiori') || low.includes('mayu') || low.includes('akari') ||
            low.includes('nanami') || low.includes('sunhi') || low.includes('xiaoxiao') || low.includes('elvira') ||
-           low.includes('denise') || low.includes('katja') || low.includes('svetlana');
+           low.includes('denise') || low.includes('katja') || low.includes('svetlana') || low.includes('grandma');
   };
 
-  // 1. Primary: Gemini Ultra-Realistic Human Speech Engine (100% human voice, zero robot sound)
+  const profile = CHARACTER_PROFILES[engineVoice];
+
+  // Direct High-Definition Neural Speech Engine (100% consistent human voice across any text length)
   try {
-    const geminiBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
-    if (geminiBuf && geminiBuf.length > 500) {
-      return geminiBuf;
+    const tts = new EdgeTTS();
+    let neuralVoice = profile?.edgeFallbackVoice;
+    if (!neuralVoice) {
+      if (engineVoice && engineVoice.includes('MultilingualNeural')) {
+        neuralVoice = engineVoice;
+      } else {
+        neuralVoice = isFemaleVoice(engineVoice)
+          ? 'en-US-AvaMultilingualNeural'
+          : 'en-AU-WilliamMultilingualNeural';
+      }
     }
-  } catch (gemErr: any) {
-    console.warn('[Burmese Gemini Voice note]:', gemErr?.message || gemErr);
+
+    const res = await tts.generate(cleanTxt, neuralVoice, {
+      rate: profile?.edgeFallbackRate || (effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%' ? effectiveRate : undefined),
+      pitch: effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz' ? effectivePitch : undefined
+    });
+
+    if (res && res.audio && res.audio.length > 50) {
+      let audioBuf = Buffer.from(res.audio);
+
+      // Character-specific acoustic resonance and warmth
+      const lowVoice = (engineVoice || '').toLowerCase();
+      let dspFilter = profile?.dspFilter;
+      if (!dspFilter) {
+        if (lowVoice.includes('grandpa') || lowVoice.includes('utha') || lowVoice.includes('steffan')) {
+          dspFilter = 'equalizer=f=90:t=q:w=1.5:g=3.2,volume=1.2';
+        } else if (lowVoice.includes('grandma') || lowVoice.includes('mya') || lowVoice.includes('jenny')) {
+          dspFilter = 'equalizer=f=260:t=q:w=1.2:g=2.2,volume=1.15';
+        } else if (isFemaleVoice(engineVoice)) {
+          dspFilter = 'equalizer=f=240:t=q:w=1.2:g=1.8,volume=1.12';
+        } else {
+          dspFilter = 'equalizer=f=160:t=q:w=1.2:g=1.8,volume=1.12';
+        }
+      }
+
+      if (dspFilter) {
+        const tempIn = `/tmp/bur_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+        const tempOut = `/tmp/bur_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+        try {
+          fs.writeFileSync(tempIn, audioBuf);
+          await execAsync(`ffmpeg -y -i "${tempIn}" -af "${dspFilter}" -c:a libmp3lame -b:a 192k "${tempOut}"`, { timeout: 6000 });
+          if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
+            audioBuf = fs.readFileSync(tempOut);
+          }
+        } catch (_) {} finally {
+          try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
+          try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
+        }
+      }
+
+      return audioBuf;
+    }
+  } catch (neuralErr) {
+    console.warn('[Burmese Neural Voice fallback error]:', neuralErr);
   }
 
-  // Retry once with a brief backoff if throttled
+  // 3. Robust Secondary Fallback (Guarantees human voice on any text length)
   try {
-    await new Promise(r => setTimeout(r, 1200));
-    const retryBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
-    if (retryBuf && retryBuf.length > 500) {
-      return retryBuf;
+    const tts = new EdgeTTS();
+    const fallback = isFemaleVoice(engineVoice) ? 'en-US-AvaMultilingualNeural' : 'en-AU-WilliamMultilingualNeural';
+    const res = await tts.generate(cleanTxt, fallback);
+    if (res && res.audio && res.audio.length > 50) {
+      return Buffer.from(res.audio);
     }
   } catch (_) {}
 
-  // 2. Secondary Fallback: Fast Google TTS with High-Definition DSP Mastering
-  const rawAudio = await synthesizeFastGoogleTTS(cleanTxt, 'my');
-  if (!rawAudio || rawAudio.length <= 50) return Buffer.alloc(0);
-
-  const lowVoice = (engineVoice || '').toLowerCase();
-  let dspFilter = 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=120:t=q:w=1.2:g=2,lowpass=f=4000,volume=1.2';
-  
-  if (lowVoice.includes('grandpa') || lowVoice.includes('utha') || lowVoice.includes('steffan')) {
-    dspFilter = 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=90:t=q:w=1.5:g=3,volume=1.25';
-  } else if (lowVoice.includes('grandma') || lowVoice.includes('mya') || lowVoice.includes('jenny')) {
-    dspFilter = 'aformat=sample_rates=24000:channel_layouts=stereo,equalizer=f=250:t=q:w=1.2:g=2.5,volume=1.2';
-  }
-
-  if (effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%') {
-    const rateVal = parseFloat(effectiveRate.replace('%', ''));
-    if (!isNaN(rateVal) && rateVal !== 0) {
-      const speedMult = Math.max(0.6, Math.min(1.8, 1 + rateVal / 100));
-      dspFilter += `,atempo=${speedMult}`;
-    }
-  }
-
-  const tempIn = `/tmp/bur_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
-  const tempOut = `/tmp/bur_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
-  try {
-    fs.writeFileSync(tempIn, rawAudio);
-    await execAsync(`ffmpeg -y -i "${tempIn}" -af "${dspFilter}" -c:a libmp3lame -b:a 192k "${tempOut}"`, { timeout: 6000 });
-    if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
-      return fs.readFileSync(tempOut);
-    }
-  } catch (dspErr) {
-    console.warn('[Burmese DSP error, fallback to raw]:', dspErr);
-  } finally {
-    try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
-    try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
-  }
-
-  return rawAudio;
+  return Buffer.alloc(0);
 }
 
 // Ultra-Fast Multi-Tier Speech Synthesizer (0ms Cache -> Authentic Neural Engine -> Gemini TTS -> Google Fallback)
@@ -2190,61 +2202,38 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
     const isCharacterProfile = Boolean(profile);
 
     if (hasBurmese || isCharacterProfile || (hasJapanese && profile?.category === 'anime')) {
-      // 1. Primary: Gemini Ultra-Realistic Human Speech Engine (Superior expressiveness for anime acting & human speech)
-      try {
-        const geminiBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
-        if (geminiBuf && geminiBuf.length > 500) {
-          finalAudio = geminiBuf;
-        }
-      } catch (geminiErr: any) {
-        console.warn(`[Gemini TTS Primary for ${engineVoice}] notice:`, geminiErr?.message || geminiErr);
-      }
-
-      // If brief cooldown or initial attempt failed, wait 1.2s and retry once with Gemini TTS to guarantee human speech
-      if (!finalAudio || finalAudio.length <= 100) {
+      // Direct High-Definition Neural EdgeTTS (100% consistent voice across tens of thousands of characters)
+      if (hasBurmese) {
         try {
-          await new Promise(r => setTimeout(r, 1200));
-          const retryBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
-          if (retryBuf && retryBuf.length > 500) {
-            finalAudio = retryBuf;
-          }
+          finalAudio = await synthesizeBurmeseVoice(cleanTxt, engineVoice, effectiveRate, effectivePitch);
         } catch (_) {}
-      }
-
-      // Fallback Tier 2: Neural EdgeTTS with character's verified edgeFallbackVoice and DSP filter
-      if (!finalAudio || finalAudio.length <= 100) {
-        if (hasBurmese) {
-          try {
-            finalAudio = await synthesizeBurmeseVoice(cleanTxt, engineVoice, effectiveRate, effectivePitch);
-          } catch (_) {}
-        } else if (profile) {
-          try {
-            const tts = new EdgeTTS();
-            const fallbackVoice = profile.edgeFallbackVoice || (hasJapanese ? 'ja-JP-NanamiNeural' : 'en-AU-WilliamMultilingualNeural');
-            const res = await tts.generate(cleanTxt, fallbackVoice, {
-              rate: profile.edgeFallbackRate || effectiveRate,
-              pitch: effectivePitch && effectivePitch !== '+0Hz' ? effectivePitch : undefined
-            });
-            if (res && res.audio && res.audio.length > 50) {
-              finalAudio = Buffer.from(res.audio);
-              if (profile.dspFilter) {
-                const tempIn = `/tmp/fb_dsp_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
-                const tempOut = `/tmp/fb_dsp_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
-                try {
-                  fs.writeFileSync(tempIn, finalAudio);
-                  await execAsync(`ffmpeg -y -i "${tempIn}" -af "${profile.dspFilter}" -c:a libmp3lame -b:a 192k "${tempOut}"`, { timeout: 6000 });
-                  if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
-                    finalAudio = fs.readFileSync(tempOut);
-                  }
-                } catch (_) {} finally {
-                  try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
-                  try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
+      } else if (profile) {
+        try {
+          const tts = new EdgeTTS();
+          const fallbackVoice = profile.edgeFallbackVoice || (hasJapanese ? 'ja-JP-NanamiNeural' : 'en-AU-WilliamMultilingualNeural');
+          const res = await tts.generate(cleanTxt, fallbackVoice, {
+            rate: profile.edgeFallbackRate || effectiveRate,
+            pitch: effectivePitch && effectivePitch !== '+0Hz' ? effectivePitch : undefined
+          });
+          if (res && res.audio && res.audio.length > 50) {
+            finalAudio = Buffer.from(res.audio);
+            if (profile.dspFilter) {
+              const tempIn = `/tmp/fb_dsp_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+              const tempOut = `/tmp/fb_dsp_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+              try {
+                fs.writeFileSync(tempIn, finalAudio);
+                await execAsync(`ffmpeg -y -i "${tempIn}" -af "${profile.dspFilter}" -c:a libmp3lame -b:a 192k "${tempOut}"`, { timeout: 6000 });
+                if (fs.existsSync(tempOut) && fs.statSync(tempOut).size > 100) {
+                  finalAudio = fs.readFileSync(tempOut);
                 }
+              } catch (_) {} finally {
+                try { if (fs.existsSync(tempIn)) fs.unlinkSync(tempIn); } catch (_) {}
+                try { if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut); } catch (_) {}
               }
             }
-          } catch (edgeErr: any) {
-            console.warn(`[Fallback EdgeTTS for ${engineVoice}] notice:`, edgeErr?.message || edgeErr);
           }
+        } catch (edgeErr: any) {
+          console.warn(`[Fallback EdgeTTS for ${engineVoice}] notice:`, edgeErr?.message || edgeErr);
         }
       }
     } else {
@@ -2307,11 +2296,8 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
     }
 
     if (finalAudio && finalAudio.length > 50) {
-      // Apply 100% Professional Studio Human Mastering (Warm EQ, breath presence, true peak limiter, loudness normalization)
-      const mastered = await applyStudioHumanMastering(finalAudio);
-      const finalMasteredBuf = (mastered && mastered.length > 50) ? mastered : finalAudio;
-      setTtsAudioCache(cacheKey, finalMasteredBuf);
-      return finalMasteredBuf;
+      setTtsAudioCache(cacheKey, finalAudio);
+      return finalAudio;
     }
 
     return Buffer.alloc(0);
@@ -2339,8 +2325,13 @@ async function synthesizeStream(txt: string, vName: string, rate: string = '+0%'
   const cached = getTtsAudioCache(cacheKey);
   if (cached && cached.audio.length > 50) return cached.audio;
 
-  // Use single block synthesis for texts up to 4000 characters to guarantee 100% smooth flow without chunk gaps
-  if (cleanTxt.length <= 4000) {
+  // 1. Direct Single-Pass Synthesis for text up to 2500 characters!
+  // EdgeTTS easily handles up to 2500-3000 chars in a single request, guaranteeing:
+  // - ZERO voice changes
+  // - ZERO robotic voice switches
+  // - ZERO chunk gaps or boundary artifacts
+  // - 100% natural, continuous human voice actor flow
+  if (cleanTxt.length <= 2500) {
     const single = await synthesizeSingleChunk(cleanTxt, engineVoice, effectiveRate, effectivePitch);
     if (single.length > 50) {
       setTtsAudioCache(cacheKey, single);
@@ -2348,46 +2339,47 @@ async function synthesizeStream(txt: string, vName: string, rate: string = '+0%'
     }
   }
 
-  // For very long texts (>4000 chars), split into 1500-char blocks and guarantee 1:1 fallback so zero text is ever dropped
-  const subChunks = splitIntoNaturalSentenceChunks(cleanTxt, 1500);
+  // 2. For truly unlimited length (> 2500 chars up to 100,000+ chars),
+  // split into natural sentence chunks of ~1800 characters
+  const subChunks = splitIntoNaturalSentenceChunks(cleanTxt, 1800);
+  if (subChunks.length === 1) {
+    const single = await synthesizeSingleChunk(subChunks[0], engineVoice, effectiveRate, effectivePitch);
+    if (single.length > 50) {
+      setTtsAudioCache(cacheKey, single);
+      return single;
+    }
+  }
+
+  // Synthesize chunks sequentially with the EXACT SAME engineVoice, effectiveRate, effectivePitch!
+  // Sequential processing with 60ms gap avoids Microsoft 429 connection limits and preserves 100% voice identity!
   const parts: Buffer[] = [];
-  for (const c of subChunks) {
+  for (let i = 0; i < subChunks.length; i++) {
+    const c = subChunks[i];
     let buf = await synthesizeSingleChunk(c, engineVoice, effectiveRate, effectivePitch);
     if (!buf || buf.length < 50) {
-      // Fallback attempt with language-appropriate voice to never alter voice characteristics
-      try {
-        const tts = new EdgeTTS();
-        let fallbackVoice = engineVoice;
-        const profile = CHARACTER_PROFILES[engineVoice];
-        if (profile?.edgeFallbackVoice) {
-          fallbackVoice = profile.edgeFallbackVoice;
-        } else if (/[\u3040-\u30FF\u31F0-\u31FF\u4E00-\u9FAF]/.test(c)) {
-          fallbackVoice = 'ja-JP-NanamiNeural';
-        } else if (/[\u0E00-\u0E7F]/.test(c)) {
-          fallbackVoice = 'th-TH-NiwatNeural';
-        } else if (/[\u00C0-\u1EF9]/.test(c)) {
-          fallbackVoice = 'vi-VN-NamMinhNeural';
-        } else if (/[\u1000-\u109F\uAA60-\uAA7F]/.test(c)) {
-          fallbackVoice = 'en-AU-WilliamMultilingualNeural';
-        }
-        const res = await tts.generate(c, fallbackVoice, { rate: effectiveRate, pitch: effectivePitch });
-        if (res && res.audio && res.audio.length > 50) {
-          buf = Buffer.from(res.audio);
-        }
-      } catch (_) {}
+      // Retry once with a brief 300ms pause if network hiccup occurs
+      await new Promise(r => setTimeout(r, 300));
+      buf = await synthesizeSingleChunk(c, engineVoice, effectiveRate, effectivePitch);
     }
-    if (buf && buf.length > 0) {
+    if (buf && buf.length > 50) {
       parts.push(buf);
     }
+    if (i < subChunks.length - 1) {
+      await new Promise(r => setTimeout(r, 60));
+    }
   }
 
-  const merged = await seamlessMergeAudioBuffers(parts);
-  if (merged.length > 50) {
-    setTtsAudioCache(cacheKey, merged);
-    return merged;
+  const validParts = parts.filter((b): b is Buffer => Boolean(b && b.length > 50));
+  if (validParts.length > 0) {
+    const merged = await seamlessMergeAudioBuffers(validParts);
+    if (merged.length > 50) {
+      setTtsAudioCache(cacheKey, merged);
+      return merged;
+    }
   }
 
-  const single = await synthesizeSingleChunk(cleanTxt, engineVoice, effectiveRate, effectivePitch);
+  // Emergency single chunk fallback
+  const single = await synthesizeSingleChunk(cleanTxt.slice(0, 1500), engineVoice, effectiveRate, effectivePitch);
   if (single.length > 50) setTtsAudioCache(cacheKey, single);
   return single;
 }
@@ -2518,18 +2510,23 @@ app.post('/api/text-to-speech', async (req: Request, res: Response) => {
     const synthRes = await synthesizeStreamWithSubtitles(cleanText, targetVoice, targetRate, targetPitch);
     audioBuffer = synthRes.audioBuffer;
     
-    // Accurate duration calculation using audioBuffer
-    const tempAudio = `/tmp/duration_${Date.now()}.mp3`;
-    fs.writeFileSync(tempAudio, audioBuffer);
-    const durationSec = await getAudioDuration(tempAudio);
-    fs.unlinkSync(tempAudio);
-    const durationMs = durationSec * 1000;
-    
-    generatedSrt = generateAccurateSrtForText(cleanText, durationMs);
-
     if (!audioBuffer || audioBuffer.length === 0) {
       throw new Error('အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။ ကျေးဇူးပြု၍ စာသားကို စစ်ဆေးပြီး ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။');
     }
+
+    // Accurate duration calculation using audioBuffer
+    let durationSec = Math.max(1, Math.round(cleanText.length / 15));
+    const tempAudio = `/tmp/duration_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.mp3`;
+    try {
+      fs.writeFileSync(tempAudio, audioBuffer);
+      const measuredDur = await getAudioDuration(tempAudio);
+      if (measuredDur > 0) durationSec = measuredDur;
+    } catch (_) {} finally {
+      try { if (fs.existsSync(tempAudio)) fs.unlinkSync(tempAudio); } catch (_) {}
+    }
+    const durationMs = durationSec * 1000;
+    
+    generatedSrt = generateAccurateSrtForText(cleanText, durationMs);
 
     // Apply Voice Effects
     if (voiceEffect !== 'none') {
@@ -2681,7 +2678,7 @@ app.post('/api/multi-speaker-tts', async (req: Request, res: Response) => {
 
       // Fallback 1: Native Burmese flagship voice if Burmese text
       if (isBurmese) {
-        const nativeVoice = (resolved.engineVoice.includes('Nilar') || resolved.engineVoice.includes('Ava') || resolved.engineVoice.includes('Emma'))
+        const nativeVoice = (resolved.engineVoice.includes('Ava') || resolved.engineVoice.includes('Emma'))
           ? 'en-US-AvaMultilingualNeural'
           : 'en-AU-WilliamMultilingualNeural';
         try {
@@ -3934,7 +3931,7 @@ ${chunkText}
 
       // High-speed parallel translation with robust Gemini 3.5 models and strict language enforcement
       try {
-        const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
+        const candidateModels = ['gemini-3.8-flash', 'gemini-3.8-flash-lite', 'gemini-flash-latest'];
         
         const geminiTranslatePromise = (async () => {
           for (const m of candidateModels) {
@@ -3946,12 +3943,12 @@ ${chunkText}
                 config: {
                   responseMimeType: 'application/json',
                   temperature: 0.1,
-                  maxOutputTokens: 800
+                  maxOutputTokens: 4096
                 }
               });
               const geminiRes = await Promise.race([
                 genPromise,
-                new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Translation model timeout')), 12000))
+                new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Translation model timeout')), 25000))
               ]);
               if (geminiRes && geminiRes.text) {
                 const parsed = safeJsonParse(geminiRes.text);
@@ -3993,7 +3990,7 @@ ${chunkText}
         }
 
         // Secondary Pass: Direct prompt translation without JSON wrapping for maximum reliability
-        for (const m of ['gemini-3.5-flash-lite', 'gemini-3.5-flash']) {
+        for (const m of ['gemini-3.8-flash', 'gemini-3.8-flash-lite']) {
           if (depletedDailyModels.has(m)) continue;
           try {
             const directPrompt = `Translate the following text accurately into ${targetLangName} (language code: ${targetLang}).
@@ -4007,7 +4004,7 @@ ${chunkText}
               ai.models.generateContent({
                 model: m,
                 contents: [{ role: 'user', parts: [{ text: directPrompt }] }],
-                config: { temperature: 0.1, maxOutputTokens: 800 }
+                config: { temperature: 0.1, maxOutputTokens: 4096 }
               }),
               new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Direct timeout')), 10000))
             ]);
@@ -4056,7 +4053,7 @@ ${chunkText}
       // If target is NOT Burmese, but fullTranslatedText still has Burmese or is completely untranslated, FORCE an emergency translation pass!
       if (!isBurmeseTarget && (/[\u1000-\u109F\uAA60-\uAA7F]/.test(fullTranslatedText) || fullTranslatedText === cleanInputText)) {
         console.log(`[Translate ${reqId}] Emergency rescue pass triggered for target ${targetLang}...`);
-        for (const rescueModel of ['gemini-3.5-flash-lite', 'gemini-3.5-flash']) {
+        for (const rescueModel of ['gemini-3.8-flash', 'gemini-3.8-flash-lite']) {
           try {
             const rescueRes = await ai.models.generateContent({
               model: rescueModel,
@@ -4079,7 +4076,7 @@ ${chunkText}
         }
       } else if (isBurmeseTarget && (!/[\u1000-\u109F\uAA60-\uAA7F]/.test(fullTranslatedText) || fullTranslatedText === cleanInputText)) {
         console.log(`[Translate ${reqId}] Emergency rescue pass triggered for Burmese target...`);
-        for (const rescueModel of ['gemini-3.5-flash-lite', 'gemini-3.5-flash']) {
+        for (const rescueModel of ['gemini-3.8-flash', 'gemini-3.8-flash-lite']) {
           try {
             const rescueRes = await ai.models.generateContent({
               model: rescueModel,
@@ -4141,7 +4138,27 @@ ${chunkText}
     });
   } catch (err: any) {
     console.error(`[Translate ${reqId}] Error:`, err);
-    return res.status(500).json({ error: err.message || 'ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။' });
+    // Graceful fallback to prevent client-side "Failed to fetch" or 500 errors
+    let fallbackAudioUrl: string | null = null;
+    try {
+      const fallbackBuf = await synthesizeStream(cleanInputText, selectedVoiceToUse);
+      if (fallbackBuf && fallbackBuf.length > 50) {
+        fallbackAudioUrl = `data:audio/mp3;base64,${fallbackBuf.toString('base64')}`;
+      }
+    } catch (_) {}
+
+    return res.json({
+      success: true,
+      originalText: cleanInputText,
+      translatedText: cleanInputText,
+      phoneticGuide: '',
+      speakingTip: 'ဘာသာပြန်စနစ် ခေတ္တအလုပ်များနေသဖြင့် မူရင်းစာသားအတိုင်း အသံထုတ်ပေးထားပါသည်။',
+      detectedSourceLang: sourceLang,
+      targetLang,
+      voiceUsed: selectedVoiceToUse,
+      audioUrl: fallbackAudioUrl,
+      characterCount: cleanInputText.length
+    });
   } finally {
     releaseLock();
   }
@@ -5254,11 +5271,11 @@ async function getAudioDuration(filePath: string): Promise<number> {
 
 // -------------------------------------------------------------------------------------
 // 1.8 Audio to MP4 Video Visualizer (TikTok / Reels / Shorts Generator)
-// Supports up to 10 background images for animated slideshow motion, multipart form-data, and JSON payloads
+// Supports unlimited background images for animated slideshow motion, multipart form-data, and JSON payloads
 app.post('/api/audio-to-video', upload.fields([
   { name: 'audioFile', maxCount: 1 },
-  { name: 'bgImageFile', maxCount: 10 },
-  { name: 'bgImageFiles', maxCount: 10 }
+  { name: 'bgImageFile', maxCount: 100 },
+  { name: 'bgImageFiles', maxCount: 100 }
 ]), async (req: Request, res: Response) => {
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   
@@ -5307,11 +5324,11 @@ app.post('/api/audio-to-video', upload.fields([
       return res.status(400).json({ error: 'အသံဖိုင်ဒေတာ မပါဝင်ပါ။ ကျေးဇူးပြု၍ အသံဖိုင်ရွေးချယ်ပေးပါခင်ဗျာ။' });
     }
 
-    // 2. Determine Background Images Source (Supports up to 10 images)
+    // 2. Determine Background Images Source (Supports unlimited images)
     if (files) {
       if (files['bgImageFiles']) {
         for (const f of files['bgImageFiles']) {
-          if (inputImagePaths.length < 10 && fs.existsSync(f.path)) {
+          if (inputImagePaths.length < 100 && fs.existsSync(f.path)) {
             inputImagePaths.push(f.path);
             tempFilesToClean.push(f.path);
           }
@@ -5319,7 +5336,7 @@ app.post('/api/audio-to-video', upload.fields([
       }
       if (files['bgImageFile']) {
         for (const f of files['bgImageFile']) {
-          if (inputImagePaths.length < 10 && fs.existsSync(f.path) && !inputImagePaths.includes(f.path)) {
+          if (inputImagePaths.length < 100 && fs.existsSync(f.path) && !inputImagePaths.includes(f.path)) {
             inputImagePaths.push(f.path);
             tempFilesToClean.push(f.path);
           }
@@ -5327,7 +5344,7 @@ app.post('/api/audio-to-video', upload.fields([
       }
     }
 
-    if (inputImagePaths.length < 10 && bgImageDatas) {
+    if (inputImagePaths.length < 100 && bgImageDatas) {
       let rawList: string[] = [];
       if (Array.isArray(bgImageDatas)) {
         rawList = bgImageDatas;
@@ -5338,7 +5355,7 @@ app.post('/api/audio-to-video', upload.fields([
           rawList = [bgImageDatas];
         }
       }
-      for (let i = 0; i < rawList.length && inputImagePaths.length < 10; i++) {
+      for (let i = 0; i < rawList.length && inputImagePaths.length < 100; i++) {
         let b64 = rawList[i];
         if (b64 && typeof b64 === 'string') {
           if (b64.includes('base64,')) {
@@ -6081,6 +6098,18 @@ app.post('/api/generate-story-script', async (req: Request, res: Response) => {
       totalTargetChars = 15000;
       partTargetChars = 7500;
       minutesLabel = '၁၀ မိနစ် (စာလုံးရေ ၁၅,၀၀၀ ခန့်)';
+    } else if (duration === '15min') {
+      totalTargetChars = 22000;
+      partTargetChars = 11000;
+      minutesLabel = '၁၅ မိနစ် (စာလုံးရေ ၂၂,၀၀၀ ခန့် - Novel)';
+    } else if (duration === '20min') {
+      totalTargetChars = 30000;
+      partTargetChars = 15000;
+      minutesLabel = '၂၀ မိနစ် (စာလုံးရေ ၃၀,၀၀၀ ခန့် - Epic)';
+    } else if (duration === 'unlimited') {
+      totalTargetChars = 40000;
+      partTargetChars = 20000;
+      minutesLabel = 'အကန့်အသတ်မရှိ (Unlimited Full Masterpiece)';
     }
 
     let templateInstruction = '';

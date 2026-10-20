@@ -44,7 +44,7 @@ export async function getAllHistory(): Promise<StoredHistoryItem[]> {
         const items = (request.result as StoredHistoryItem[]) || [];
         // Sort newest first, keep top 5
         items.sort((a, b) => b.timestamp - a.timestamp);
-        resolve(items.slice(0, 5));
+        resolve(items.slice(0, 100));
       };
       request.onerror = () => {
         resolve(getFromLocalStorage());
@@ -59,9 +59,9 @@ export async function saveHistoryRecord(item: StoredHistoryItem): Promise<Stored
   try {
     const db = await openDB();
     const all = await getAllHistory();
-    const updated = [item, ...all.filter(i => i.id !== item.id)].slice(0, 5);
+    const updated = [item, ...all.filter(i => i.id !== item.id)].slice(0, 100);
 
-    // Save to IndexedDB (clearing older ones outside top 5)
+    // Save to IndexedDB (clearing older ones outside top 100)
     await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
@@ -78,7 +78,7 @@ export async function saveHistoryRecord(item: StoredHistoryItem): Promise<Stored
   } catch (err) {
     console.warn('IndexedDB save failed, using localStorage fallback:', err);
     const all = getFromLocalStorage();
-    const updated = [item, ...all.filter(i => i.id !== item.id)].slice(0, 5);
+    const updated = [item, ...all.filter(i => i.id !== item.id)].slice(0, 100);
     saveToLocalStorageBackup(updated);
     return updated;
   }
