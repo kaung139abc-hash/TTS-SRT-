@@ -535,23 +535,7 @@ export const TARGET_LANG_VOICES: Record<string, { id: string; name: string; desc
   ],
 
   // East Asia
-  ja: [
-    { id: 'ja-JP-KeitaNeural', name: 'Keita (ကေအိတ - ဂျပန်အမျိုးသား)', desc: 'ဂျပန်စကားပြော သဘာဝအသံစစ်စစ်', country: '🇯🇵' },
-    { id: 'ja-JP-NanamiNeural', name: 'Nanami (နာနာမီ - ဂျပန်အမျိုးသမီး)', desc: 'ချိုသာကြည်လင်သော ဂျပန်အမျိုးသမီးအသံ', country: '🇯🇵' },
-    { id: 'ja-JP-AoiNeural', name: 'Aoi (အိုအိ - သဘာဝဂျပန်လေသံ)', desc: 'ယဉ်ကျေးနူးညံ့သော ဂျပန်အသံ', country: '🇯🇵' },
-    { id: 'ja-JP-DaichiNeural', name: '🔥 Daichi (ဒိုင်းချီ - Anime Shonen Hero / အန်နီမေး မင်းသား)', desc: 'အားမာန်အပြည့် အန်နီမေး ဇာတ်လိုက်မင်းသားအသံ', country: '🇯🇵' },
-    { id: 'ja-JP-ShioriNeural', name: '✨ Shiori (ရှီအိုရီ - Anime Tsundere / Waifu နူးညံ့ချိုသာ)', desc: 'ချိုမြိန်ဆွဲဆောင်မှုရှိသော အန်နီမေး မင်းသမီးအသံ', country: '🇯🇵' },
-    { id: 'ja-JP-NaokiNeural', name: '❄️ Naoki (နာအိုကီ - Anime Cool Sensei / ဆရာ)', desc: 'တည်ကြည်လေးနက်သော အန်နီမေး ဆရာ/ကူလ်အမျိုးသားသံ', country: '🇯🇵' },
-    { id: 'ja-JP-MayuNeural', name: '🎀 Mayu (မာယု - Anime Kawaii / Chibi ချစ်စဖွယ်)', desc: 'ချစ်စဖွယ် သွက်လက်သော အန်နီမေး ကလေးမလေးသံ', country: '🇯🇵' },
-    { id: 'ja-JP-RyotaNeural', name: '⚔️ Ryota (ရိုတာ - Anime Passionate Fighter / တိုက်ခိုက်ရေး)', desc: 'စိတ်အားထက်သန်သော အန်နီမေး တိုက်ခိုက်ရေးသံ', country: '🇯🇵' },
-    { id: 'ja-JP-AkariNeural', name: '🌸 Akari (အာကာရီ - Anime Pure Heroine / သန့်စင်ကြည်လင်)', desc: 'နူးညံ့သိမ်မွေ့သော အန်နီမေး ဇာတ်လိုက်မင်းသမီးသံ', country: '🇯🇵' },
-    { id: 'ja-JP-RenNeural', name: '⚡ Ren (ရန်း - Anime Dark Anti-Hero / လျှို့ဝှက်ဆွဲဆောင်မှု)', desc: 'အေးစက်တည်ငြိမ်ပြီး ဆွဲဆောင်မှုရှိသော အန်နီမေး အမိုက်စားအမျိုးသားသံ', country: '🇯🇵' },
-    { id: 'ja-JP-HinataNeural', name: '🌻 Hinata (ဟိနာတာ - Anime Gentle Waifu / ချစ်စဖွယ်)', desc: 'နူးညံ့သိမ်မွေ့ပြီး ချစ်စရာကောင်းသော အန်နီမေး ကောင်မလေးသံ', country: '🇯🇵' },
-    { id: 'ja-JP-KenshinNeural', name: '🗡️ Kenshin (ကန်းရှင်း - Anime Samurai Master / ဓားသမားကြီး)', desc: 'တည်ကြည်ရဲရင့်သော ဆာမူရိုင်း စစ်သည်တော် အသံ', country: '🇯🇵' },
-    { id: 'ja-JP-YukiNeural', name: '❄️ Yuki (ယူကီ - Anime Kuudere Princess / အေးစက်စက်မင်းသမီး)', desc: 'အေးစက်ဆန်းကြယ်သော အန်နီမေး ကူဒဲရဲ မင်းသမီးအသံ', country: '🇯🇵' },
-    { id: 'ja-JP-RaidenNeural', name: '💥 Raiden (ရိုင်ဒင် - Anime High Energy Saiyan / စွမ်းအားရှင်)', desc: 'ပေါက်ကွဲအားပြင်းထန်သော စူပါစွမ်းအားရှင် တိုက်ခိုက်ရေးသံ', country: '🇯🇵' },
-    { id: 'ja-JP-GenkaiNeural', name: '🧙‍♂️ Genkai (ဂန်ကိုင်း - Anime Wise Old Master / အဖိုးအိုဆရာကြီး)', desc: 'အတွေ့အကြုံရင့်ကျက်သော သိုင်းဆရာကြီး ပညာရှိအသံ', country: '🇯🇵' }
-  ],
+  // Japanese voices removed: now fully managed by server API
   ko: [
     { id: 'ko-KR-InJoonNeural', name: 'InJoon (အင်ဂျွန်း - ကိုရီးယားအမျိုးသား)', desc: 'ကိုရီးယား ဇာတ်လမ်းတွဲသံဟန် အမျိုးသားအသံ', country: '🇰🇷' },
     { id: 'ko-KR-SunHiNeural', name: 'SunHi (ဆန်းဟီး - ကိုရီးယားအမျိုးသမီး)', desc: 'ချစ်စဖွယ် ကိုရီးယားအမျိုးသမီး သဘာဝအသံ', country: '🇰🇷' },
@@ -813,7 +797,7 @@ export const App: React.FC = () => {
   const [ttsText, setTtsText] = useState(STUDIO_HUMAN_SAMPLE_TEXT);
   const [voices, setVoices] = useState<VoiceItem[]>([]);
   const [bgmTracks, setBgmTracks] = useState<BgmItem[]>([]);
-  const [selectedVoice, setSelectedVoice] = useState('en-AU-WilliamMultilingualNeural');
+  const [selectedVoice, setSelectedVoice] = useState('gemini-fenrir');
   const [voiceCategoryFilter, setVoiceCategoryFilter] = useState<'all' | 'storyteller' | 'elderly_male' | 'elderly_female' | 'child' | 'female' | 'myanmar'>('all');
   const [selectedBgm, setSelectedBgm] = useState('none');
   const [bgmVolume, setBgmVolume] = useState(0.0);
@@ -829,8 +813,8 @@ export const App: React.FC = () => {
   // Mode 1.5: Multi-Speaker Conversation Studio (Up to 5 Speakers)
   // ----------------------------------------------------
   const [speakers, setSpeakers] = useState<SpeakerSlot[]>([
-    { id: 'spk1', name: '👑 ဝီလျံ (Cinema Deep)', voice: 'en-AU-WilliamMultilingualNeural', color: 'indigo' },
-    { id: 'spk2', name: '🌸 အေဗာ (Smooth Female)', voice: 'en-US-AvaMultilingualNeural', color: 'emerald' },
+    { id: 'spk1', name: '🌟 မင်းမောင် (လူသားစစ်စစ်)', voice: 'gemini-fenrir', color: 'indigo' },
+    { id: 'spk2', name: '🌸 သော်တာ (လူသားစစ်စစ်)', voice: 'gemini-aoede', color: 'emerald' },
     { id: 'spk3', name: '🎙️ အင်ဒရူး (Storyteller)', voice: 'en-US-AndrewMultilingualNeural', color: 'amber' },
     { id: 'spk4', name: '📖 အမ်မာ (Audiobook)', voice: 'en-US-EmmaMultilingualNeural', color: 'rose' },
     { id: 'spk5', name: '👴 အဖိုး ရော်ဂျာ (William Elder)', voice: 'elderly-roger', color: 'purple' },
@@ -4243,7 +4227,7 @@ export const App: React.FC = () => {
                   {/* Live Character & Duration Status Bar */}
                   <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
                     <div className="flex items-center gap-3">
-                      <span>📝 စာလုံးရေ: <strong className="text-indigo-300">{ttsText.length}</strong> လုံး</span>
+                      <span>📝 စာလုံးရေ: <strong className="text-indigo-300">{ttsText.length}</strong> / ၁၀၀,၀၀၀ လုံး (အကန့်အသတ်မရှိ)</span>
                       <span>⏱️ ခန့်မှန်းဖတ်ချိန်: <strong className="text-emerald-300">~{Math.max(1, Math.ceil(ttsText.length / 18))} စက္ကန့်</strong></span>
                     </div>
                     <span className="text-slate-500">✨ ၁၀၀% လူသားစစ်စစ် စတူဒီယို အသံထွက်</span>
