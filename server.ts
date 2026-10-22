@@ -957,7 +957,7 @@ export const CHARACTER_PROFILES: Record<string, CharacterProfile> = {
     edgeFallbackRate: '+0%',
     dspFilter: ''
   },
-  'en-US-SteffanNeural': {
+  'storyteller-steffan': {
     category: 'storyteller',
     geminiVoice: 'Charon',
     geminiStyle: 'A deep, rich, authoritative American male narrator speaking powerful and expressive storytelling Burmese',
