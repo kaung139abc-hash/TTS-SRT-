@@ -963,7 +963,9 @@ export const App: React.FC = () => {
         try {
           localStorage.setItem('vm_trans_usage_count', String(nextCount));
         } catch (_) {}
-        // 100% Unlimited generations: Never interrupt user with blocking modal popups
+        if (nextCount > 0 && nextCount % 2 === 0) {
+          triggerMonetizationAd();
+        }
         return nextCount;
       });
     } else {
@@ -972,7 +974,9 @@ export const App: React.FC = () => {
         try {
           localStorage.setItem('vm_usage_count', String(nextCount));
         } catch (_) {}
-        // 100% Unlimited generations: Never interrupt user with blocking modal popups
+        if (nextCount > 0 && nextCount % 2 === 0) {
+          triggerMonetizationAd();
+        }
         return nextCount;
       });
     }
