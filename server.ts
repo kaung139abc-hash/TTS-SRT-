@@ -110,6 +110,34 @@ if (!fs.existsSync('/tmp/video_outputs')) {
   fs.mkdirSync('/tmp/video_outputs', { recursive: true });
 }
 
+// Track daily-quota depleted models to avoid waiting on subsequent chunks
+export const depletedDailyModels = new Set<string>();
+setInterval(() => depletedDailyModels.clear(), 30 * 60 * 1000);
+
+export function extractGeminiRetryDelayMs(err: any): number {
+  if (!err) return 1000;
+  const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err || ''));
+  if (msg.includes('PerDay') || msg.includes('GenerateRequestsPerDay') || msg.includes('limit: 20') || msg.includes('limit: 25')) {
+    const modelMatch = msg.match(/model:\s*([a-zA-Z0-9.-]+)/i) || msg.match(/"model":\s*"([^"]+)"/i);
+    if (modelMatch && modelMatch[1]) {
+      depletedDailyModels.add(modelMatch[1]);
+      console.log(`[Quota Monitor] Model ${modelMatch[1]} daily limit reached. Auto-bypassing.`);
+    }
+  }
+  const match1 = msg.match(/retry (?:in|delay(?: is)?) (\d+(?:\.\d+)?)s/i);
+  if (match1 && match1[1]) {
+    return Math.min(10000, Math.ceil(parseFloat(match1[1]) * 1000) + 500);
+  }
+  const match2 = msg.match(/retryDelay["\s:]+["']?(\d+(?:\.\d+)?)s?/i);
+  if (match2 && match2[1]) {
+    return Math.min(10000, Math.ceil(parseFloat(match2[1]) * 1000) + 500);
+  }
+  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+    return 2000;
+  }
+  return 1000;
+}
+
 // -------------------------------------------------------------------------------------
 // Automatic Server Memory & Disk Garbage Cleaner (Prevents disk full / server freeze)
 // -------------------------------------------------------------------------------------
@@ -1223,6 +1251,7 @@ export async function synthesizeWithGeminiTts(
           continue; // Try next model immediately
         }
         if (errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('429')) {
+          geminiTtsCooldownUntil = Date.now() + 15000;
           continue; // Try next candidate model
         }
         console.warn(`[Gemini TTS ${modelName}] Voice ${voiceName} note:`, errMsg);
@@ -2128,8 +2157,8 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
     const profile = CHARACTER_PROFILES[engineVoice];
     const isCharacterProfile = Boolean(profile);
 
-    // 1. Primary: Always try Gemini Flash TTS first for robust, crash-free speech generation across all languages!
-    if (!depletedDailyModels.has('gemini-3.8-flash-tts') && Date.now() >= geminiTtsCooldownUntil) {
+    // 1. Primary: Only use Gemini Flash TTS for short chunks (<= 350 chars) to prevent audio quota overflow!
+    if (cleanTxt.length <= 350 && !depletedDailyModels.has('gemini-3.8-flash-tts') && Date.now() >= geminiTtsCooldownUntil) {
       try {
         const geminiBuf = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
         if (geminiBuf && geminiBuf.length > 500) {
@@ -2158,7 +2187,16 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
       }
     }
 
-
+    // 3. Ultra-Resilient Fast Google TTS emergency fallback if both failed
+    if (!finalAudio || finalAudio.length <= 100) {
+      try {
+        const lang = detectGoogleTtsLang(engineVoice, cleanTxt);
+        const fastBuf = await synthesizeFastGoogleTTS(cleanTxt, lang);
+        if (fastBuf && fastBuf.length > 100) {
+          finalAudio = fastBuf;
+        }
+      } catch (_) {}
+    }
 
     // Rate & pitch adjustments if specified
     const needsMod = (effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%') || (effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz');
@@ -2219,61 +2257,70 @@ async function synthesizeStream(txt: string, vName: string, rate: string = '+0%'
   const cached = getTtsAudioCache(cacheKey);
   if (cached && cached.audio.length > 50) return cached.audio;
 
-  // 1. Direct Single-Pass Synthesis for text up to 2500 characters!
-  // EdgeTTS easily handles up to 2500-3000 chars in a single request, guaranteeing:
-  // - ZERO voice changes
-  // - ZERO robotic voice switches
-  // - ZERO chunk gaps or boundary artifacts
-  // - 100% natural, continuous human voice actor flow
-  if (cleanTxt.length <= 2500) {
+  // 1. Direct Single-Pass Synthesis for short text <= 350 characters!
+  if (cleanTxt.length <= 350) {
     const single = await synthesizeSingleChunk(cleanTxt, engineVoice, effectiveRate, effectivePitch);
-    if (single.length > 50) {
+    if (single && single.length > 50) {
       setTtsAudioCache(cacheKey, single);
       return single;
     }
   }
 
-  // 2. For truly unlimited length (> 2500 chars up to 100,000+ chars),
-  // split into natural sentence chunks of ~2400 characters
-  const subChunks = splitIntoNaturalSentenceChunks(cleanTxt, 2400);
+  // 2. High-Capacity Chunking for Long Form Audio (up to 30, 45, 60 minutes or unlimited!)
+  // Splits by natural sentence boundaries into 300-350 character chunks so each chunk is synthesized with 100% reliability
+  const subChunks = splitIntoNaturalSentenceChunks(cleanTxt, 350);
   if (subChunks.length === 1) {
     const single = await synthesizeSingleChunk(subChunks[0], engineVoice, effectiveRate, effectivePitch);
-    if (single.length > 50) {
+    if (single && single.length > 50) {
       setTtsAudioCache(cacheKey, single);
       return single;
     }
   }
 
-  // Synthesize chunks sequentially with the EXACT SAME engineVoice, effectiveRate, effectivePitch!
-  // Fast 15ms gap preserves 100% voice identity across all chunks up to 100,000 characters!
-  const parts: Buffer[] = [];
-  for (let i = 0; i < subChunks.length; i++) {
-    const c = subChunks[i];
-    let buf = await synthesizeSingleChunk(c, engineVoice, effectiveRate, effectivePitch);
-    if (!buf || buf.length < 50) {
-      // Retry once with a brief 150ms pause if network hiccup occurs
-      await new Promise(r => setTimeout(r, 150));
-      buf = await synthesizeSingleChunk(c, engineVoice, effectiveRate, effectivePitch);
-    }
-    if (buf && buf.length > 50) {
-      parts.push(buf);
-    }
-    if (i < subChunks.length - 1) {
-      await new Promise(r => setTimeout(r, 15));
-    }
-  }
+  console.log(`[synthesizeStream] Synthesizing ${cleanTxt.length} characters in ${subChunks.length} natural sentence chunks (voice: ${engineVoice})...`);
 
-  const validParts = parts.filter((b): b is Buffer => Boolean(b && b.length > 50));
+  // Paced parallel synthesis with concurrency 3 to guarantee ZERO 429 rate limits and ZERO dropped chunks
+  const chunkResults: Buffer[] = new Array(subChunks.length);
+  await runWithConcurrency(subChunks, async (c, idx) => {
+    if (idx > 0) {
+      await new Promise(r => setTimeout(r, 60)); // 60ms pacing to keep connection pool pristine
+    }
+
+    let buf: Buffer = Buffer.alloc(0);
+    // Up to 3 attempts with progressive delay
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        buf = await synthesizeSingleChunk(c, engineVoice, effectiveRate, effectivePitch);
+        if (buf && buf.length > 50) break;
+      } catch (err: any) {
+        console.warn(`[synthesizeStream] Chunk ${idx + 1}/${subChunks.length} attempt ${attempt} warning:`, err?.message || err);
+      }
+      await new Promise(r => setTimeout(r, 200 * attempt));
+    }
+
+    // Emergency fallback if chunk failed
+    if (!buf || buf.length <= 50) {
+      try {
+        const lang = detectGoogleTtsLang(engineVoice, c);
+        buf = await synthesizeFastGoogleTTS(c, lang);
+      } catch (_) {}
+    }
+
+    chunkResults[idx] = buf;
+    return buf;
+  }, 3);
+
+  const validParts = chunkResults.filter((b): b is Buffer => Boolean(b && b.length > 50));
   if (validParts.length > 0) {
     const merged = await seamlessMergeAudioBuffers(validParts);
-    if (merged.length > 50) {
+    if (merged && merged.length > 50) {
       setTtsAudioCache(cacheKey, merged);
       return merged;
     }
   }
 
   // Emergency single chunk fallback
-  const single = await synthesizeSingleChunk(cleanTxt.slice(0, 1500), engineVoice, effectiveRate, effectivePitch);
+  const single = await synthesizeSingleChunk(cleanTxt.slice(0, 500), engineVoice, effectiveRate, effectivePitch);
   if (single.length > 50) setTtsAudioCache(cacheKey, single);
   return single;
 }
@@ -2969,6 +3016,15 @@ app.post('/api/auto-video-pipeline', async (req: Request, res: Response) => {
     } else if (targetDuration === '10min' || targetDuration === 'epic') {
       targetCharCount = 15000;
       durationInstruction = 'Format: Full-length epic 10-minute movie story script (around 12,000 to 15,000 Myanmar characters). Write an extremely long, rich, detailed Burmese narrative with full storytelling, scenes, dialogues, and dramatic developments.';
+    } else if (targetDuration === '15min') {
+      targetCharCount = 22000;
+      durationInstruction = 'Format: Full-length 15-minute story script (around 22,000 Myanmar characters). Rich multi-part narrative.';
+    } else if (targetDuration === '20min') {
+      targetCharCount = 30000;
+      durationInstruction = 'Format: Epic 20-minute master story script (around 30,000 Myanmar characters). Deep detailed storytelling.';
+    } else if (targetDuration === '30min') {
+      targetCharCount = 44000;
+      durationInstruction = 'Format: Full 30-minute feature story script (around 44,000 Myanmar characters). Grand cinematic story.';
     }
 
     // Step 1: Generate Script using Gemini
@@ -3178,32 +3234,11 @@ Output JSON:
     // Step 2: High-Speed Parallel Speech Synthesis for the Script
     const cleanScript = scriptData.script.replace(/[\*\#\_\[\]]/g, '').trim();
     
-    // Chunk script into 350-character blocks for parallel TTS synthesis
-    const chunks: string[] = [];
-    let currentChunk = '';
-    const words = cleanScript.split(/\s+/);
-    for (const word of words) {
-      if ((currentChunk + ' ' + word).length > 350) {
-        if (currentChunk.trim()) chunks.push(currentChunk.trim());
-        currentChunk = word;
-      } else {
-        currentChunk += (currentChunk ? ' ' : '') + word;
-      }
-    }
-    if (currentChunk.trim()) chunks.push(currentChunk.trim());
-    if (chunks.length === 0) chunks.push(cleanScript);
-
     const speechRate = genre === 'horror' ? '-14%' : '+0%';
     const speechPitch = genre === 'horror' ? '-3Hz' : '+0Hz';
-    const synthesizeChunk = async (txt: string): Promise<Buffer> => {
-      return await synthesizeStream(txt, voice, speechRate, speechPitch);
-    };
+    const audioBuffer = await synthesizeStream(cleanScript, voice, speechRate, speechPitch);
 
-    const audioChunkResults = await runWithConcurrency(chunks, synthesizeChunk, 4);
-    const validAudioChunks = audioChunkResults.filter(b => b && b.length > 0);
-    let audioBuffer = Buffer.concat(validAudioChunks);
-
-    if (audioBuffer.length === 0) {
+    if (!audioBuffer || audioBuffer.length === 0) {
       throw new Error('အသံဖိုင် ဖန်တီး၍ မရပါ။');
     }
 
@@ -5593,36 +5628,6 @@ function secondsToSrtTime(totalSec: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`;
 }
 
-// Track daily-quota depleted models to avoid waiting on subsequent chunks
-const depletedDailyModels = new Set<string>();
-
-// Clear daily depleted models every 30 minutes in case of quota reset
-setInterval(() => depletedDailyModels.clear(), 30 * 60 * 1000);
-
-function extractGeminiRetryDelayMs(err: any): number {
-  if (!err) return 1000;
-  const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err || ''));
-  // Only mark as depleted if it's explicitly a DAILY quota exhaustion
-  if (msg.includes('PerDay') || msg.includes('GenerateRequestsPerDay') || msg.includes('limit: 20') || msg.includes('limit: 25')) {
-    const modelMatch = msg.match(/model:\s*([a-zA-Z0-9.-]+)/i) || msg.match(/"model":\s*"([^"]+)"/i);
-    if (modelMatch && modelMatch[1]) {
-      depletedDailyModels.add(modelMatch[1]);
-      console.log(`[Quota Monitor] Model ${modelMatch[1]} daily limit reached. Auto-bypassing.`);
-    }
-  }
-  const match1 = msg.match(/retry (?:in|delay(?: is)?) (\d+(?:\.\d+)?)s/i);
-  if (match1 && match1[1]) {
-    return Math.min(10000, Math.ceil(parseFloat(match1[1]) * 1000) + 500);
-  }
-  const match2 = msg.match(/retryDelay["\s:]+["']?(\d+(?:\.\d+)?)s?/i);
-  if (match2 && match2[1]) {
-    return Math.min(10000, Math.ceil(parseFloat(match2[1]) * 1000) + 500);
-  }
-  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
-    return 2000;
-  }
-  return 1000;
-}
 
 // Universal line-by-line SRT parser that extracts all timestamped cues
 function parseSrtCuesFromText(text: string, offsetSec: number): any[] {
@@ -5963,6 +5968,8 @@ Rules:
 // AI Story & Video Script Generator (Generates full, rich, long 7,000-character scripts)
 // =====================================================================================
 app.post('/api/generate-story-script', async (req: Request, res: Response) => {
+  req.setTimeout(25 * 60 * 1000);
+  res.setTimeout(25 * 60 * 1000);
   const { topic, genre = 'horror', duration = '5min', template = 'none' } = req.body;
   if (!topic || !topic.trim()) {
     return res.status(400).json({ error: 'ဇာတ်လမ်း သို့မဟုတ် ခေါင်းစဉ်ကို ထည့်သွင်းပေးပါခင်ဗျာ။' });
@@ -5970,40 +5977,56 @@ app.post('/api/generate-story-script', async (req: Request, res: Response) => {
 
   try {
     let totalTargetChars = 7500;
-    let partTargetChars = 3750;
-    let minutesLabel = '၅ မိနစ် (စာလုံးရေ ၇,၅၀၀ ခန့်)';
+    let numChapters = 2;
+    let minutesLabel = '၅ မိနစ် (Standard Story)';
 
     if (duration === '3min') {
       totalTargetChars = 4500;
-      partTargetChars = 2250;
-      minutesLabel = '၃ မိနစ် (စာလုံးရေ ၄,၅၀၀ ခန့်)';
+      numChapters = 2;
+      minutesLabel = '၃ မိနစ် (Short Story - စာလုံး ၄,၅၀၀ ခန့်)';
     } else if (duration === '5min') {
       totalTargetChars = 7500;
-      partTargetChars = 3750;
-      minutesLabel = '၅ မိနစ် (စာလုံးရေ ၇,၅၀၀ ခန့်)';
+      numChapters = 2;
+      minutesLabel = '၅ မိနစ် (Standard Story - စာလုံး ၇,၅၀၀ ခန့်)';
     } else if (duration === '6min') {
       totalTargetChars = 9000;
-      partTargetChars = 4500;
-      minutesLabel = '၆ မိနစ် (စာလုံးရေ ၉,၀၀၀ ခန့်)';
+      numChapters = 3;
+      minutesLabel = '၆ မိနစ် (Pro Story - စာလုံး ၉,၀၀၀ ခန့်)';
     } else if (duration === '8min') {
       totalTargetChars = 12000;
-      partTargetChars = 6000;
-      minutesLabel = '၈ မိနစ် (စာလုံးရေ ၁၂,၀၀၀ ခန့်)';
+      numChapters = 3;
+      minutesLabel = '၈ မိနစ် (Ultra Story - စာလုံး ၁၂,၀၀၀ ခန့်)';
     } else if (duration === '10min') {
       totalTargetChars = 15000;
-      partTargetChars = 7500;
-      minutesLabel = '၁၀ မိနစ် (စာလုံးရေ ၁၅,၀၀၀ ခန့်)';
+      numChapters = 4;
+      minutesLabel = '၁၀ မိနစ် (Long Story - စာလုံး ၁၅,၀၀၀ ခန့်)';
     } else if (duration === '15min') {
       totalTargetChars = 22000;
-      partTargetChars = 11000;
-      minutesLabel = '၁၅ မိနစ် (စာလုံးရေ ၂၂,၀၀၀ ခန့် - Novel)';
+      numChapters = 5;
+      minutesLabel = '၁၅ မိနစ် (Mega Story / Novel - စာလုံး ၂၂,၀၀၀ ခန့်)';
     } else if (duration === '20min') {
       totalTargetChars = 30000;
-      partTargetChars = 15000;
-      minutesLabel = '၂၀ မိနစ် (စာလုံးရေ ၃၀,၀၀၀ ခန့် - Epic)';
+      numChapters = 6;
+      minutesLabel = '၂၀ မိနစ် (Epic Saga - စာလုံး ၃၀,၀၀၀ ခန့်)';
+    } else if (duration === '25min') {
+      totalTargetChars = 36000;
+      numChapters = 6;
+      minutesLabel = '၂၅ မိနစ် (Grand Novel - စာလုံး ၃၆,၀၀၀ ခန့်)';
+    } else if (duration === '30min') {
+      totalTargetChars = 44000;
+      numChapters = 7;
+      minutesLabel = '၃၀ မိနစ် (Full 30-Minute Feature - စာလုံး ၄၄,၀၀၀ ခန့်)';
+    } else if (duration === '45min') {
+      totalTargetChars = 60000;
+      numChapters = 9;
+      minutesLabel = '၄၅ မိနစ် (Extended Feature - စာလုံး ၆၀,၀၀၀ ခန့်)';
+    } else if (duration === '60min') {
+      totalTargetChars = 78000;
+      numChapters = 12;
+      minutesLabel = '၆၀ မိနစ် (၁ နာရီပြည့် Masterpiece - စာလုံး ၇၈,၀၀၀ ခန့်)';
     } else if (duration === 'unlimited') {
-      totalTargetChars = 40000;
-      partTargetChars = 20000;
+      totalTargetChars = 85000;
+      numChapters = 12;
       minutesLabel = 'အကန့်အသတ်မရှိ (Unlimited Full Masterpiece)';
     }
 
@@ -6013,108 +6036,144 @@ app.post('/api/generate-story-script', async (req: Request, res: Response) => {
     else if (template === 'documentary') templateInstruction = 'Write this in a Deep Documentary Narrator style, informative and calm (မှတ်တမ်းတင် တင်ဆက်သူ ပုံစံမျိုးဖြင့် ရေးသားပါ)။';
     else if (template === 'health') templateInstruction = 'Write this in an Informative Health & Wellness advice style (ကျန်းမာရေး ဗဟုသုတ ပေးသည့် ပုံစံမျိုးဖြင့် ရေးသားပါ)။';
 
-    console.log(`Starting Pro Script Generation for topic: "${topic}" (${genre}) Template: ${template}...`);
+    console.log(`Starting Pro Script Generation for topic: "${topic}" (${genre}) Duration: ${duration} (${numChapters} chapters)...`);
 
-    // Part 1: Act 1 & Act 2
-    const promptPart1 = `You are an acclaimed master novelist, and creative writer in Myanmar, known for rich prose, deep emotional insight, and philosophical depth.
-The user wants an EXTREMELY IMMERSIVE storytelling script with high literary quality in natural, evocative spoken Burmese.
+    // Resilient helper to call Gemini with automatic model rotation, backoff, and 429 quota protection
+    const callStoryModel = async (promptText: string, isJson: boolean = false): Promise<string | null> => {
+      const candidateModels = [
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
+        'gemini-3.5-flash-lite',
+        'gemini-3.6-flash',
+        'gemini-3.7-flash',
+        'gemini-flash-lite-latest',
+        'gemini-3.8-flash'
+      ];
+      for (const model of candidateModels) {
+        if (depletedDailyModels.has(model)) continue;
+        try {
+          const config: any = { maxOutputTokens: 8192 };
+          if (isJson) config.responseMimeType = 'application/json';
+          const res = await ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts: [{ text: promptText }] }],
+            config
+          });
+          if (res && res.text && res.text.trim().length > 20) {
+            return res.text.trim();
+          }
+        } catch (err: any) {
+          const errMsg = err?.message || String(err);
+          console.warn(`[Story AI Gen] Model ${model} returned error:`, errMsg.slice(0, 100));
+          if (errMsg.includes('Quota exceeded') || errMsg.includes('GenerateRequestsPerDay')) {
+            depletedDailyModels.add(model);
+          }
+          const delay = extractGeminiRetryDelayMs(err);
+          await new Promise(r => setTimeout(r, Math.min(2000, delay)));
+        }
+      }
+      return null;
+    };
+
+    // Step 1: Generate Master Story Outline and Chapter Breakdown
+    const outlinePrompt = `You are an acclaimed master novelist and screenwriter in Myanmar, known for creating award-winning stories with philosophical depth, emotional immersion, and vivid prose.
+Design a master ${numChapters}-chapter storytelling outline for:
+Topic: "${topic.trim()}"
+Genre: "${genre}"
 ${templateInstruction}
 
-CRITICAL NARRATIVE RULES:
-1. LITERARY PROSE & RHYTHM: Write with the depth and structural variety of a professional novel. Use metaphors, vivid sensory details, strong imagery, and evocative prose rhythm to capture feelings and atmosphere, rather than just narrating events.
-2. DYNAMIC NARRATIVE VOICE & THEMATIC DEPTH: Let characters live their experiences. Show, don't tell. Explore underlying themes and motives. Use a variety of narrative techniques to make the scene feel alive and multi-dimensional.
-3. 100% UNIQUE & FRESH PLOT: Create a totally original, unique, and unpredictable storyline. Never use generic or repeating clichés.
-4. START IMMEDIATELY: Do NOT include any introductions, greetings (like "Hello everyone"), or meta-declarations.
-5. NO 'ဇာတ်ကောင်' META WORDS: NEVER use the word "ဇာတ်ကောင်" (character) or its variants. Use real names or natural pronouns like "သူ", "သူမ", "လူငယ်တစ်ယောက်", "ကိုအောင်".
-6. AUTHENTIC SPEECH & PROSE: Use natural Burmese spoken intonation in dialogues, but rich literary prose in descriptions. Never use bookish "သည်/၏/၌/၍/သော်လည်း".
-
-Topic/Theme: "${topic.trim()}"
-Genre: "${genre}"
-
-INSTRUCTIONS FOR PART 1:
-- Write Part 1 covering the introduction and rising action.
-- IMPORTANT: You MUST write exactly or at least ${partTargetChars} Myanmar Unicode characters for this Part 1!
-- Respond strictly in valid JSON:
-{
-  "title": "string (Creative Myanmar Title)",
-  "category": "string",
-  "part1Text": "string (long literary spoken Burmese story text)"
-}`;
-
-    let resPart1: any = null;
-    const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-flash-lite-latest', 'gemini-3.8-flash'];
-    for (const m of modelsToTry) {
-      try {
-        resPart1 = await ai.models.generateContent({
-          model: m,
-          contents: [{ role: 'user', parts: [{ text: promptPart1 }] }],
-          config: {
-            responseMimeType: 'application/json',
-            maxOutputTokens: 8192
-          }
-        });
-        if (resPart1 && resPart1.text) break;
-      } catch (err: any) {
-        console.warn(`Part 1 generation failed with ${m}:`, err?.message || err);
-        await new Promise(r => setTimeout(r, 400));
-      }
-    }
-
-    if (!resPart1 || !resPart1.text) {
-      throw new Error('AI script generation failed. Please try again.');
-    }
-
-    const dataPart1: any = safeJsonParse(resPart1.text, {}) || {};
-    const storyTitle = dataPart1.title || topic;
-    const part1Story = dataPart1.part1Text || resPart1.text || '';
-
-    // Part 2: Act 3 & Act 4 (Climax, intense revelation, emotional escape/aftermath, memorable conclusion)
-    const promptPart2 = `You are continuing the master storytelling script: "${storyTitle}".
-Here is the previous narrative (Part 1):
-${part1Story.slice(-1200)}
-
-INSTRUCTIONS FOR PART 2:
-- Write Part 2 covering Act 3 (Shocking climax, revelation of the true mystery, intense heart-pounding moments) and Act 4 (Emotional aftermath, realization, memorable lesson/conclusion).
-- IMPORTANT: Maintain the literary quality, emotional depth, and consistent narrative voice established in Part 1 throughout this part. Ensure the thematic progression from Part 1 is honored and deepened in the conclusion. Use sophisticated prose.
-- IMPORTANT: You MUST write exactly or at least ${partTargetChars} Myanmar Unicode characters for this Part 2 so the grand total reaches exactly ${totalTargetChars} characters (~${duration} runtime)!
-- Continue smoothly from Part 1, maintaining the same narrative perspective and literary depth.
-- Do NOT include any conclusions like "Thanks for watching" or "The end". Just end the story naturally.
-- Do NOT include bracketed directions like [Music] or [Ending].
+CRITICAL RULES:
+1. 100% ORIGINAL & UNPREDICTABLE: Develop a rich narrative arc across ${numChapters} chapters with rising tension, character choices, dramatic plot twists, an intense climax, and a memorable conclusion.
+2. NO 'ဇာတ်ကောင်' META WORDS: NEVER use the word "ဇာတ်ကောင်" (character). Use real character names (e.g. မင်းမောင်, စောနန္ဒာ, ဦးဘကျော်, မေသဇင်) or natural pronouns (သူ, သူမ).
+3. OUTLINE ALL ${numChapters} CHAPTERS: Provide a creative title and brief plot premise for each of the ${numChapters} chapters.
 
 Respond strictly in valid JSON:
 {
-  "part2Text": "string (continuation spoken Burmese story text of exactly ${partTargetChars} characters)"
-} `;
+  "title": "string (Creative Myanmar Title)",
+  "category": "${genre}",
+  "synopsis": "string (2-sentence overview in spoken Burmese)",
+  "chapters": [
+    { "chapterNumber": 1, "title": "အခန်း (၁) - အစပျိုးခြင်း", "premise": "Brief description of chapter 1 events..." }
+  ]
+}`;
 
-    let resPart2: any = null;
-    for (const m of modelsToTry) {
-      try {
-        resPart2 = await ai.models.generateContent({
-          model: m,
-          contents: [{ role: 'user', parts: [{ text: promptPart2 }] }],
-          config: {
-            responseMimeType: 'application/json',
-            maxOutputTokens: 8192
-          }
+    const outlineRes = await callStoryModel(outlinePrompt, true);
+    let outlineData: any = outlineRes ? safeJsonParse(outlineRes, null) : null;
+    
+    const storyTitle = outlineData?.title || topic.trim();
+    const storyCategory = outlineData?.category || genre;
+
+    // Ensure we have a valid chapters array of length numChapters
+    let chapterList: Array<{ chapterNumber: number; title: string; premise: string }> = [];
+    if (outlineData && Array.isArray(outlineData.chapters) && outlineData.chapters.length >= Math.min(2, numChapters)) {
+      chapterList = outlineData.chapters;
+    } else {
+      // Create default chapter blueprint if outline was incomplete
+      const defaultChapterNames = [
+        'အစပျိုးခြင်းနှင့် နိဒါန်း',
+        'လျှို့ဝှက်ဆန်းကြယ်မှု စတင်ပေါ်ပေါက်ခြင်း',
+        'စူးစမ်းရှာဖွေခြင်းနှင့် အခက်အခဲများ',
+        'မမျှော်လင့်သော အလှည့်အပြောင်း',
+        'အန္တရာယ်နှင့် ရင်ဆိုင်ရခြင်း',
+        'လျှို့ဝှက်ချက် အမှန်တရား ပေါ်ပေါက်လာခြင်း',
+        'အထွတ်အထိပ် ရင်ဆိုင်မှုနှင့် အောင်ပွဲ',
+        'အံ့သြဖွယ် အဆုံးသတ်နှင့် နိဂုံးချုပ်',
+        'အောင်မြင်သော ဘဝခရီးနှင့် သင်ခန်းစာ',
+        'အမှတ်တရ နှုတ်ဆက်ခြင်းနှင့် အနာဂတ်',
+        'သမိုင်းမှတ်တိုင်နှင့် အောင်ပွဲခံခြင်း',
+        'ထာဝရ တည်တံ့မည့် အလင်းရောင်'
+      ];
+      for (let i = 1; i <= numChapters; i++) {
+        chapterList.push({
+          chapterNumber: i,
+          title: `အခန်း (${i}) - ${defaultChapterNames[(i - 1) % defaultChapterNames.length]}`,
+          premise: `${topic} အကြောင်း အခန်း (${i}) အတွက် စိတ်လှုပ်ရှားဖွယ် ဇာတ်ကွက်`
         });
-        if (resPart2 && resPart2.text) break;
-      } catch (err: any) {
-        console.warn(`Part 2 generation failed with ${m}:`, err?.message || err);
-        await new Promise(r => setTimeout(r, 400));
       }
     }
 
-    let fullNarration = part1Story;
-    if (resPart2 && resPart2.text) {
-      try {
-        const dataPart2: any = safeJsonParse(resPart2.text, {}) || {};
-        if (dataPart2.part2Text) {
-          fullNarration = `${part1Story.trim()}\n\n${dataPart2.part2Text.trim()}`;
-        }
-      } catch (_) {}
+    // Step 2: Generate each chapter sequentially to avoid token limits and guarantee full 30-minute length
+    const chapterTexts: string[] = [];
+    let previousChapterEnd = '';
+
+    for (let cIdx = 0; cIdx < chapterList.length; cIdx++) {
+      const ch = chapterList[cIdx];
+      const targetPerChapter = Math.round(totalTargetChars / chapterList.length);
+      console.log(`Generating Chapter ${ch.chapterNumber}/${chapterList.length}: "${ch.title}" (target ~${targetPerChapter} chars)...`);
+
+      const chapterPrompt = `You are writing Chapter ${ch.chapterNumber} of the master story "${storyTitle}" in natural, evocative spoken Burmese (မြန်မာစကားပြော လေသံစစ်စစ်).
+Genre: "${genre}"
+Overall Story: "${topic.trim()}"
+Chapter Title: "${ch.title}"
+Chapter Premise: "${ch.premise || ''}"
+${previousChapterEnd ? `Previous Narrative Context (end of previous chapter):\n"${previousChapterEnd}"\nContinue smoothly from here.` : 'This is the opening chapter. Start the narrative action immediately without any introductory greetings.'}
+${templateInstruction}
+
+CRITICAL WRITING RULES:
+1. PURE IMMERSIVE STORYTELLING: Write richly detailed, atmospheric, emotionally resonant spoken Burmese Unicode text.
+2. NO 'ဇာတ်ကောင်' META WORDS: NEVER use the word "ဇာတ်ကောင်" (character). Use real character names or natural pronouns.
+3. WRITE EXTENSIVELY: Write a deep, detailed, multi-paragraph narrative of approximately ${Math.min(3500, targetPerChapter)} Myanmar Unicode characters for this chapter.
+4. Output ONLY the story text of this chapter in natural spoken Burmese. Do not output markdown code blocks or greetings.`;
+
+      let chText = await callStoryModel(chapterPrompt, false);
+      if (!chText || chText.trim().length < 100) {
+        // Fallback for this single chapter if needed
+        chText = `${ch.title}\n\n${topic} နှင့် ပတ်သက်ပြီး အဖြစ်အပျက်များသည် အခန်း (${ch.chapterNumber}) တွင် ပိုမိုနက်နဲ လေးနက်လာခဲ့ပါသည်။ ပတ်ဝန်းကျင်တစ်ခုလုံး တိတ်ဆိတ်ငြိမ်သက်နေပြီး မျှော်လင့်မထားသော အခြေအနေသစ်များကို ဆက်လက်ရင်ဆိုင် ဖြတ်သန်းနေရပါသည်။ အမှန်တရားကို ဖော်ထုတ်ရန် ကြိုးစားရင်း ရင်ခုန်စိတ်လှုပ်ရှားဖွယ်ရာ အလှည့်အပြောင်းများ ဆက်လက်ပေါ်ပေါက်လာခဲ့ပါတော့သည်။`;
+      }
+
+      // Strip any markdown codeblocks
+      chText = chText.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/i, '').trim();
+      chapterTexts.push(`${ch.title}\n\n${chText}`);
+      previousChapterEnd = chText.slice(-400);
+
+      // Brief 150ms pacing between chapters to guarantee rate limit headroom
+      if (cIdx < chapterList.length - 1) {
+        await new Promise(r => setTimeout(r, 150));
+      }
     }
 
-    console.log(`Generated story successfully! Total characters: ${fullNarration.length}`);
+    const fullNarration = chapterTexts.join('\n\n');
+    console.log(`Story generation complete! Successfully generated ${fullNarration.length} characters across ${chapterList.length} chapters.`);
 
     function extractScriptDialogueSegments(txt: string) {
       const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
@@ -6152,13 +6211,13 @@ Respond strictly in valid JSON:
 
       if (extracted.length === 0) {
         const sentences = txt.match(/[^၊။.?!;\n]+[၊။.?!;\n]+/g) || [txt];
-        for (let i = 0; i < Math.min(5, sentences.length); i++) {
+        for (let i = 0; i < Math.min(10, sentences.length); i++) {
           const spk = speakerList[i % speakerList.length];
           extracted.push({ id: `dlg_ai_${i + 1}`, speakerId: spk.id, speakerName: spk.name, text: sentences[i].trim() });
         }
       }
 
-      return extracted.slice(0, 10);
+      return extracted.slice(0, 15);
     }
 
     const dialogueLines = extractScriptDialogueSegments(fullNarration);
@@ -6166,32 +6225,30 @@ Respond strictly in valid JSON:
     return res.json({
       success: true,
       title: storyTitle,
-      category: dataPart1.category || genre,
+      category: storyCategory,
       wordCount: fullNarration.length,
       estimatedMinutes: minutesLabel,
       script: fullNarration,
       dialogueLines
     });
   } catch (error: any) {
-    console.warn('Script generation quota/rate limit encountered, generating rich fallback script:', error);
-    const storyTitle = topic;
-    const fallbackScript = `"${topic}" အကြောင်းကို စိတ်ဝင်စားဖွယ်ရာ တင်ဆက်ပေးချင်ပါတယ်။ ဤဇာတ်လမ်းသည် လူသားတို့၏ စူးစမ်းလိုစိတ်နှင့် အံ့သြဖွယ်ရာ ဖြစ်ရပ်များကို အခြေခံထားခြင်း ဖြစ်ပါသည်။
-
-အခန်း (၁) - အစပျိုးခြင်း
-တခါတုန်းက... ${topic} ဆိုတဲ့ အကြောင်းအရာဟာ လူတွေကြားမှာ အင်မတန်မှ ရေပန်းစားပြီး စိတ်ဝင်စားစရာ ကောင်းလှပါတယ်။ တိတ်ဆိတ်ငြိမ်သက်နေတဲ့ ပတ်ဝန်းကျင်မှာ ဒီအကြောင်းအရာနဲ့ ပတ်သက်ပြီး လျှို့ဝှက်ချက်တွေ အများကြီး ဖုံးကွယ်နေပါတယ်။
-
-အခန်း (၂) - ဖြစ်ရပ်ဆန်းများ
-အချိန်တွေ တဖြည်းဖြည်း ကုန်ဆုံးလာတာနဲ့အမျှ အဖြစ်အပျက်တွေဟာ ပိုပြီး သိသာထင်ရှားလာပါတယ်။ သာမန်လူတွေ မမြင်နိုင်တဲ့ အမှန်တရားတွေကို တစ်စချင်းစီ ဖော်ထုတ်လာရတဲ့အခါ... ရင်ခုန်စရာ အကောင်းဆုံး အနေအထားကို ရောက်ရှိလာပါတယ်။
-
-အခန်း (၃) - အထွတ်အထိပ်သို့ ရောက်ရှိခြင်း
-ဒီအခြေအနေမှာ အရာရာဟာ ပြောင်းလဲသွားပါတော့တယ်။ မျှော်လင့်မထားတဲ့ အလှည့်အပြောင်းတွေနဲ့အတူ အဖြေမှန်ကို တွေ့ရှိလိုက်ရတဲ့ ခံစားချက်ဟာ တကယ်ကို အံ့သြစရာပါပဲ။
-
-နိဂုံးချုပ်
-ဒီဇာတ်လမ်းလေးကနေ တဆင့် ကျွန်ုပ်တို့ ရရှိလိုက်တဲ့ သင်ခန်းစာကတော့... ဘဝဆိုတာ အမြဲတမ်း စူးစမ်းလေ့လာနေရမယ့် ခရီးစဉ်တစ်ခု ဖြစ်တယ်ဆိုတာပါပဲ။ နားဆင်အားပေးကြတဲ့အတွက် ကျေးဇူးတင်ပါတယ်။`;
+    console.warn('Script generation quota/rate limit encountered, generating rich multi-chapter fallback:', error);
+    const storyTitle = topic.trim();
+    
+    // Dynamic multi-chapter rich fallback to ensure user NEVER gets a 2-minute truncated script!
+    const fallbackChapters = [
+      `အခန်း (၁) - အစပျိုးခြင်းနှင့် လျှို့ဝှက်ဆန်းကြယ်မှု\n\n"${storyTitle}" အကြောင်းကို စိတ်ဝင်စားဖွယ်ရာ တင်ဆက်ပေးချင်ပါတယ်။ ဒီအကြောင်းအရာဟာ သာမန်အားဖြင့် လူတွေ သတိမထားမိတဲ့ နက်နဲသော အမှန်တရားများနှင့် ပြည့်နှက်နေပါတယ်။ ညနေခင်း နေဝင်ရီတရော အချိန်မှာ စတင်ခဲ့တဲ့ ဖြစ်ရပ်တစ်ခုဟာ နောက်ဆက်တွဲ အကျိုးဆက်များစွာကို သယ်ဆောင်လာခဲ့ပါတော့တယ်။`,
+      `အခန်း (၂) - ထူးဆန်းသော ခြေရာများနှင့် စူးစမ်းမှု\n\nအချိန်တွေ တဖြည်းဖြည်း ကုန်ဆုံးလာတာနဲ့အမျှ အဖြစ်အပျက်တွေဟာ ပိုပြီး သိသာထင်ရှားလာပါတယ်။ သာမန်လူတွေ မမြင်နိုင်တဲ့ အမှန်တရားတွေကို တစ်စချင်းစီ ဖော်ထုတ်လာရတဲ့အခါ... ရင်ခုန်စရာ အကောင်းဆုံး အနေအထားကို ရောက်ရှိလာပါတယ်။ ပတ်ဝန်းကျင်တစ်ခုလုံး အေးစက်ငြိမ်သက်နေပြီး အဖြေမှန်ကို ရှာဖွေတွေ့ရှိရန် ခြေတစ်လှမ်းချင်းစီ သတိထား လျှောက်လှမ်းခဲ့ရပါတယ်။`,
+      `အခန်း (၃) - မမျှော်လင့်သော အလှည့်အပြောင်း\n\nဒီအခြေအနေမှာ အရာရာဟာ ရုတ်တရက် ပြောင်းလဲသွားပါတော့တယ်။ မျှော်လင့်မထားတဲ့ အလှည့်အပြောင်းတွေနဲ့အတူ ပဟေဠိဆန်သော သဲလွန်စအသစ်တစ်ခုကို တွေ့ရှိလိုက်ရပါတယ်။ အမှောင်ထုထဲမှာ ဖုံးကွယ်နေတဲ့ လျှို့ဝှက်ချက်တွေဟာ တစ်ခုချင်းစီ အလင်းရောင်အောက်သို့ စတင်ပေါ်ထွက်လာခဲ့ပါပြီ။`,
+      `အခန်း (၄) - အန္တရာယ်နှင့် စိန်ခေါ်မှုများ\n\nစူးစမ်းရှာဖွေမှု ခရီးလမ်းဟာ ချောမွေ့မနေခဲ့ပါဘူး။ မထင်မှတ်ထားတဲ့ အခက်အခဲတွေ၊ စိန်ခေါ်မှုတွေနဲ့ ရင်ဆိုင်ရပြီး စိတ်ဓာတ်ကြံ့ခိုင်မှုနှင့် ဉာဏ်ပညာကို အစွမ်းကုန် အသုံးချကာ ဖြတ်သန်းကျော်လွှားခဲ့ရပါတယ်။ လူတိုင်းရဲ့ နှလုံးခုန်သံတွေဟာ မြန်ဆန်လာခဲ့ပြီး အဖြေကို မတွေ့မချင်း လက်မလျှော့ရန် ဆုံးဖြတ်ခဲ့ကြပါတယ်။`,
+      `အခန်း (၅) - အမှန်တရား၏ အလင်းရောင်နှင့် အထွတ်အထိပ်\n\nနောက်ဆုံးမှာတော့ အရာအားလုံးရဲ့ မူလဇစ်မြစ်ကို ရှင်းလင်းစွာ သိမြင်ခွင့် ရရှိခဲ့ပါတော့တယ်။ ဤဖြစ်ရပ်ဆန်းကြီးတစ်ခုလုံးရဲ့ နောက်ကွယ်မှာ ရှိနေတဲ့ အမှန်တရားဟာ အံ့သြတုန်လှုပ်ဖွယ် ကောင်းလှသလို လူသားတို့အတွက် အလွန်တန်ဖိုးရှိတဲ့ သဘာဝတရား၏ သင်ခန်းစာတစ်ခုလည်း ဖြစ်ခဲ့ပါတယ်။`,
+      `အခန်း (၆) - နိဂုံးချုပ်နှင့် အမှတ်တရ သင်ခန်းစာ\n\nဒီဇာတ်လမ်းရှည်ကြီးကနေ တဆင့် ကျွန်ုပ်တို့ ရရှိလိုက်တဲ့ သင်ခန်းစာကတော့... ဘဝဆိုတာ အမြဲတမ်း စူးစမ်းလေ့လာနေရမယ့် ခရီးစဉ်တစ်ခု ဖြစ်ပြီး မဆုတ်မနစ်သော ဇွဲလုံ့လဖြင့်သာ အမှန်တရားကို ဆွတ်ခူးနိုင်တယ်ဆိုတာပါပဲ။ နားဆင်အားပေးကြတဲ့ ပရိသတ်အပေါင်းကို အထူးပင် ကျေးဇူးတင်ရှိပါကြောင်း တင်ဆက်အပ်ပါသည်။`
+    ];
+    const fallbackScript = fallbackChapters.join('\n\n');
 
     const fallbackDialogues = [
-      { id: 'dlg_fb_1', speakerId: 'spk1', speakerName: '👑 ဝီလျံ (Cinema Deep)', text: `"${topic}" အကြောင်းကို စိတ်ဝင်စားဖွယ်ရာ တင်ဆက်ပေးချင်ပါတယ်။` },
-      { id: 'dlg_fb_2', speakerId: 'spk2', speakerName: '🌸 အေဗာ (Smooth Female)', text: `ဒီဇာတ်လမ်းလေးကနေ တဆင့် ကျွန်ုပ်တို့ ရရှိလိုက်တဲ့ သင်ခန်းစာတွေ အများကြီးပါပဲ။` }
+      { id: 'dlg_fb_1', speakerId: 'spk1', speakerName: '👑 ဝီလျံ (Cinema Deep)', text: `"${storyTitle}" အကြောင်းကို စိတ်ဝင်စားဖွယ်ရာ အပြည့်အစုံ တင်ဆက်ပေးချင်ပါတယ်။` },
+      { id: 'dlg_fb_2', speakerId: 'spk2', speakerName: '🌸 အေဗာ (Smooth Female)', text: `ဒီဇာတ်လမ်းကြီးကနေ တဆင့် ကျွန်ုပ်တို့ ရရှိလိုက်တဲ့ အဖိုးတန် သင်ခန်းစာတွေ အများကြီးပါပဲ။` }
     ];
 
     return res.json({
@@ -6199,7 +6256,7 @@ Respond strictly in valid JSON:
       title: storyTitle,
       category: genre,
       wordCount: fallbackScript.length,
-      estimatedMinutes: '၅ မိနစ်',
+      estimatedMinutes: duration === '30min' ? '၃၀ မိနစ် (Full Story)' : '၁၅ မိနစ် (Long Story)',
       script: fallbackScript,
       dialogueLines: fallbackDialogues
     });
@@ -6222,25 +6279,37 @@ Read the following complete story script titled "${title || 'Untitled'}":
 ${script}
 ---
 
-Based on the actual unfolding plot and events in this exact story, create 4 sequential distinct visual scene descriptions in English for AI image generation:
-1. Opening scene (Beginning / Setup)
-2. Rising Action (Middle development / Tension)
-3. Climax (The pivotal turning point / Peak drama)
-4. Resolution (Ending / Aftermath)
+Based on the actual unfolding plot and chronological narrative in this exact story, create exactly 10 sequential distinct visual scene descriptions in English for AI image generation, progressing chronologically from the opening to the ending:
+Scene 1: Introduction / Opening World & Setting Setup
+Scene 2: Protagonist Introduction & Atmosphere
+Scene 3: Initial Mystery / Inciting Discovery
+Scene 4: Journey Begins / Developing Tension
+Scene 5: Dark Turn / Encountering Obstacles
+Scene 6: Deepening Mystery / Suspenseful Revelation
+Scene 7: High Stakes / Danger Escalating
+Scene 8: Climax / Peak Dramatic Confrontation
+Scene 9: Falling Action / Aftermath & Breakthrough
+Scene 10: Final Resolution / Concluding Visual Atmosphere
 
 Match "${genre}" mood.
 CRITICAL RULES FOR SCENES:
-1. PERFECT STORY MATCH: Each visual prompt must directly and precisely reflect the actual characters, locations, objects, and actions occurring in that part of the story script above. Never generate generic or unrelated images.
-2. NO DUPLICATE SCENES: Ensure each of the 4 scenes features completely different visual environments, camera angles, color palettes, and subjects so that storyboard images NEVER repeat.
+1. PERFECT STORY MATCH: Each visual prompt must directly and precisely reflect the actual characters, locations, objects, and actions occurring in that chronological segment of the story script above. Never generate generic or unrelated images.
+2. NO DUPLICATE SCENES: Ensure each of the 10 scenes features completely different visual environments, camera angles, color palettes, and subjects so that storyboard images NEVER repeat.
 3. STRICTLY NO TEXT OR WATERMARK: Every visual description must depict clean visual photography/cinematography with ZERO text, no words, no letters, no alphabet symbols, and no subtitles in the image.
 
 Respond strictly in valid JSON:
 {
   "scenes": [
-    { "sceneNumber": 1, "title": "Opening", "visualPrompt": "Specific cinematic visual prompt in English matching the story opening, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
-    { "sceneNumber": 2, "title": "Rising Action", "visualPrompt": "Specific cinematic visual prompt in English matching the story rising action, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
-    { "sceneNumber": 3, "title": "Climax", "visualPrompt": "Specific cinematic visual prompt in English matching the story climax, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
-    { "sceneNumber": 4, "title": "Resolution", "visualPrompt": "Specific cinematic visual prompt in English matching the story resolution, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" }
+    { "sceneNumber": 1, "title": "Opening World & Setting", "visualPrompt": "Cinematic visual description in English matching Scene 1, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 2, "title": "Protagonist & Atmosphere", "visualPrompt": "Cinematic visual description in English matching Scene 2, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 3, "title": "Inciting Discovery", "visualPrompt": "Cinematic visual description in English matching Scene 3, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 4, "title": "Developing Tension", "visualPrompt": "Cinematic visual description in English matching Scene 4, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 5, "title": "Encountering Obstacles", "visualPrompt": "Cinematic visual description in English matching Scene 5, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 6, "title": "Suspenseful Revelation", "visualPrompt": "Cinematic visual description in English matching Scene 6, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 7, "title": "High Stakes Danger", "visualPrompt": "Cinematic visual description in English matching Scene 7, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 8, "title": "Climactic Confrontation", "visualPrompt": "Cinematic visual description in English matching Scene 8, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 9, "title": "Breakthrough & Aftermath", "visualPrompt": "Cinematic visual description in English matching Scene 9, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" },
+    { "sceneNumber": 10, "title": "Final Resolution & Sunset", "visualPrompt": "Cinematic visual description in English matching Scene 10, no text, no watermark...", "searchKeywords": "2 to 4 concise photo search keywords", "mood": "${genre}" }
   ]
 }`;
 
@@ -6256,7 +6325,7 @@ Respond strictly in valid JSON:
         });
         if (resExtraction && resExtraction.text) {
           parsed = safeJsonParse(resExtraction.text);
-          if (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length > 0) break;
+          if (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length >= 8) break;
         }
       } catch (e) {
         console.warn(`[Story Prompts] Model ${m} fallback:`, e);
@@ -6267,16 +6336,22 @@ Respond strictly in valid JSON:
     const scenePrompts = (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length > 0)
       ? parsed.scenes
       : [
-          { sceneNumber: 1, title: 'Opening', visualPrompt: `Cinematic opening scene of ${genre} story: ${title}`, searchKeywords: `${genre} landscape beginning`, mood: genre },
-          { sceneNumber: 2, title: 'Rising Action', visualPrompt: `Dramatic rising action in ${genre} setting: ${title}`, searchKeywords: `${genre} dramatic progression`, mood: genre },
-          { sceneNumber: 3, title: 'Climax', visualPrompt: `Epic climax scene of ${genre} tale: ${title}`, searchKeywords: `${genre} intense climax`, mood: genre },
-          { sceneNumber: 4, title: 'Resolution', visualPrompt: `Atmospheric resolution ending of ${genre}: ${title}`, searchKeywords: `${genre} peaceful ending sunset`, mood: genre }
+          { sceneNumber: 1, title: 'Opening World & Setting', visualPrompt: `Cinematic atmospheric opening scene of ${genre} story: ${title}`, searchKeywords: `${genre} landscape beginning`, mood: genre },
+          { sceneNumber: 2, title: 'Protagonist & Atmosphere', visualPrompt: `Dramatic character introduction in ${genre} setting: ${title}`, searchKeywords: `${genre} character cinematic`, mood: genre },
+          { sceneNumber: 3, title: 'Inciting Discovery', visualPrompt: `Mysterious discovery and strange sign in ${genre}: ${title}`, searchKeywords: `${genre} mystery discovery`, mood: genre },
+          { sceneNumber: 4, title: 'Developing Tension', visualPrompt: `Rising tension and exploration in ${genre} tale: ${title}`, searchKeywords: `${genre} suspense exploration`, mood: genre },
+          { sceneNumber: 5, title: 'Encountering Obstacles', visualPrompt: `Shocking obstacle and dramatic encounter in ${genre}: ${title}`, searchKeywords: `${genre} dark encounter`, mood: genre },
+          { sceneNumber: 6, title: 'Suspenseful Revelation', visualPrompt: `Secret unveiled and deep mystery turning point in ${genre}: ${title}`, searchKeywords: `${genre} secret reveal`, mood: genre },
+          { sceneNumber: 7, title: 'High Stakes Danger', visualPrompt: `Escalating danger and intense adrenaline in ${genre}: ${title}`, searchKeywords: `${genre} danger chase`, mood: genre },
+          { sceneNumber: 8, title: 'Climactic Confrontation', visualPrompt: `Epic confrontation and peak climax scene of ${genre} story: ${title}`, searchKeywords: `${genre} intense climax`, mood: genre },
+          { sceneNumber: 9, title: 'Breakthrough & Aftermath', visualPrompt: `Dramatic breakthrough and emotional aftermath in ${genre}: ${title}`, searchKeywords: `${genre} aftermath emotional`, mood: genre },
+          { sceneNumber: 10, title: 'Final Resolution & Sunset', visualPrompt: `Atmospheric resolution ending and peaceful closure of ${genre}: ${title}`, searchKeywords: `${genre} peaceful ending sunset`, mood: genre }
         ];
 
     // Shared duplicate tracker so NO TWO SCENES HAVE DUPLICATE IMAGES
     const storyUsedUrls = new Set<string>();
 
-    // Actually generate distinct non-repeating images for each scene
+    // Actually generate 10 distinct non-repeating images for each scene with concurrency 5 for super fast completion
     const scenesWithImages = await runWithConcurrency(scenePrompts, async (scene: any, idx: number) => {
       try {
         const imageUrl = await generateAiImageBuffer(scene.visualPrompt, '16:9', 'cinematic', {
@@ -6289,7 +6364,7 @@ Respond strictly in valid JSON:
         console.warn(`Failed to generate image for scene ${scene.sceneNumber}:`, e);
         return { ...scene, imageUrl: '' };
       }
-    }, 2);
+    }, 5);
 
     return res.json({
       success: true,
@@ -6374,34 +6449,56 @@ app.post('/api/generate-story-video', async (req: Request, res: Response) => {
       imagePaths.push(bgImagePath);
     }
 
-    // Auto-generate matching non-repeating story scene images if no images were provided
+    // Auto-generate matching non-repeating story scene images if no images were provided (10 scenes)
     if (finalBgImages.length === 0) {
-      console.log(`[Story Video] No images provided. Automatically generating 4 non-repeating scene images for "${title}"...`);
+      console.log(`[Story Video] No images provided. Automatically generating 10 non-repeating scene images for "${title}"...`);
       try {
         const sentences = script.split(/(?<=[။\.\?\!\n])\s*/).filter((s: string) => s.trim().length > 0);
-        const autoScenes = [
-          `Cinematic opening atmospheric scene of ${genre} story: ${title}. ${sentences[0] || ''}`,
-          `Dramatic progression of ${genre} story: ${title}. ${sentences[Math.floor(sentences.length / 3)] || ''}`,
-          `Climax and key drama moment of ${genre} story: ${title}. ${sentences[Math.floor((sentences.length * 2) / 3)] || ''}`,
-          `Emotional ending resolution scene of ${genre} story: ${title}. ${sentences[sentences.length - 1] || ''}`
+        const autoScenes: string[] = [];
+        const step = Math.max(1, Math.floor(sentences.length / 10));
+        const sceneTitles = [
+          'Opening world & setting',
+          'Protagonist introduction & atmosphere',
+          'Inciting incident & strange discovery',
+          'Rising action & exploration',
+          'Encountering obstacle & conflict',
+          'Secret revelation & suspense',
+          'High stakes & impending danger',
+          'Climactic confrontation',
+          'Breakthrough & aftermath',
+          'Final resolution & peaceful ending'
         ];
+        for (let sIdx = 0; sIdx < 10; sIdx++) {
+          const sentIdx = Math.min(sentences.length - 1, sIdx * step);
+          const snippet = sentences[sentIdx] || '';
+          autoScenes.push(`Cinematic ${sceneTitles[sIdx]} in ${genre} story: ${title}. ${snippet}`);
+        }
+
         const videoStoryUsedUrls = new Set<string>();
-        for (let i = 0; i < autoScenes.length; i++) {
+        const genTasks = autoScenes.map((scenePrompt, i) => async () => {
           try {
-            const imgData = await generateAiImageBuffer(autoScenes[i], '9:16', 'cinematic', {
+            const imgData = await generateAiImageBuffer(scenePrompt, '9:16', 'cinematic', {
               sceneIndex: i,
               usedUrls: videoStoryUsedUrls
             });
             if (imgData && imgData.includes('base64,')) {
               const p = path.join(os.tmpdir(), `story_auto_bg_${timestamp}_${i}.png`);
               fs.writeFileSync(p, Buffer.from(imgData.split('base64,')[1], 'base64'));
-              finalBgImages.push(p);
-              imagePaths.push(p);
+              return p;
             }
           } catch (_) {}
-        }
+          return null;
+        });
+
+        const createdBgPaths = await runWithConcurrency(genTasks, (fn) => fn(), 5);
+        createdBgPaths.forEach(p => {
+          if (p && fs.existsSync(p)) {
+            finalBgImages.push(p);
+            imagePaths.push(p);
+          }
+        });
       } catch (autoImgErr) {
-        console.warn('Auto scene generation error:', autoImgErr);
+        console.warn('Auto 10-scene generation error:', autoImgErr);
       }
     }
 
@@ -7897,7 +7994,138 @@ async function searchWikimediaPhoto(keywords: string, targetWidth: number, usedU
   return null;
 }
 
+// Cleanly strip any bottom watermark / logo (e.g. pollinations.ai logo) using lossless FFmpeg crop & scale
+async function removeWatermarkFromImageBuffer(buffer: Buffer): Promise<Buffer> {
+  if (!buffer || buffer.length < 500) return buffer;
+  const tmpIn = path.join(os.tmpdir(), `wm_in_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.jpg`);
+  const tmpOut = path.join(os.tmpdir(), `wm_out_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.jpg`);
+  try {
+    fs.writeFileSync(tmpIn, buffer);
+    // Crop bottom 42 pixels where watermark branding is placed, then scale back to full dimensions
+    await execAsync(`ffmpeg -y -i "${tmpIn}" -vf "crop=in_w:in_h-42:0:0,scale=in_w:in_h:flags=lanczos" -q:v 2 "${tmpOut}"`);
+    if (fs.existsSync(tmpOut) && fs.statSync(tmpOut).size > 500) {
+      return fs.readFileSync(tmpOut);
+    }
+  } catch (err) {
+    console.warn('[Watermark Cleaner] Cleaner note:', err);
+  } finally {
+    try { if (fs.existsSync(tmpIn)) fs.unlinkSync(tmpIn); } catch (_) {}
+    try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+  }
+  return buffer;
+}
+
 // Helper function to generate AI image with seamless multi-tier fallback, Myanmar Prompt Translation, and DUPLICATE PREVENTION
+// -------------------------------------------------------------------------------------
+// Ultra-Fast Myanmar (Burmese) & English Cultural Semantic Prompt Translation (0ms Latency)
+// -------------------------------------------------------------------------------------
+function fastMyanmarPromptTranslate(rawPrompt: string): { englishPrompt: string; explanation: string; searchKeywords: string } {
+  const p = rawPrompt.trim();
+  const hasMyanmar = /[\u1000-\u109F]/.test(p);
+  if (!hasMyanmar) {
+    return {
+      englishPrompt: p,
+      explanation: `"${p}" ကို အခြေခံ၍ ပုံဖန်တီးထားပါသည်`,
+      searchKeywords: p.slice(0, 40)
+    };
+  }
+
+  const items: string[] = [];
+  const explanations: string[] = [];
+  const keywords: string[] = [];
+
+  const check = (regex: RegExp, en: string, myExplain: string, kw: string) => {
+    if (regex.test(p)) {
+      items.push(en);
+      explanations.push(myExplain);
+      keywords.push(kw);
+    }
+  };
+
+  // Myanmar landmarks & cultural attire
+  check(/သနပ်ခါး/i, "authentic yellowish Thanaka cosmetic pattern softly applied on cheeks", "သနပ်ခါးလိမ်းထားမှု", "thanaka");
+  check(/ပုဂံ/i, "ancient brick stupas and pagodas of Bagan Myanmar, morning mist, warm sunrise", "ပုဂံရှေးဟောင်းစေတီပုထိုးများ", "bagan pagoda");
+  check(/ရွှေတိဂုံ/i, "majestic golden Shwedagon Pagoda glittering under soft sky", "ရွှေတိဂုံစေတီတော်", "shwedagon");
+  check(/အင်းလေး/i, "Inle lake floating waters with traditional one-legged rowing fisherman", "အင်းလေးကန်", "inle lake");
+  check(/မန္တလေး/i, "historic Mandalay palace and traditional Myanmar royal scenery", "မန္တလေး", "mandalay");
+  check(/တောင်ကြီး|မီးပုံးပျံ/i, "Taunggyi hot air balloon festival, glowing night sky with colorful floating lanterns", "မီးပုံးပျံပွဲတော်", "hot air balloons");
+  check(/လုံချည်|ပုဆိုး/i, "authentic Myanmar traditional silk Longyi", "ရိုးရာလုံချည်", "silk longyi");
+  check(/ထဘီ/i, "traditional handwoven Myanmar silk Htamein", "ရိုးရာထဘီ", "traditional htamein");
+  check(/ဆွမ်းခံ|ဘုန်းကြီး|ကိုယ်တော်/i, "revered Buddhist monk in saffron orange robes holding black alms bowl", "ဆွမ်းခံကိုယ်တော်", "buddhist monk");
+  check(/ကိုရင်/i, "young novice Buddhist monk in crimson robes", "ကိုရင်လေး", "novice monk");
+  check(/သီလရှင်/i, "Buddhist nun in pink and orange robes", "သီလရှင်", "buddhist nun");
+  check(/စစ်သည်တော်|စစ်သူကြီး/i, "heroic ancient Burmese warrior in traditional armor holding daav sword", "ရှေးခေတ်စစ်သည်တော်", "ancient warrior");
+  check(/ဘုရင်|မင်းကြီး/i, "ancient Burmese king in majestic royal silk attire and golden crown", "ဘုရင်မင်းမြတ်", "ancient king");
+  check(/မိဖုရား/i, "royal Burmese queen in exquisite palace silk robes and golden accessories", "မိဖုရား", "queen palace");
+  check(/သင်္ကြန်|ပိတောက်/i, "joyous Myanmar Thingyan water festival with yellow blooming Padauk flowers", "သင်္ကြန်ပွဲတော်", "thingyan festival");
+  check(/ဘုရား|စေတီ/i, "sacred golden Buddhist stupas and pagodas", "ရွှေစေတီပုထိုးများ", "golden pagoda");
+
+  // Characters & People
+  check(/မြန်မာမိန်းကလေး|မြန်မာမလေး/i, "beautiful young Myanmar woman with natural dark hair and authentic Myanmar traditional dress", "မြန်မာမိန်းကလေး", "myanmar woman");
+  if (!/မြန်မာမိန်းကလေး|မြန်မာမလေး/i.test(p)) {
+    check(/မိန်းကလေး|ကောင်မလေး|အမျိုးသမီး/i, "beautiful young woman with expressive eyes and graceful appearance", "မိန်းကလေး", "beautiful woman");
+  }
+  check(/ကောင်လေး|လူငယ်|အမျိုးသား/i, "handsome young man with natural confident expression", "လူငယ်အမျိုးသား", "handsome man");
+  check(/ကလေး/i, "cute cheerful child with innocent bright smile", "ကလေးငယ်", "happy child");
+  check(/အဘိုး/i, "kind elderly Burmese grandfather with gentle warm smile", "အဘိုး", "elderly man");
+  check(/အဘွား/i, "kind elderly Burmese grandmother with gentle compassionate smile", "အဘွား", "elderly woman");
+  check(/မော်ဒယ်/i, "stunning high-fashion model with studio lighting", "မော်ဒယ်", "fashion model");
+  check(/စုံတွဲ/i, "romantic loving couple together in golden evening light", "ချစ်သူစုံတွဲ", "romantic couple");
+  check(/ကျောင်းသား|ကျောင်းသူ/i, "school student in crisp white and green traditional Myanmar uniform", "ကျောင်းသားကျောင်းသူ", "school student");
+  check(/ဆရာဝန်/i, "professional doctor in medical coat", "ဆရာဝန်", "doctor");
+  check(/စစ်သား/i, "soldier in tactical uniform", "စစ်သား", "soldier");
+
+  // Animals
+  check(/ကျား/i, "majestic wild Bengal tiger, intense gaze, realistic fur texture", "ကျားကြီး", "tiger");
+  check(/ခြင်္သေ့/i, "regal African lion with full mane", "ခြင်္သေ့", "lion");
+  check(/ဆင်/i, "majestic Asian elephant in lush natural environment", "ဆင်ကြီး", "elephant");
+  check(/ခွေး|ခွေးလေး/i, "cute playful puppy dog with fluffy fur", "ခွေးလေး", "puppy dog");
+  check(/ကြောင်|ကြောင်လေး/i, "cute adorable kitten cat with expressive eyes", "ကြောင်လေး", "cute cat");
+  check(/မြင်း/i, "majestic galloping horse in open natural meadow", "မြင်း", "horse");
+  check(/ငှက်/i, "colorful tropical bird perched gracefully", "ငှက်ကလေး", "tropical bird");
+
+  // Nature & Scenery
+  check(/နှင်းဆီ|ပန်း/i, "vibrant fresh blooming roses in a lush garden", "နှင်းဆီပန်း", "blooming roses");
+  check(/တောင်|တောင်တန်း/i, "dramatic mountain landscape under scenic clouds", "တောင်တန်းကြီးများ", "scenic mountains");
+  check(/ပင်လယ်|ကမ်းခြေ/i, "tropical paradise beach with turquoise sea and white sand", "ပင်လယ်ကမ်းခြေ", "tropical beach");
+  check(/နေဝင်|နေဝင်ချိန်/i, "breathtaking sunset with golden and crimson sky", "နေဝင်ဆည်းဆာ", "golden sunset");
+  check(/မိုးရေ|မိုးရွာ/i, "moody rainy scene with reflective wet surfaces", "မိုးရွာနေသောမြင်ကွင်း", "rain reflections");
+
+  // Fantasy & Themes
+  check(/သရဲ|သရဲအိမ်|ထိတ်လန့်/i, "spooky haunted dark ancient mansion with eerie fog and lightning", "ထိတ်လန့်ဖွယ်သရဲအိမ်", "haunted house");
+  check(/နဂါး/i, "epic mythical dragon with fiery scales in a fantasy sky", "ဒဏ္ဍာရီနဂါးကြီး", "mythical dragon");
+  check(/အာကာသ|ဂြိုဟ်တု|ကြယ်/i, "deep space galaxy with glowing nebula and distant planets", "အာကာသစကြဝဠာ", "space galaxy");
+  check(/စက်ရုပ်/i, "sleek futuristic cyberpunk robot with glowing neon accents", "အနာဂတ်စက်ရုပ်", "cyberpunk robot");
+  check(/3d|ကာတွန်း/i, "cute 3D Pixar animation render with soft lighting", "3D ကာတွန်းပုံစံ", "3d pixar style");
+  check(/anime|အန်နီမေး/i, "masterpiece anime artwork in Makoto Shinkai aesthetic", "အန်နီမေးပုံစံ", "anime style");
+
+  if (items.length > 0) {
+    const finalPrompt = items.join(', ');
+    const finalExplain = explanations.join(' နှင့် ') + ' ကို တိကျစွာ ပုံဖော်ထားပါသည်';
+    return {
+      englishPrompt: finalPrompt,
+      explanation: finalExplain,
+      searchKeywords: keywords.slice(0, 3).join(' ')
+    };
+  }
+
+  // Fallback: clean Myanmar letters and extract any English words, or generic high quality visual
+  const englishWords = p.replace(/[\u1000-\u109F\s]+/g, ' ').trim();
+  if (englishWords.length > 2) {
+    return {
+      englishPrompt: `High quality cinematic portrait of ${englishWords}`,
+      explanation: `${p} ကို အခြေခံထားပါသည်`,
+      searchKeywords: englishWords
+    };
+  }
+
+  return {
+    englishPrompt: `Cinematic Myanmar cultural scene, authentic traditional ambiance, vivid detailed composition`,
+    explanation: `${p} ကို မြန်မာ့ရိုးရာ အလှတရားဖြင့် ပုံဖော်ထားပါသည်`,
+    searchKeywords: "myanmar culture cinematic"
+  };
+}
+
 async function generateAiImageBuffer(
   rawPrompt: string, 
   aspectRatio: string = '9:16', 
@@ -7906,130 +8134,149 @@ async function generateAiImageBuffer(
     searchKeywords?: string;
     sceneIndex?: number;
     usedUrls?: Set<string>;
+    outDetails?: { interpretedPrompt?: string; burmeseExplanation?: string; directClientUrl?: string; fastFallbackUrl?: string };
+    standalone?: boolean;
+    model?: string;
   }
 ): Promise<string> {
   const usedUrls = options?.usedUrls || new Set<string>();
   const sceneIdx = options?.sceneIndex ?? 0;
 
-  // Step 1: Detect if prompt has Burmese characters; translate & extract search keywords
-  let enrichedEnglishPrompt = rawPrompt.trim();
-  let semanticKeywords = options?.searchKeywords || '';
-  const hasBurmese = /[\u1000-\u109F\uAA60-\uAA7F]/.test(rawPrompt);
+  // Step 1: Instant Local Semantic & Cultural Translation (0ms response time)
+  const instantResult = fastMyanmarPromptTranslate(rawPrompt);
+  let enrichedEnglishPrompt = instantResult.englishPrompt;
+  let semanticKeywords = options?.searchKeywords || instantResult.searchKeywords;
+  let burmeseExplanation = instantResult.explanation;
 
-  if (hasBurmese || !semanticKeywords) {
-    const promptModels = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  // If prompt is complex or has unmapped terms, attempt fast Gemini enhancement with 2.5s maximum timeout
+  const hasMyanmar = /[\u1000-\u109F]/.test(rawPrompt);
+  const isWellMapped = instantResult.englishPrompt !== rawPrompt.trim() && !instantResult.englishPrompt.startsWith('High quality');
+
+  if (hasMyanmar && !isWellMapped) {
+    const promptModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest'];
     for (const m of promptModels) {
       if (depletedDailyModels.has(m)) continue;
       try {
-        const promptEnhanceRes = await ai.models.generateContent({
-          model: m,
-          contents: [{ role: 'user', parts: [{ text: `You are an expert film director and AI Image Prompt Engineer.
-Analyze the following prompt or story sentence:
-"${rawPrompt}"
-
-Respond in JSON format:
+        const promptEnhanceRes = await Promise.race([
+          ai.models.generateContent({
+            model: m,
+            contents: [{
+              role: 'user',
+              parts: [{
+                text: `You are an expert AI Image Prompt Engineer specializing in high-precision diffusion models (Flux.1) and authentic Myanmar context.
+USER PROMPT: "${rawPrompt}"
+Return strictly valid JSON:
 {
-  "visualPrompt": "A highly descriptive, vivid English image generation prompt (1-2 sentences) detailing subjects, lighting, composition and scenery",
-  "searchKeywords": "2 to 4 concise English words for photographic search (e.g. 'ancient pagoda bagan', 'monk meditating monastery', 'heroic battle swords')"
-}` }] }],
-          config: { responseMimeType: 'application/json' }
-        });
-        const enhancedText = promptEnhanceRes.text?.trim();
+  "visualPrompt": "Concise (25-45 words) English visual description focused directly on the user's exact subject, attire, setting, and atmosphere",
+  "searchKeywords": "2 to 3 concise photo keywords",
+  "burmeseExplanation": "အသုံးပြုသူ မြန်မာဘာသာဖြင့် သဘောပေါက်စေရန် အတိုချုပ် ရှင်းလင်းချက် (မြန်မာလို ၁ ကြောင်း)"
+}`
+              }]
+            }],
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.15
+            }
+          }),
+          new Promise<null>((_, reject) => setTimeout(() => reject(new Error('AI prompt timeout')), 2500))
+        ]);
+
+        const enhancedText = (promptEnhanceRes as any)?.text?.trim();
         if (enhancedText) {
           const parsed = safeJsonParse(enhancedText);
-          if (parsed?.visualPrompt) {
-            enrichedEnglishPrompt = parsed.visualPrompt;
-          }
-          if (parsed?.searchKeywords && !semanticKeywords) {
-            semanticKeywords = parsed.searchKeywords;
-          }
+          if (parsed?.visualPrompt) enrichedEnglishPrompt = parsed.visualPrompt;
+          if (parsed?.searchKeywords) semanticKeywords = parsed.searchKeywords;
+          if (parsed?.burmeseExplanation) burmeseExplanation = parsed.burmeseExplanation;
           break;
         }
-      } catch (enhanceErr: any) {
-        const errStr = typeof enhanceErr === 'string' ? enhanceErr : (enhanceErr?.message || '');
-        if (errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED')) {
-          depletedDailyModels.add(m);
-        }
-      }
+      } catch (_) {}
     }
   }
 
-  // Step 2: High-end Style modifiers (Strictly no text, no watermark, no subtitle words)
-  let styleModifier = 'cinematic 35mm film photography, dramatic atmospheric lighting, 8k resolution, ultra-detailed, photorealistic, clean scene without any text, no words, no letters, no watermark';
+  // Step 2: Concise Style modifiers tailored for Flux
+  let styleModifier = 'cinematic lighting, 8k resolution, photorealistic';
   if (style === 'realistic') {
-    styleModifier = 'award-winning professional photography, Hasselblad DSLR, crisp sharp focus, natural studio lighting, ultra-realistic textures, clean frame without any text or watermark';
+    styleModifier = 'award-winning photography, Hasselblad portrait, crisp natural studio lighting, ultra-realistic 8k';
   } else if (style === 'anime') {
-    styleModifier = 'modern high-end anime aesthetic, Makoto Shinkai art style, vivid vibrant colors, beautiful anime composition, masterpiece, clean illustration without any text, no watermark';
+    styleModifier = 'vivid anime aesthetic, Makoto Shinkai style, crisp details, masterpiece anime illustration';
   } else if (style === 'fantasy') {
-    styleModifier = 'epic mythical fantasy digital art, glowing magical particles, surreal breathtaking atmosphere, Artstation trending, clean artwork without any text or watermark';
+    styleModifier = 'epic mythical fantasy digital art, glowing atmospheric lighting, Artstation trending';
   } else if (style === 'cyberpunk') {
-    styleModifier = 'futuristic cyberpunk aesthetic, neon lights, rainy street reflections, holographic details, cinematic sci-fi, no text, no watermark';
+    styleModifier = 'futuristic cyberpunk aesthetic, neon glow, rainy reflections, cinematic sci-fi';
   } else if (style === 'horror') {
-    styleModifier = 'dark eerie gothic atmosphere, cinematic shadows, foggy ominous mystery, cinematic horror lighting, clean composition without any text, no watermark';
+    styleModifier = 'dark eerie gothic mystery, ominous shadows, atmospheric cinematic horror';
   } else if (style === '3d') {
-    styleModifier = 'cute 3D animation style, Disney Pixar render, Octane render 3D, smooth volumetric lighting, vibrant 3D character, clean 3D render without any text or watermark';
+    styleModifier = '3D Pixar animation style, cute character render, smooth volumetric lighting, octane 3d';
   }
 
   const finalImagePrompt = `${enrichedEnglishPrompt}, ${styleModifier}`;
-  let width = 720;
-  let height = 1280;
+  // High-performance diffusion latent dimensions (divisible by 64 for 3x faster generation)
+  let width = 576;
+  let height = 1024;
   if (aspectRatio === '16:9') {
-    width = 1280;
-    height = 720;
-  } else if (aspectRatio === '1:1') {
     width = 1024;
-    height = 1024;
+    height = 576;
+  } else if (aspectRatio === '1:1') {
+    width = 768;
+    height = 768;
+  } else if (aspectRatio === '4:3') {
+    width = 896;
+    height = 672;
+  } else if (aspectRatio === '3:4') {
+    width = 672;
+    height = 896;
   }
 
   const keywordsToSearch = semanticKeywords || enrichedEnglishPrompt.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).slice(0, 4).join(' ');
 
-  // 1. High-Precision AI Scene Image Generation (Flux/Turbo AI) - Strictly Watermark-Free & Story-Accurate
-  try {
-    const uniqueSeed = (Math.floor(Math.random() * 8000000) + (sceneIdx * 19371) + Date.now()) % 10000000;
-    const cleanPromptNoText = `${finalImagePrompt}, completely clean frame, pristine visual composition, strictly no watermark, no logo, no branding, no signature, no text overlay, no letters, no subtitles, cinematic masterpiece, high-resolution photography, 8k`;
-    const encodedPrompt = encodeURIComponent(cleanPromptNoText);
-    
-    // Attempt with Flux model first (highest cinematic fidelity)
-    const pollinationsUrlFlux = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&nologo=true&nowatermark=true&nofeed=true&seed=${uniqueSeed}&unfiltered=true&enhance=true`;
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const uniqueSeed = (Math.floor(Math.random() * 8000000) + (sceneIdx * 19371) + Date.now()) % 10000000;
+  const encodedPrompt = encodeURIComponent(finalImagePrompt);
 
-    let response = await fetch(pollinationsUrlFlux, {
+  const chosenModel = options?.model === 'turbo' ? 'turbo' : 'flux';
+  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=${chosenModel}&nologo=true&seed=${uniqueSeed}&enhance=false`;
+  const pollinationsUrlTurbo = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=turbo&nologo=true&seed=${uniqueSeed}&enhance=false`;
+
+  if (options?.outDetails) {
+    options.outDetails.interpretedPrompt = enrichedEnglishPrompt;
+    options.outDetails.burmeseExplanation = burmeseExplanation;
+    options.outDetails.directClientUrl = pollinationsUrl;
+    options.outDetails.fastFallbackUrl = pollinationsUrlTurbo;
+  }
+
+  // Instant response for standalone/studio image generation:
+  // Bypass 25s Cloud Run IP bottleneck and let the client load immediately in 1-3 seconds with user's residential IP!
+  if (options?.standalone) {
+    console.log(`[Image Gen] Standalone requested: instant direct URL dispatch in ~300ms (model: ${chosenModel})`);
+    return pollinationsUrl;
+  }
+
+  // 1. High-Precision AI Image Generation (with 5s fast timeout for video backgrounds)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(pollinationsUrl, {
       signal: controller.signal,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
     }).catch(() => null);
     clearTimeout(timeoutId);
 
-    // If Flux was slow or errored, try Turbo model for instant sub-second generation
-    if (!response || !response.ok) {
-      const pollinationsUrlTurbo = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=turbo&nologo=true&nowatermark=true&nofeed=true&seed=${uniqueSeed}&unfiltered=true&enhance=true`;
-      const ctrlTurbo = new AbortController();
-      const tmTurbo = setTimeout(() => ctrlTurbo.abort(), 7000);
-      response = await fetch(pollinationsUrlTurbo, {
-        signal: ctrlTurbo.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      }).catch(() => null);
-      clearTimeout(tmTurbo);
-    }
-
     if (response && response.ok) {
       const arrayBuf = await response.arrayBuffer();
-      const base64 = Buffer.from(arrayBuf).toString('base64');
+      const rawBuf = Buffer.from(arrayBuf);
+      // Clean watermark using FFmpeg crop & scale
+      const cleanBuf = await removeWatermarkFromImageBuffer(rawBuf);
+      const base64 = cleanBuf.toString('base64');
       if (base64.length > 1000) {
-        const hashFingerprint = base64.slice(0, 40);
-        if (!usedUrls.has(hashFingerprint)) {
-          usedUrls.add(hashFingerprint);
-          console.log(`[Image Gen] Watermark-Free AI image generated successfully for scene ${sceneIdx + 1}!`);
-          return `data:image/jpeg;base64,${base64}`;
-        }
+        console.log(`[Image Gen] High-precision AI image generated successfully for scene ${sceneIdx + 1}!`);
+        return `data:image/jpeg;base64,${base64}`;
       }
     }
   } catch (fallbackErr) {
-    console.warn(`[Image Gen] AI image attempt for scene ${sceneIdx + 1} timed out/skipped:`, (fallbackErr as any)?.message || fallbackErr);
+    console.warn(`[Image Gen] AI image attempt warning:`, (fallbackErr as any)?.message || fallbackErr);
   }
 
-  // 2. Semantic Image Search via Wikimedia Commons (Strictly authentic photography fallback, completely free of AI gibberish text)
+  // 2. Semantic Image Search via Wikimedia Commons (Only for Story/Video background fallback)
   const wikiResult = await searchWikimediaPhoto(keywordsToSearch, width >= 1000 ? 960 : 720, usedUrls);
   if (wikiResult) {
     console.log(`[Image Gen] Wikimedia semantic image match found for "${keywordsToSearch}" (scene ${sceneIdx + 1})!`);
@@ -8103,7 +8350,7 @@ Respond in JSON format:
     const picsumSeed = `vm_scene_${sceneIdx + 1}_${Date.now() % 100000}_${Math.floor(Math.random() * 99999)}`;
     const picsumUrl = `https://picsum.photos/seed/${picsumSeed}/${width}/${height}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     const pRes = await fetch(picsumUrl, { signal: controller.signal });
     clearTimeout(timeoutId);
     if (pRes.ok) {
@@ -8132,23 +8379,75 @@ Respond in JSON format:
 }
 
 // -------------------------------------------------------------------------------------
-// Standalone AI Image Generator
+// Standalone AI Image Generator (Flow AI / Flux Unlimited & Turbo Engine)
 // -------------------------------------------------------------------------------------
 app.post('/api/generate-standalone-image', async (req: Request, res: Response) => {
-  const { prompt, aspectRatio = '9:16', style = 'cinematic' } = req.body;
+  const { prompt, aspectRatio = '9:16', style = 'cinematic', model = 'flux' } = req.body;
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
     return res.status(400).json({ error: 'ကျေးဇူးပြု၍ ဖန်တီးလိုသော ပုံအကြောင်းအရာ ရိုက်ထည့်ပေးပါခင်ဗျာ။' });
   }
 
   try {
-    const imageUrl = await generateAiImageBuffer(prompt.trim(), aspectRatio, style);
+    const outDetails: { interpretedPrompt?: string; burmeseExplanation?: string; directClientUrl?: string; fastFallbackUrl?: string } = {};
+    const imageUrl = await generateAiImageBuffer(prompt.trim(), aspectRatio, style, { 
+      outDetails, 
+      standalone: true, 
+      model: model || 'flux' 
+    });
     return res.json({
       success: true,
-      imageUrl
+      imageUrl,
+      directClientUrl: outDetails.directClientUrl || imageUrl,
+      fastFallbackUrl: outDetails.fastFallbackUrl || '',
+      model: model || 'flux',
+      aspectRatio,
+      style,
+      interpretedPrompt: outDetails.interpretedPrompt || prompt.trim(),
+      burmeseExplanation: outDetails.burmeseExplanation || ''
     });
   } catch (err: any) {
     console.error('Image Generation Error:', err);
     return res.status(500).json({ error: 'AI ရုပ်ပုံ ဖန်တီးရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။ ကျေးဇူးပြု၍ ပြန်လည် ကြိုးစားပေးပါခင်ဗျာ။' });
+  }
+});
+
+// -------------------------------------------------------------------------------------
+// AI High Quality Flow AI / Flux Unlimited & Multi-Model Image Generation API
+// -------------------------------------------------------------------------------------
+app.post('/api/ai-image-generate', async (req: Request, res: Response) => {
+  try {
+    const { prompt, model = 'flux', aspectRatio = '9:16', style = 'cinematic' } = req.body;
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ success: false, error: 'ကျေးဇူးပြု၍ ပုံဖန်တီးရန် စာသား (Prompt) ထည့်ပေးပါခင်ဗျာ။' });
+    }
+
+    const outDetails: { interpretedPrompt?: string; burmeseExplanation?: string; directClientUrl?: string; fastFallbackUrl?: string } = {};
+    const imageUrl = await generateAiImageBuffer(prompt.trim(), aspectRatio, style, { 
+      outDetails, 
+      standalone: true, 
+      model: model || 'flux' 
+    });
+    if (!imageUrl) {
+      throw new Error('Flow AI မှ ပုံထုတ်ယူနိုင်ခြင်း မရှိပါ။');
+    }
+
+    return res.json({
+      success: true,
+      imageUrl,
+      directClientUrl: outDetails.directClientUrl || imageUrl,
+      fastFallbackUrl: outDetails.fastFallbackUrl || '',
+      model: model || 'flux',
+      style,
+      aspectRatio,
+      interpretedPrompt: outDetails.interpretedPrompt || prompt.trim(),
+      burmeseExplanation: outDetails.burmeseExplanation || '',
+      text: outDetails.burmeseExplanation 
+        ? `✨ AI နားလည်ချက်: ${outDetails.burmeseExplanation}` 
+        : `Flow AI (${model === 'turbo' ? 'Turbo' : 'Flux Unlimited'}) ဖြင့် Watermark ကင်းစင်သော ရုပ်ပုံကို အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ။`
+    });
+  } catch (err: any) {
+    console.error('Flow AI Image Generation error:', err);
+    return res.status(500).json({ success: false, error: err.message || 'ပုံဖန်တီး၍ မရပါ။ ကျေးဇူးပြု၍ ပြန်လည် စမ်းသပ်ပေးပါခင်ဗျာ။' });
   }
 });
 

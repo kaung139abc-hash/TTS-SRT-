@@ -1081,18 +1081,22 @@ export const App: React.FC = () => {
   const [burnError, setBurnError] = useState('');
 
   // ----------------------------------------------------
-  // AI Image Studio State (High Quality AI Image Generation & Editing)
+  // Flow AI (Flux Unlimited) & AI Image Studio State
   // ----------------------------------------------------
-  const [aiImagePrompt, setAiImagePrompt] = useState('A majestic futuristic cyberpunk city in Yangon at sunset, 4k resolution, photorealistic');
-  const [aiImageModel, setAiImageModel] = useState<'gemini-3.1-flash-lite-image' | 'gemini-nano-banana-2.1'>('gemini-3.1-flash-lite-image');
-  const [aiImageAspectRatio, setAiImageAspectRatio] = useState<'1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '1:4' | '4:1'>('1:1');
+  const [aiImagePrompt, setAiImagePrompt] = useState('');
+  const [aiImageModel, setAiImageModel] = useState<'flux' | 'turbo' | 'gemini-3.1-flash-lite-image'>('flux');
+  const [aiImageAspectRatio, setAiImageAspectRatio] = useState<'9:16' | '16:9' | '1:1' | '4:3' | '3:4'>('9:16');
+  const [aiImageStyle, setAiImageStyle] = useState<'cinematic' | 'realistic' | 'anime' | '3d' | 'cyberpunk' | 'fantasy' | 'horror'>('cinematic');
   const [aiImageSize, setAiImageSize] = useState<'1K' | '2K' | '4K'>('1K');
   const [aiImageSource, setAiImageSource] = useState('');
   const [isAiImageLoading, setIsAiImageLoading] = useState(false);
+  const [aiImageProgressText, setAiImageProgressText] = useState('Flow AI ဖြင့် ပုံဖန်တီးနေပါသည်...');
   const [aiImageResultUrl, setAiImageResultUrl] = useState('');
   const [aiImageResultText, setAiImageResultText] = useState('');
+  const [aiImageInterpretedPrompt, setAiImageInterpretedPrompt] = useState('');
+  const [aiPromptCopied, setAiPromptCopied] = useState(false);
   const [aiImageError, setAiImageError] = useState('');
-  const [aiImageHistory, setAiImageHistory] = useState<Array<{ id: string; prompt: string; imageUrl: string; model: string; timestamp: number }>>(() => {
+  const [aiImageHistory, setAiImageHistory] = useState<Array<{ id: string; prompt: string; imageUrl: string; model: string; style?: string; timestamp: number }>>(() => {
     try {
       const saved = localStorage.getItem('vm_ai_image_history');
       return saved ? JSON.parse(saved) : [];
@@ -1101,41 +1105,120 @@ export const App: React.FC = () => {
     }
   });
 
-  const handleGenerateAiImage = async () => {
-    if (!aiImagePrompt.trim()) {
-      setAiImageError('ကျေးဇူးပြု၍ ပုံဖန်တီးရန် စာသား (Prompt) ထည့်ပါ။');
+  const cleanWatermarkInBrowser = (url: string, fallbackUrl?: string): Promise<string> => {
+    return new Promise((resolve) => {
+      if (!url || url.startsWith('data:image')) {
+        return resolve(url);
+      }
+
+      let resolved = false;
+      const finish = (finalUrl: string) => {
+        if (!resolved) {
+          resolved = true;
+          resolve(finalUrl);
+        }
+      };
+
+      const tryLoadImage = (srcUrl: string, onFail?: () => void) => {
+        const img = document.createElement('img');
+        img.crossOrigin = 'anonymous';
+
+        const timer = setTimeout(() => {
+          if (onFail) onFail();
+          else finish(srcUrl);
+        }, 5000);
+
+        img.onload = () => {
+          clearTimeout(timer);
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width || 576;
+            canvas.height = img.naturalHeight || img.height || 1024;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return finish(srcUrl);
+            // Crop bottom 42px where pollinations watermark is stamped, then scale back
+            const cropH = Math.max(100, canvas.height - 42);
+            ctx.drawImage(img, 0, 0, canvas.width, cropH, 0, 0, canvas.width, canvas.height);
+            const cleanBase64 = canvas.toDataURL('image/jpeg', 0.95);
+            finish(cleanBase64);
+          } catch (_) {
+            finish(srcUrl);
+          }
+        };
+
+        img.onerror = () => {
+          clearTimeout(timer);
+          if (onFail) onFail();
+          else finish(srcUrl);
+        };
+
+        img.src = srcUrl;
+      };
+
+      // Try primary URL first, if slow or failed, try turbo fallback
+      tryLoadImage(url, () => {
+        if (fallbackUrl && fallbackUrl !== url) {
+          tryLoadImage(fallbackUrl, () => finish(url));
+        } else {
+          finish(url);
+        }
+      });
+    });
+  };
+
+  const handleGenerateAiImage = async (customPrompt?: string) => {
+    const targetPrompt = (customPrompt || aiImagePrompt).trim();
+    if (!targetPrompt) {
+      setAiImageError('ကျေးဇူးပြု၍ ပုံဖန်တီးရန် စာသား (Prompt) ရိုက်ထည့်ပေးပါခင်ဗျာ။');
       return;
     }
     setIsAiImageLoading(true);
     setAiImageError('');
     setAiImageResultUrl('');
     setAiImageResultText('');
+    setAiImageInterpretedPrompt('');
+    setAiImageProgressText('⚡ စာသားကို AI ဖြင့် သုံးသပ်ပြင်ဆင်နေပါသည်...');
 
     try {
       const res = await fetch('/api/ai-image-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: aiImagePrompt,
+          prompt: targetPrompt,
           model: aiImageModel,
           aspectRatio: aiImageAspectRatio,
-          imageSize: aiImageSize,
-          sourceImage: aiImageSource || undefined
+          style: aiImageStyle
         })
       });
       const data = await res.json();
-      if (!data.success || !data.imageUrl) {
-        throw new Error(data.error || 'ပုံဖန်တီး၍ မရပါ။');
+      if (!data.success || (!data.imageUrl && !data.directClientUrl)) {
+        throw new Error(data.error || 'Flow AI ပုံဖန်တီး၍ မရပါ။ ကျေးဇူးပြု၍ ပြန်လည် ကြိုးစားပေးပါခင်ဗျာ။');
       }
 
-      setAiImageResultUrl(data.imageUrl);
-      setAiImageResultText(data.text || '');
+      setAiImageProgressText(
+        data.burmeseExplanation
+          ? `✨ ${data.burmeseExplanation} — ရုပ်ပုံကို စက္ကန့်ပိုင်းအတွင်း ဖန်တီးနေပါသည်...`
+          : '⚡ Watermark ကင်းစင်သော ရုပ်ပုံကို အမြန်ဆုံး ဖန်တီးနေပါသည်...'
+      );
+
+      let finalImageUrl = data.imageUrl || data.directClientUrl;
+      // If direct client URL was returned or imageUrl is a remote URL, clean watermark in browser
+      if (finalImageUrl && finalImageUrl.startsWith('http')) {
+        try {
+          finalImageUrl = await cleanWatermarkInBrowser(finalImageUrl, data.fastFallbackUrl);
+        } catch (_) {}
+      }
+
+      setAiImageResultUrl(finalImageUrl);
+      setAiImageResultText(data.burmeseExplanation || data.text || '');
+      setAiImageInterpretedPrompt(data.interpretedPrompt || '');
 
       const newRecord = {
         id: 'img_' + Date.now(),
-        prompt: aiImagePrompt,
-        imageUrl: data.imageUrl,
+        prompt: targetPrompt,
+        imageUrl: finalImageUrl,
         model: aiImageModel,
+        style: aiImageStyle,
         timestamp: Date.now()
       };
 
@@ -1147,10 +1230,10 @@ export const App: React.FC = () => {
         return updated;
       });
 
-      registerGenerationAndCheckAd('ai_image_generation');
+      registerGenerationAndCheckAd('flow_ai_image');
     } catch (err: any) {
       console.error(err);
-      setAiImageError(err.message || 'ပုံဖန်တီးရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။');
+      setAiImageError(err.message || 'Flow AI ပုံဖန်တီးရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။');
     } finally {
       setIsAiImageLoading(false);
     }
@@ -1576,6 +1659,8 @@ export const App: React.FC = () => {
   const [storyVideoDownloadUrl, setStoryVideoDownloadUrl] = useState('');
   const [storyVideoSrtText, setStoryVideoSrtText] = useState('');
   const [storyVideoError, setStoryVideoError] = useState('');
+  const [autoProduceStoryVideo, setAutoProduceStoryVideo] = useState(true);
+  const [storyVideoStep, setStoryVideoStep] = useState<'idle' | 'script' | 'images' | 'video' | 'ready'>('idle');
 
   // ----------------------------------------------------
   // Mode 3: Audio & Story History Library State (IndexedDB + Storage Backup)
@@ -1656,11 +1741,18 @@ export const App: React.FC = () => {
         throw new Error('ဆာဗာ တုံ့ပြန်မှု မရရှိခဲ့ပါ။ ခေတ္တစောင့်ပြီး ထပ်မံကြိုးစားပေးပါခင်ဗျာ။');
       }
 
-      if (!res.ok || !data.success) {
+      if (!res.ok || !data.success || (!data.imageUrl && !data.directClientUrl)) {
         throw new Error(data.error || 'AI ရုပ်ပုံ ဖန်တီး၍ မရပါ။');
       }
 
-      setImageResultUrl(data.imageUrl);
+      let finalImageUrl = data.imageUrl || data.directClientUrl;
+      if (finalImageUrl && finalImageUrl.startsWith('http')) {
+        try {
+          finalImageUrl = await cleanWatermarkInBrowser(finalImageUrl, data.fastFallbackUrl);
+        } catch (_) {}
+      }
+
+      setImageResultUrl(finalImageUrl);
       registerGenerationAndCheckAd('standalone_image');
     } catch (err: any) {
       setImageError(err.message || 'ရုပ်ပုံ ဖန်တီးမှု မအောင်မြင်ပါ။');
@@ -2088,6 +2180,7 @@ export const App: React.FC = () => {
     setIsScriptLoading(true);
     setScriptError('');
     setGeneratedScript(null);
+    setStoryVideoStep('script');
 
     try {
       const res = await fetch('/api/generate-story-script', {
@@ -2115,9 +2208,9 @@ export const App: React.FC = () => {
 
       setGeneratedScript(data);
 
-      // Automatically start generating scene images for the story
+      // Automatically generate 10 scene images and video for the story
       setTimeout(() => {
-        handleGenerateStoryImages(data);
+        handleGenerateStoryImages(data, autoProduceStoryVideo);
       }, 500);
 
       // Automatically save generated story to History Library
@@ -2127,19 +2220,22 @@ export const App: React.FC = () => {
         content: data.script,
         characterCount: data.script.length
       });
+      registerGenerationAndCheckAd('story_generator');
     } catch (err: any) {
       setScriptError(err.message || 'ဇာတ်ညွှန်းဖန်တီးရာတွင် ချွတ်ယွင်းချက်ဖြစ်ပေါ်သွားပါသည်။');
+      setStoryVideoStep('idle');
     } finally {
       setIsScriptLoading(false);
     }
   };
 
-  const handleGenerateStoryImages = async (scriptData?: ScriptResult) => {
+  const handleGenerateStoryImages = async (scriptData?: ScriptResult, autoCreateVideo: boolean = autoProduceStoryVideo) => {
     const targetScript = scriptData || generatedScript;
     if (!targetScript) return;
     setIsStoryImagesLoading(true);
     setStoryImagesError('');
     setStoryImages([]);
+    setStoryVideoStep('images');
 
     try {
       const res = await fetch('/api/generate-story-images', {
@@ -2161,31 +2257,49 @@ export const App: React.FC = () => {
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to generate story scene images');
       }
-      setStoryImages(data.scenes || []);
+      const scenes = data.scenes || [];
+      setStoryImages(scenes);
+
+      // Automatically combine audio & all 10 images into video
+      if (autoCreateVideo && scenes.length > 0) {
+        const sceneImageUrls = scenes.map((s: any) => s.imageUrl).filter(Boolean);
+        if (sceneImageUrls.length > 0) {
+          setTimeout(() => {
+            handleGenerateStoryVideo(undefined, targetScript, sceneImageUrls);
+          }, 400);
+        }
+      }
     } catch (err: any) {
       setStoryImagesError(err.message || 'AI ရုပ်ပုံများ ထုတ်ယူ၍ မရပါ။');
+      setStoryVideoStep('idle');
     } finally {
       setIsStoryImagesLoading(false);
     }
   };
 
-  const handleGenerateStoryVideo = async (customBgData?: string) => {
-    if (!generatedScript) return;
+  const handleGenerateStoryVideo = async (customBgData?: string, scriptOverride?: ScriptResult, imagesOverride?: string[]) => {
+    const scriptToUse = scriptOverride || generatedScript;
+    if (!scriptToUse) return;
     setIsStoryVideoLoading(true);
     setStoryVideoError('');
     setStoryVideoUrl('');
+    setStoryVideoStep('video');
 
     try {
+      const finalImages = imagesOverride && imagesOverride.length > 0
+        ? imagesOverride
+        : storyImages.map(img => img.imageUrl).filter(Boolean);
+
       const res = await fetch('/api/generate-story-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: generatedScript.title,
-          script: generatedScript.script,
+          title: scriptToUse.title,
+          script: scriptToUse.script,
           genre: scriptGenre,
           waveYPercentage: videoWaveY,
           bgImageData: customBgData || '',
-          allSceneImages: storyImages.map(img => img.imageUrl).filter(Boolean), // Send all 4 scene images for multi-scene video
+          allSceneImages: finalImages, // Send all 10 scene images for multi-scene video
           enableSubtitles: enableSubtitles,
           voiceEffect: voiceEffect
         })
@@ -2205,8 +2319,11 @@ export const App: React.FC = () => {
       setStoryVideoUrl(data.videoUrl);
       setStoryVideoDownloadUrl(data.downloadUrl || data.streamUrl || data.videoUrl);
       if (data.srtText) setStoryVideoSrtText(data.srtText);
+      setStoryVideoStep('ready');
+      registerGenerationAndCheckAd('story_video');
     } catch (err: any) {
       setStoryVideoError(err.message || 'ဗီဒီယို ဖန်တီးမှု မအောင်မြင်ပါ။');
+      setStoryVideoStep('idle');
     } finally {
       setIsStoryVideoLoading(false);
     }
@@ -3766,173 +3883,391 @@ export const App: React.FC = () => {
         </div>
 
         {/* ========================================================================= */}
-        {/* AI IMAGE STUDIO MODE: High Quality AI Image Generation & Editing            */}
+        {/* MODE: FLOW AI (FLUX UNLIMITED) HIGH-SPEED AI IMAGE STUDIO                 */}
         {/* ========================================================================= */}
-        {false && mainMode === 'aiImageStudio' && (
+        {mainMode === 'imager' && (
           <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="bg-[#151926] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-5">
-              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <div className="bg-[#151926] border border-cyan-500/40 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-6">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
                 <div>
-                  <h2 className="text-base font-bold text-white flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-cyan-400" />
-                    <span>🎨 AI ပုံစတူဒီယို (High-Quality AI Image Studio)</span>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-300 text-xs font-bold border border-cyan-500/30 mb-2">
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                    <span>Flow AI (Flux) • 100% Unlimited & Free Engine</span>
+                  </div>
+                  <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <span>🎨 Flow AI (Flux) အကန့်အသတ်မရှိ AI ပုံထုတ်စက် (Unlimited Image Studio)</span>
                   </h2>
-                  <p className="text-xs text-slate-400">
-                    Gemini 3.1 Flash-Lite Image နှင့် Nano Banana 2.1 တို့ကို အသုံးပြု၍ အရည်အသွေးမြင့် AI ပုံများကို စိတ်ကြိုက် ဖန်တီးပါ၊ တည်းဖြတ်ပါ
+                  <p className="text-xs text-slate-400 mt-1">
+                    မြန်မာလို သို့မဟုတ် အင်္ဂလိပ်လို စာသားရိုက်ထည့်ရုံဖြင့် Flow AI (Flux) စနစ်ဖြင့် ရုပ်ရှင်အဆင့် 4K/8K ရုပ်ပုံများကို ရေစာ (Watermark) လုံးဝမပါဘဲ အကန့်အသတ်မရှိ အခမဲ့ ဖန်တီးနိုင်ပါသည်
                   </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 rounded-xl font-bold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>No Quota Limit (အကန့်အသတ်မဲ့)</span>
+                  </span>
                 </div>
               </div>
 
               {aiImageError && (
-                <div className="p-3 bg-rose-950/60 border border-rose-500/40 text-rose-300 rounded-xl text-xs flex items-center gap-2">
+                <div className="p-3.5 bg-rose-950/60 border border-rose-500/40 text-rose-300 rounded-xl text-xs flex items-center gap-2 animate-in fade-in">
                   <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
                   <span>{aiImageError}</span>
                 </div>
               )}
 
-              {/* Prompt Input */}
+              {/* Engine / Model Selection */}
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                  <span>✍️ ပုံဖန်တီးရန် စာသား (Prompt) ရေးပါ</span>
+                <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-cyan-400" />
+                    <span>AI Engine ရွေးချယ်ပါ (Flow AI Models):</span>
+                  </span>
+                  <span className="text-[11px] text-cyan-300 font-normal">
+                    ✓ Flow AI (Flux) အကန့်အသတ်မရှိ ရရှိနိုင်သည်
+                  </span>
                 </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setAiImageModel('flux')}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      aiImageModel === 'flux'
+                        ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 border-cyan-400 text-white ring-2 ring-cyan-500/40 shadow-lg'
+                        : 'bg-[#0d1017] border-white/10 text-slate-300 hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-cyan-300">⚡ Flow AI (Flux Unlimited)</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-200 font-mono">Recommended</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                      အထူးကြည်လင်သော ရုပ်ရှင်အဆင့် 4K/8K ရုပ်ပုံများ (Watermark လုံးဝမပါ၊ အကန့်အသတ်မရှိ)
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAiImageModel('turbo')}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      aiImageModel === 'turbo'
+                        ? 'bg-gradient-to-r from-amber-600/30 to-orange-600/30 border-amber-400 text-white ring-2 ring-amber-500/40 shadow-lg'
+                        : 'bg-[#0d1017] border-white/10 text-slate-300 hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-300">🚀 Flow AI (Turbo Fast)</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 font-mono">1s Speed</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                      စက္ကန့်ပိုင်းအတွင်း အမြန်ဆုံး ပုံဖန်တီးပေးသော အမြန်နှုန်း မြင့်မားသည့် Engine
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAiImageModel('gemini-3.1-flash-lite-image')}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      aiImageModel === 'gemini-3.1-flash-lite-image'
+                        ? 'bg-gradient-to-r from-purple-600/30 to-pink-600/30 border-purple-400 text-white ring-2 ring-purple-500/40 shadow-lg'
+                        : 'bg-[#0d1017] border-white/10 text-slate-300 hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-purple-300">💎 Gemini Multimodal AI</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-200 font-mono">Google AI</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                      Google ၏ Multimodal AI ဉာဏ်ရည်ဖြင့် စာသားအလိုက် သဘာဝကျစွာ ပုံဖော်ဖန်တီးခြင်း
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Prompt Presets */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1">
+                  <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
+                  <span>နမူနာ စာသားများ (1-Click Prompt Inspiration):</span>
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: '🇲🇲 ရွှေတိဂုံ သီတင်းကျွတ်ည', prompt: 'ရန်ကုန်မြို့ သီတင်းကျွတ်လပြည့်ညတွင် ရွှေတိဂုံစေတီတော်ကြီး ရွှေရောင်ဝင်းပနေပုံ၊ ဆီမီးထောင်ပေါင်းများစွာ ထွန်းညှိထားသော ပွဲတော်ရှုခင်း' },
+                    { label: '🏛️ ရှေးခေတ် ပုဂံနေဝင်ချိန်', prompt: 'ရှေးခေတ် ပုဂံမြို့ဟောင်းတွင် နေဝင်ဆည်းဆာ မြူခိုးများဝေဆာနေစဉ် ရှေးဟောင်းစေတီပုထိုးများ ခမ်းနားထည်ဝါစွာ ပေါ်ထွက်နေပုံ' },
+                    { label: '🏙️ အနာဂတ် ရန်ကုန် ၂၀၅၀', prompt: 'A futuristic cyberpunk city in Yangon year 2050 with flying vehicles, neon lights, glowing pagodas and rainy reflections' },
+                    { label: '🌸 ရှမ်းရိုးမ တောင်တန်း', prompt: 'မြူခိုးဝေဆာနေသော ရှမ်းရိုးမ တောင်တန်းကြီးများ၊ စိမ်းစိုသော လက်ဖက်ခင်းများနှင့် သာယာအေးချမ်းသည့် တောင်ပေါ်ရှုခင်း' },
+                    { label: '🧝‍♀️ Anime မြန်မာမိန်းကလေး', prompt: 'Beautiful anime girl wearing traditional Myanmar silk outfit, Makoto Shinkai aesthetic, vibrant sunset lighting, masterpiece' },
+                    { label: '🧸 3D Pixar Animation', prompt: 'Cute 3D character in vibrant fantasy village, Disney Pixar animation style, highly detailed 3D octane render' },
+                    { label: '⚔️ ဒဏ္ဍာရီ မှော်ဆရာ', prompt: 'Epic fantasy warrior standing on cliff facing mythical dragon, glowing magical aura, cinematic atmospheric lighting' },
+                    { label: '👻 ထိတ်လန့်ဖွယ် သရဲအိမ်', prompt: 'Dark haunted ancient mansion on a stormy night, lightning strike, eerie shadows, cinematic mystery horror' }
+                  ].map((p, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setAiImagePrompt(p.prompt);
+                        handleGenerateAiImage(p.prompt);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-[#0e111a] hover:bg-cyan-950/40 border border-white/10 hover:border-cyan-500/40 text-slate-300 hover:text-cyan-200 text-[11px] font-medium transition-all active:scale-95"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Prompt Input Area */}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>✍️ ပုံဖန်တီးရန် စာသား (Prompt) ထည့်ပါ:</span>
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-semibold flex items-center gap-1">
+                      <span>🇲🇲 မြန်မာလို / 🇬🇧 English လို အလိုအလျောက် နားလည်ပေးပါသည်</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold flex items-center gap-1">
+                      <span>💧 Watermark & Logo ၁၀၀% မပါပါ</span>
+                    </span>
+                    {aiImagePrompt && (
+                      <button
+                        type="button"
+                        onClick={() => setAiImagePrompt('')}
+                        className="text-[10px] text-slate-400 hover:text-rose-400 font-bold ml-1"
+                      >
+                        စာသားဖျက်မည်
+                      </button>
+                    )}
+                  </div>
+                </div>
                 <textarea
                   rows={3}
                   value={aiImagePrompt}
                   onChange={e => setAiImagePrompt(e.target.value)}
-                  placeholder="ဥပမာ - ရန်ကုန်မြို့ သီတင်းကျွတ်လပြည့်ညက ရွှေတိဂုံစေတီတော်ကြီးရဲ့ ခမ်းနားထည်ဝါပုံ၊ 4K resolution, photorealistic..."
-                  className="w-full bg-[#0d1017] border border-white/15 rounded-xl p-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500/60 leading-relaxed"
+                  placeholder="မြန်မာလို သို့မဟုတ် အင်္ဂလိပ်လို စိတ်ကြိုက်ရေးသားနိုင်ပါသည်... ဥပမာ - နံနက်ခင်း မြူခိုးဝေနေသော ပုဂံရှေးဟောင်းစေတီများနှင့် မီးပုံးပျံများ၊ သနပ်ခါးပါးကွက်ကြားနှင့် မြန်မာလုံချည်ဝတ်ဆင်ထားသော ပျိုမေ၊ A cinematic golden sunset over ancient Bagan temples with hot air balloons, 8k photorealistic..."
+                  className="w-full bg-[#0d1017] border border-white/15 rounded-xl p-3.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500 leading-relaxed shadow-inner"
                 />
-              </div>
-
-              {/* Settings Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Model Selector */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-400">🤖 AI မော်ဒယ်</label>
-                  <select
-                    value={aiImageModel}
-                    onChange={e => setAiImageModel(e.target.value as any)}
-                    className="w-full bg-[#0d1017] border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/60"
-                  >
-                    <option value="gemini-3.1-flash-lite-image">Gemini 3.1 Flash-Lite Image (မြန်ဆန်)</option>
-                    <option value="gemini-nano-banana-2.1">Gemini Nano Banana 2.1 (4K အရည်အသွေးမြင့်)</option>
-                  </select>
-                </div>
-
-                {/* Aspect Ratio */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-400">📐 ပုံစံအချိုး (Aspect Ratio)</label>
-                  <select
-                    value={aiImageAspectRatio}
-                    onChange={e => setAiImageAspectRatio(e.target.value as any)}
-                    className="w-full bg-[#0d1017] border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/60"
-                  >
-                    <option value="1:1">1:1 (စတုရန်း - Instagram / Avatar)</option>
-                    <option value="16:9">16:9 (ဘေးတိုက် - YouTube / Hero Banner)</option>
-                    <option value="9:16">9:16 (ဒေါင်လိုက် - TikTok / Reels / Shorts)</option>
-                    <option value="4:3">4:3 (Card Thumbnail)</option>
-                    <option value="3:4">3:4 (Portrait)</option>
-                    <option value="1:4">1:4 (Ultra Tall)</option>
-                    <option value="4:1">4:1 (Ultra Wide Banner)</option>
-                  </select>
-                </div>
-
-                {/* Image Size */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-400">🔍 ပုံအရွယ်အစား (Image Size)</label>
-                  <select
-                    value={aiImageSize}
-                    onChange={e => setAiImageSize(e.target.value as any)}
-                    className="w-full bg-[#0d1017] border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/60"
-                  >
-                    <option value="1K">1K Standard</option>
-                    <option value="2K">2K High Definition</option>
-                    <option value="4K">4K Ultra HD</option>
-                  </select>
+                <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-400">
+                  <span className="flex items-center gap-1 text-slate-300">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Flow AI သည် မြန်မာစာသားနှင့် ယဉ်ကျေးမှုဆိုင်ရာ ဝေါဟာရများအား အလိုအလျောက် သဘာဝကျစွာ နားလည်ပြီး လိုချင်သော ပုံအတိုင်း တိကျလှပစွာ ပုံဖော်ပေးပါသည်</span>
+                  </span>
+                  <span className="text-slate-500 font-mono text-[10px]">{aiImagePrompt.length} စာလုံး</span>
                 </div>
               </div>
 
-              {/* Source Image for Editing (Optional) */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                  <span>📸 ပုံတည်းဖြတ်ရန် မူရင်းပုံ (Image-to-Image / Optional)</span>
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={e => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = () => setAiImageSource(reader.result as string);
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                    className="text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-cyan-600 file:text-white hover:file:bg-cyan-500 cursor-pointer"
-                  />
-                  {aiImageSource && (
-                    <button
-                      onClick={() => setAiImageSource('')}
-                      className="px-2.5 py-1 rounded-lg bg-rose-950/80 text-rose-300 text-xs font-bold border border-rose-500/30"
-                    >
-                      ဖယ်ရှားမည်
-                    </button>
-                  )}
-                </div>
-                {aiImageSource && (
-                  <div className="w-24 h-24 rounded-xl border border-white/15 overflow-hidden mt-2 relative">
-                    <img src={aiImageSource} alt="Source" className="w-full h-full object-cover" />
+              {/* Settings Controls (Aspect Ratio & Art Style) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[#0d1017] p-4 rounded-xl border border-white/10">
+                {/* Aspect Ratio Selector */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>📐 ပုံစံအချိုး (Aspect Ratio):</span>
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: '9:16', label: '📱 TikTok / Shorts', sub: '9:16 Vertical' },
+                      { id: '16:9', label: '💻 YouTube', sub: '16:9 Cinema' },
+                      { id: '1:1', label: '📷 Square / Post', sub: '1:1 Instagram' },
+                      { id: '4:3', label: '🖼️ Presentation', sub: '4:3 Standard' },
+                      { id: '3:4', label: '👤 Portrait', sub: '3:4 Photo' }
+                    ].map(ar => (
+                      <button
+                        key={ar.id}
+                        type="button"
+                        onClick={() => setAiImageAspectRatio(ar.id as any)}
+                        className={`p-2 rounded-xl text-center border transition-all ${
+                          aiImageAspectRatio === ar.id
+                            ? 'bg-cyan-600/30 border-cyan-400 text-cyan-200 ring-1 ring-cyan-400 font-bold'
+                            : 'bg-[#151926] border-white/5 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-[11px] block">{ar.label}</span>
+                        <span className="text-[9px] text-slate-500 font-mono">{ar.sub}</span>
+                      </button>
+                    ))}
                   </div>
-                )}
+                </div>
+
+                {/* Art Style Selector */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>🎨 ရုပ်ပုံစတိုင်လ် (Visual Art Style):</span>
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {[
+                      { id: 'cinematic', label: '🎬 Cinematic', desc: 'ရုပ်ရှင်အဆင့် 8K' },
+                      { id: 'realistic', label: '📸 Realistic', desc: 'လူသားစစ်စစ် ဓာတ်ပုံ' },
+                      { id: 'anime', label: '🎨 Anime', desc: 'ဂျပန်ကာတွန်း' },
+                      { id: '3d', label: '🧸 3D Animation', desc: 'Disney / Pixar' },
+                      { id: 'cyberpunk', label: '🌌 Cyberpunk', desc: 'အနာဂတ် နီယွန်' },
+                      { id: 'fantasy', label: '🏰 Fantasy', desc: 'ဒဏ္ဍာရီဆန်ဆန်' },
+                      { id: 'horror', label: '👻 Dark Horror', desc: 'ထိတ်လန့်ဖွယ်' }
+                    ].map(st => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => setAiImageStyle(st.id as any)}
+                        className={`p-2 rounded-xl text-left border transition-all ${
+                          aiImageStyle === st.id
+                            ? 'bg-cyan-600/30 border-cyan-400 text-cyan-200 ring-1 ring-cyan-400 font-bold'
+                            : 'bg-[#151926] border-white/5 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-[11px] block">{st.label}</span>
+                        <span className="text-[9px] text-slate-500">{st.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              {/* Generate Button */}
+              {/* Submit Generate Button */}
               <button
-                onClick={handleGenerateAiImage}
-                disabled={isAiImageLoading}
-                className="w-full py-3.5 bg-gradient-to-r from-cyan-600 via-teal-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-cyan-600/30 active:scale-[0.99] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                type="button"
+                onClick={() => handleGenerateAiImage()}
+                disabled={isAiImageLoading || !aiImagePrompt.trim()}
+                className="w-full py-4 bg-gradient-to-r from-cyan-600 via-teal-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-sm rounded-xl shadow-xl shadow-cyan-600/30 active:scale-[0.99] transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer"
               >
                 {isAiImageLoading ? (
                   <>
-                    <RefreshCw className="w-5 h-5 animate-spin" />
-                    <span>AI ဖြင့် ပုံဖန်တီးနေပါပြီ (ခဏစောင့်ပါ)...</span>
+                    <RefreshCw className="w-5 h-5 animate-spin text-cyan-200" />
+                    <span>{aiImageProgressText}</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-5 h-5 text-amber-300" />
-                    <span>✨ AI ပုံအသစ် ဖန်တီးမည် (Generate AI Image)</span>
+                    <span>⚡ Flow AI ဖြင့် ပုံအသစ် ထုတ်မည် (Clean & Unlimited Generate)</span>
                   </>
                 )}
               </button>
             </div>
 
-            {/* Result Display */}
+            {/* Generated Image Result Display */}
             {aiImageResultUrl && (
-              <div className="bg-[#151926] border border-cyan-500/40 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>ဖန်တီးပြီးသော AI ပုံ</span>
-                  </h3>
-                  <div className="flex items-center gap-2">
+              <div className="bg-[#151926] border-2 border-cyan-500/50 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>Flow AI ဖြင့် ဖန်တီးပြီးသော ရုပ်ပုံ (Success)</span>
+                      </h3>
+                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
+                        <span>💧 Watermark & Logo ၁၀၀% ကင်းစင်သည်</span>
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      ရုပ်ပုံတွင် AI ရေစာတံဆိပ် (Watermark/Logo) လုံးဝမပါရှိဘဲ ကြည်လင်ပြတ်သားစွာ ရရှိပါသည်
+                    </p>
+                  </div>
+
+                  {/* Actions Bar */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Add to Video Studio Background */}
                     <button
-                      onClick={() => downloadFile(aiImageResultUrl, `AI_Studio_${Date.now()}.png`, 'image/png')}
-                      className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 shadow active:scale-95"
+                      type="button"
+                      onClick={() => {
+                        setVideoBgImages(prev => [...prev.slice(0, 9), aiImageResultUrl]);
+                        setMainMode('video');
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-purple-600/30 active:scale-95 transition-all"
+                    >
+                      <Video className="w-3.5 h-3.5" />
+                      <span>🎬 ဗီဒီယို နောက်ခံပုံအဖြစ် ထည့်မည်</span>
+                    </button>
+
+                    {/* Download Image Button */}
+                    <button
+                      type="button"
+                      onClick={() => downloadFile(aiImageResultUrl, `FlowAI_Clean_${Date.now()}.png`, 'image/png')}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-600/30 active:scale-95 transition-all"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      <span>ဒေါင်းလုဒ် (.png)</span>
+                      <span>10x Turbo Download (.PNG)</span>
+                    </button>
+
+                    {/* Regenerate Variation */}
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateAiImage()}
+                      className="px-3 py-1.5 rounded-xl bg-[#0d1017] hover:bg-white/10 text-slate-200 text-xs font-bold border border-white/10 flex items-center gap-1.5 active:scale-95 transition-all"
+                      title="Seed အသစ်ဖြင့် ထပ်မံထုတ်ယူမည်"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>ထပ်ထုတ်မည် (New Seed)</span>
                     </button>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/10 overflow-hidden bg-black/50 flex items-center justify-center p-2">
-                  <img src={aiImageResultUrl} alt="AI Generated" className="max-h-[500px] object-contain rounded-xl" referrerPolicy="no-referrer" />
+                {/* Image Container with Aspect Ratio */}
+                <div className="rounded-2xl border border-white/10 overflow-hidden bg-black/60 flex items-center justify-center p-2 shadow-inner relative group">
+                  <img
+                    src={aiImageResultUrl}
+                    alt="Flow AI Generated Clean"
+                    className="max-h-[580px] w-auto max-w-full object-contain rounded-xl shadow-2xl"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 text-[10px] text-white flex items-center gap-1.5 font-semibold pointer-events-none">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    <span>No Watermark • Ultra HD</span>
+                  </div>
                 </div>
-                {aiImageResultText && (
-                  <p className="text-xs text-slate-300 bg-black/40 p-3 rounded-xl border border-white/5">
-                    {aiImageResultText}
-                  </p>
+
+                {/* AI Understanding & Prompt Visualizer */}
+                {(aiImageResultText || aiImageInterpretedPrompt) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                    {aiImageResultText && (
+                      <div className="bg-[#0e111a] p-3 rounded-xl border border-white/10 space-y-1.5">
+                        <span className="text-[10px] font-bold text-cyan-300 flex items-center gap-1">
+                          <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>💡 Flow AI ၏ မြန်မာစာသား နားလည်ပုံ ရှင်းလင်းချက်:</span>
+                        </span>
+                        <p className="text-xs text-slate-200 leading-relaxed font-sans">
+                          {aiImageResultText}
+                        </p>
+                      </div>
+                    )}
+
+                    {aiImageInterpretedPrompt && (
+                      <div className="bg-[#0e111a] p-3 rounded-xl border border-white/10 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-emerald-300 flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>🎨 Visual Prompt (English Prompt):</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (navigator?.clipboard?.writeText) {
+                                navigator.clipboard.writeText(aiImageInterpretedPrompt);
+                                setAiPromptCopied(true);
+                                setTimeout(() => setAiPromptCopied(false), 2000);
+                              }
+                            }}
+                            className="text-[10px] text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1 bg-cyan-950/50 hover:bg-cyan-900/50 px-2 py-0.5 rounded-lg border border-cyan-500/30 transition-all active:scale-95"
+                          >
+                            {aiPromptCopied ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span className="text-emerald-300">ကူးယူပြီးပါပြီ ✓</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3 text-cyan-400" />
+                                <span>Copy Prompt</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-300 font-mono leading-relaxed bg-black/40 p-2.5 rounded-lg border border-white/5 line-clamp-3">
+                          {aiImageInterpretedPrompt}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -3940,10 +4275,25 @@ export const App: React.FC = () => {
             {/* Gallery History */}
             {aiImageHistory.length > 0 && (
               <div className="bg-[#151926] border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <History className="w-4 h-4 text-indigo-400" />
-                  <span>ဖန်တီးခဲ့သော ပုံများ မှတ်တမ်း (AI Image Gallery)</span>
-                </h3>
+                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <History className="w-4 h-4 text-cyan-400" />
+                    <span>ဖန်တီးခဲ့သော ပုံများ မှတ်တမ်း (Flow AI Gallery - {aiImageHistory.length} ပုံ)</span>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('ရုပ်ပုံ မှတ်တမ်းအားလုံးကို ရှင်းလင်းမည် သေချာပါသလား?')) {
+                        setAiImageHistory([]);
+                        try { localStorage.removeItem('vm_ai_image_history'); } catch (_) {}
+                      }
+                    }}
+                    className="text-[11px] text-slate-400 hover:text-rose-400 font-bold transition-all"
+                  >
+                    မှတ်တမ်းရှင်းမည်
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                   {aiImageHistory.map(item => (
                     <div
@@ -3952,16 +4302,38 @@ export const App: React.FC = () => {
                         setAiImageResultUrl(item.imageUrl);
                         setAiImagePrompt(item.prompt);
                       }}
-                      className="group relative bg-[#0d1017] rounded-xl border border-white/10 overflow-hidden cursor-pointer hover:border-cyan-500/50 transition-all shadow-md"
+                      className="group relative bg-[#0d1017] rounded-xl border border-white/10 overflow-hidden cursor-pointer hover:border-cyan-400 transition-all shadow-md"
                     >
-                      <div className="w-full h-32 bg-black/40 overflow-hidden">
-                        <img src={item.imageUrl} alt={item.prompt} className="w-full h-full object-cover group-hover:scale-105 transition-transform" referrerPolicy="no-referrer" />
-                      </div>
-                      <div className="p-2 space-y-1">
-                        <p className="text-[11px] text-slate-200 line-clamp-2 font-medium">{item.prompt}</p>
-                        <span className="text-[9px] font-mono text-cyan-400 bg-cyan-950/60 px-1.5 py-0.5 rounded">
-                          {new Date(item.timestamp).toLocaleTimeString('my-MM', { hour: '2-digit', minute: '2-digit' })}
+                      <div className="w-full h-36 bg-black/40 overflow-hidden relative">
+                        <img
+                          src={item.imageUrl}
+                          alt={item.prompt}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          referrerPolicy="no-referrer"
+                        />
+                        <span className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-full bg-black/75 text-[9px] font-mono font-bold text-cyan-300 border border-white/10">
+                          {item.model === 'turbo' ? 'Turbo' : 'Flux'}
                         </span>
+                      </div>
+                      <div className="p-2.5 space-y-1">
+                        <p className="text-[11px] text-slate-200 line-clamp-2 font-medium">{item.prompt}</p>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[9px] font-mono text-slate-400">
+                            {new Date(item.timestamp).toLocaleTimeString('my-MM', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setVideoBgImages(prev => [...prev.slice(0, 9), item.imageUrl]);
+                              setMainMode('video');
+                            }}
+                            className="text-[10px] text-purple-300 hover:text-white font-bold"
+                            title="ဗီဒီယိုအတွက် သုံးမည်"
+                          >
+                            🎬 Use
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -4873,13 +5245,17 @@ export const App: React.FC = () => {
                       onChange={(e) => setScriptDuration(e.target.value)}
                       className="w-full bg-[#0d0f17] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
                     >
-                      <option value="3min">၃ မိနစ် (Short)</option>
-                      <option value="5min">၅ မိနစ် (Standard)</option>
-                      <option value="6min">၆ မိနစ် (Pro)</option>
-                      <option value="8min">၈ မိနစ် (Ultra)</option>
-                      <option value="10min">၁၀ မိနစ် (Long)</option>
-                      <option value="15min">၁၅ မိနစ် (Mega Story / Novel)</option>
-                      <option value="20min">၂၀ မိနစ် (Epic Saga)</option>
+                      <option value="3min">🎬 ၃ မိနစ် (Short Story - စာလုံး ၄,၅၀၀)</option>
+                      <option value="5min">🎥 ၅ မိနစ် (Standard Story - စာလုံး ၇,၅၀၀)</option>
+                      <option value="6min">⚡ ၆ မိနစ် (Pro Story - စာလုံး ၉,၀၀၀)</option>
+                      <option value="8min">⭐ ၈ မိနစ် (Ultra Story - စာလုံး ၁၂,၀၀၀)</option>
+                      <option value="10min">🏆 ၁၀ မိနစ် (Long Story - စာလုံး ၁၅,၀၀၀)</option>
+                      <option value="15min">📖 ၁၅ မိနစ် (Mega Story / Novel - စာလုံး ၂၂,၀၀၀)</option>
+                      <option value="20min">🔥 ၂၀ မိနစ် (Epic Saga - စာလုံး ၃၀,၀၀၀)</option>
+                      <option value="25min">💎 ၂၅ မိနစ် (Grand Novel - စာလုံး ၃၆,၀၀၀)</option>
+                      <option value="30min">👑 ၃၀ မိနစ် အပြည့် (Full 30-Min Feature - စာလုံး ၄၄,၀၀၀)</option>
+                      <option value="45min">🚀 ၄၅ မိနစ် (Extended Feature - စာလုံး ၆၀,၀၀၀)</option>
+                      <option value="60min">🌟 ၆၀ မိနစ် / ၁ နာရီပြည့် (1-Hour Masterpiece - စာလုံး ၇၈,၀၀၀)</option>
                       <option value="unlimited">♾️ အကန့်အသတ်မရှိ (Unlimited Full Masterpiece)</option>
                     </select>
                   </div>
@@ -4902,6 +5278,33 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
+                {/* 10-Scene Auto Video Pipeline Toggle */}
+                <div className="bg-[#0c0e14] p-3.5 rounded-xl border border-purple-500/30 flex items-center justify-between gap-3 shadow-inner">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-purple-600 to-pink-600 flex items-center justify-center text-white shrink-0 shadow">
+                      <Sparkles className="w-4 h-4 text-amber-300" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-white flex items-center gap-1.5 flex-wrap">
+                        <span>ဇာတ်ကွက်အလိုက် ပုံ (၁၀) ပုံ Auto ထုတ်ပြီး Video ပါ တစ်ခါတည်း ပေါင်းစပ်ထုတ်မည်</span>
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded font-mono font-bold">10-Scene Auto</span>
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        ဇာတ်ညွှန်းရသည်နှင့် ဇာတ်လမ်းထဲမှ အဓိက ဇာတ်ကွက် ၁၀ ကွက်ကို Flow AI ဖြင့် ပုံ ၁၀ ပုံ ထုတ်ပြီး လူသားအသံ + စာတန်းထိုးပါဝင်သော MP4 Video အဖြစ် အလိုအလျောက် ပေါင်းစပ်ပေးပါမည်
+                      </p>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={autoProduceStoryVideo}
+                      onChange={(e) => setAutoProduceStoryVideo(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-purple-600 peer-checked:to-pink-600"></div>
+                  </label>
+                </div>
+
                 {/* Error Banner */}
                 {scriptError && (
                   <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-200">
@@ -4918,8 +5321,8 @@ export const App: React.FC = () => {
                 >
                   {isScriptLoading ? (
                     <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>AI က စိတ်ဝင်စားဖွယ် ဇာတ်ညွှန်းကို ရေးဖွဲ့နေပါသည်...</span>
+                      <RefreshCw className="w-4 h-4 animate-spin text-amber-300" />
+                      <span>⚡ AI က ဇာတ်လမ်းရှည် အခန်းအားလုံးကို Limit မပြည့်စေရန်နှင့် Error မတက်စေရန် စနစ်တကျ ရေးဖွဲ့နေပါသည်...</span>
                     </>
                   ) : (
                     <>
@@ -4997,106 +5400,192 @@ export const App: React.FC = () => {
                   <span>💡 အကြံပြုချက် - အပေါ်ရှိ <b>"လူအသံစစ်စစ်ဖြင့် အသံထွက်ပြောင်းမည်"</b> ခလုတ်ကို နှိပ်လိုက်ပါက ဤဇာတ်ညွှန်းစာသား အပြည့်အစုံကို လူအသံစစ်စစ် (ဝီလျံ၊ အေဗာ သို့မဟုတ် အဘိုး/အဖွား အသံများ) ဖြင့် MP3 အသံဖိုင်အပြည့်အစုံ ချက်ချင်း ထုတ်ယူနိုင်ပါမည်။</span>
                 </div>
 
-                {/* AI Storyboard Scene Images Generator Box */}
+                {/* Live 10-Scene Story Video Production Pipeline Stepper */}
+                {storyVideoStep !== 'idle' && (
+                  <div className="bg-[#0e111a] border border-purple-500/30 rounded-2xl p-4 shadow-xl space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                        <span>🎬 10-Scene Story Video Production Pipeline (အလိုအလျောက် ဗီဒီယို ထုတ်လုပ်မှု)</span>
+                      </span>
+                      <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                        {storyVideoStep === 'ready' ? '✓ ဗီဒီယို အဆင်သင့် ဖြစ်ပါပြီ' : '⚡ Auto-Pipeline Active'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center text-xs font-bold">
+                      <div className="p-2.5 rounded-xl border bg-emerald-500/15 border-emerald-500/30 text-emerald-300 flex items-center justify-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>၁။ ဇာတ်ညွှန်း ရေးဖွဲ့ပြီး</span>
+                      </div>
+                      <div className={`p-2.5 rounded-xl border transition-all flex items-center justify-center gap-1.5 ${
+                        isStoryImagesLoading
+                          ? 'bg-purple-600/30 border-purple-500 text-purple-200 ring-2 ring-purple-400 animate-pulse'
+                          : (storyImages.length > 0 ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/5 border-white/5 text-slate-500')
+                      }`}>
+                        {isStoryImagesLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-300 shrink-0" />
+                            <span>၂။ ပုံ (၁၀) ပုံ ထုတ်နေပါသည်...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            <span>၂။ ပုံ ({storyImages.length || 10}) ပုံ ရရှိပြီး</span>
+                          </>
+                        )}
+                      </div>
+                      <div className={`p-2.5 rounded-xl border transition-all flex items-center justify-center gap-1.5 ${
+                        isStoryVideoLoading
+                          ? 'bg-pink-600/30 border-pink-500 text-pink-200 ring-2 ring-pink-400 animate-pulse'
+                          : (storyVideoUrl ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/5 border-white/5 text-slate-500')
+                      }`}>
+                        {isStoryVideoLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-pink-300 shrink-0" />
+                            <span>၃။ အသံ+ပုံ၁၀ပုံ ဗီဒီယို ပေါင်းစပ်နေ...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Video className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                            <span>{storyVideoUrl ? '၃။ MP4 Video အဆင်သင့်' : '၃။ MP4 Video ပေါင်းစပ်မည်'}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Storyboard Scene Images Generator Box (10 Scenes) */}
                 <div className="p-4 bg-gradient-to-r from-purple-950/40 to-indigo-950/40 border border-purple-500/30 rounded-2xl space-y-3">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <div>
                       <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
                         <Sparkles className="w-4 h-4 text-purple-400" />
-                        <span>🎨 ဇာတ်လမ်းဇာတ်ကွက်အလိုက် AI သရုပ်ဖော်ပုံများ (AI Storyboard Scenes)</span>
+                        <span>🎨 ဇာတ်လမ်းထဲကအတိုင်း AI သရုပ်ဖော်ပုံ (၁၀) ပုံ (Flow AI 10 Storyboard Scenes)</span>
                       </h4>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        ဤဇာတ်လမ်းနှင့် တိုက်ရိုက်ကိုက်ညီသော Cinematic AI ရုပ်ပုံ (၄) ပုံကို အလိုအလျောက် ထုတ်ယူပါ
+                        ဤဇာတ်လမ်း၏ အစ၊ အလယ်၊ အဆုံး အဓိက ဇာတ်ကွက် (၁၀) ကွက်နှင့် တိုက်ရိုက်ကိုက်ညီသော Cinematic AI ရုပ်ပုံ ၁၀ ပုံ ဖြစ်ပါသည်
                       </p>
                     </div>
 
-                    <button
-                      onClick={() => handleGenerateStoryImages()}
-                      disabled={isStoryImagesLoading}
-                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-purple-600/30 active:scale-95 disabled:opacity-50 shrink-0"
-                    >
-                      {isStoryImagesLoading ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>AI ရုပ်ပုံများ ဖန်တီးနေပါသည်...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4" />
-                          <span>✨ AI ဇာတ်လမ်းပုံများ ထုတ်မည်</span>
-                        </>
-                      )}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => handleGenerateStoryImages(undefined, false)}
+                        disabled={isStoryImagesLoading}
+                        className="px-3.5 py-2 rounded-xl bg-[#0c0e14] hover:bg-white/10 text-slate-200 border border-white/10 font-bold text-xs flex items-center gap-1.5 active:scale-95 disabled:opacity-50 shrink-0"
+                      >
+                        {isStoryImagesLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-300" />
+                            <span>ပုံ ၁၀ ပုံ ထုတ်နေ...</span>
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 text-purple-400" />
+                            <span>✨ ပုံ ၁၀ ပုံ အသစ်ထုတ်မည်</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={() => handleGenerateStoryVideo()}
+                        disabled={isStoryVideoLoading || (storyImages.length === 0 && isStoryImagesLoading)}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-pink-600/30 active:scale-95 disabled:opacity-50 shrink-0"
+                      >
+                        {isStoryVideoLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>ဗီဒီယို ဖန်တီးနေပါသည်...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Video className="w-3.5 h-3.5" />
+                            <span>🎬 ပုံ (၁၀) ပုံပေါင်းစပ်၍ MP4 ဗီဒီယို ထုတ်မည်</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   {storyImagesError && (
-                    <p className="text-xs text-rose-300 bg-rose-950/40 p-2 rounded-lg border border-rose-500/30">
+                    <p className="text-xs text-rose-300 bg-rose-950/40 p-2.5 rounded-lg border border-rose-500/30">
                       {storyImagesError}
                     </p>
                   )}
 
                   {storyImages.length > 0 && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5 pt-2">
                       {storyImages.map((scene) => (
-                        <div key={scene.sceneNumber} className="bg-[#0c0e14] p-3 rounded-xl border border-white/10 space-y-2 flex flex-col justify-between">
+                        <div key={scene.sceneNumber} className="bg-[#0c0e14] p-2.5 rounded-xl border border-white/10 space-y-2 flex flex-col justify-between hover:border-purple-500/40 transition-all">
                           <div className="space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-bold text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded border border-purple-500/30">
-                                {scene.title || `Scene ${scene.sceneNumber}`}
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[10px] font-bold text-purple-300 bg-purple-500/20 px-1.5 py-0.5 rounded border border-purple-500/30 truncate">
+                                #{scene.sceneNumber} {scene.title || `Scene ${scene.sceneNumber}`}
                               </span>
-                              <span className="text-[10px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              <span className="text-[9px] text-amber-300 shrink-0">
                                 🎭 {scene.mood}
                               </span>
                             </div>
 
-                            {scene.imageUrl && (
-                              <div className="aspect-video w-full rounded-lg overflow-hidden border border-white/10 shadow-lg group relative">
+                            {scene.imageUrl ? (
+                              <div className="aspect-video w-full rounded-lg overflow-hidden border border-white/10 shadow-lg group relative bg-black/50">
                                 <img 
                                   src={scene.imageUrl} 
                                   alt={scene.title}
                                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                  loading="lazy"
                                 />
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-2">
-                                  <span className="text-[10px] text-white font-bold">AI Generated Vision</span>
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-1.5">
+                                  <span className="text-[9px] text-white font-bold">Scene #{scene.sceneNumber}</span>
                                 </div>
+                              </div>
+                            ) : (
+                              <div className="aspect-video w-full rounded-lg border border-dashed border-white/10 flex items-center justify-center text-[10px] text-slate-500">
+                                <span>ရုပ်ပုံ ဖန်တီးနေ...</span>
                               </div>
                             )}
 
-                            <p className="text-[11px] text-slate-300 font-mono bg-black/30 p-2.5 rounded-lg border border-white/5 select-all leading-relaxed">
+                            <p className="text-[10px] text-slate-300 font-mono bg-black/40 p-2 rounded-lg border border-white/5 line-clamp-3 leading-relaxed">
                               {scene.visualPrompt}
                             </p>
                           </div>
-                          <div className="flex flex-col gap-2">
+
+                          <div className="flex flex-col gap-1.5 pt-1">
                             {scene.imageUrl && (
-                              <div className="grid grid-cols-2 gap-2">
+                              <div className="grid grid-cols-2 gap-1">
                                 <button
+                                  type="button"
                                   onClick={() => handleGenerateStoryVideo(scene.imageUrl)}
                                   disabled={isStoryVideoLoading}
-                                  className="py-2 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 shadow transition-all active:scale-95 disabled:opacity-50"
+                                  className="py-1.5 px-1 rounded-md bg-emerald-600/80 hover:bg-emerald-600 text-white font-bold text-[9px] flex items-center justify-center gap-0.5 shadow transition-all active:scale-95 disabled:opacity-50"
+                                  title="ဤပုံ တစ်ပုံတည်းဖြင့် Video ထုတ်မည်"
                                 >
-                                  <Video className="w-3 h-3" />
-                                  <span>ဇာတ်လမ်းဗီဒီယို ထုတ်မည်</span>
+                                  <Video className="w-2.5 h-2.5" />
+                                  <span>1-Scene</span>
                                 </button>
                                 <button
+                                  type="button"
                                   onClick={() => {
                                     setVideoBgImage(scene.imageUrl);
                                     setVideoTitleText(generatedScript?.title || '');
                                     setMainMode('video');
                                     window.scrollTo({ top: 0, behavior: 'smooth' });
                                   }}
-                                  className="py-2 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 shadow transition-all active:scale-95"
+                                  className="py-1.5 px-1 rounded-md bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-[9px] flex items-center justify-center gap-0.5 shadow transition-all active:scale-95"
+                                  title="Studio တွင် ဒီဇိုင်း ပြင်ဆင်မည်"
                                 >
-                                  <Settings2 className="w-3 h-3" />
-                                  <span>ဒီဇိုင်း ပြင်ဆင်မည်</span>
+                                  <Settings2 className="w-2.5 h-2.5" />
+                                  <span>Design</span>
                                 </button>
                               </div>
                             )}
                             <button
+                              type="button"
                               onClick={() => handleCopy(scene.visualPrompt, `scene_${scene.sceneNumber}`)}
-                              className="w-full py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold text-[9px] flex items-center justify-center gap-1.5 border border-white/5 transition-all active:scale-95"
+                              className="w-full py-1 px-2 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold text-[8px] flex items-center justify-center gap-1 border border-white/5 transition-all active:scale-95"
                             >
-                              {copiedType === `scene_${scene.sceneNumber}` ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
-                              <span>{copiedType === `scene_${scene.sceneNumber}` ? 'Prompt ကူးယူပြီး' : 'AI Prompt ကူးယူမည်'}</span>
+                              {copiedType === `scene_${scene.sceneNumber}` ? <Check className="w-2.5 h-2.5 text-emerald-300" /> : <Copy className="w-2.5 h-2.5" />}
+                              <span>{copiedType === `scene_${scene.sceneNumber}` ? 'ကူးယူပြီး' : 'Prompt Copy'}</span>
                             </button>
                           </div>
                         </div>
@@ -5111,10 +5600,10 @@ export const App: React.FC = () => {
                     <div>
                       <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
                         <Video className="w-4 h-4 text-pink-400" />
-                        <span>🎬 AI ရုပ်ပုံနှင့် အသံဖိုင်ကို ဗီဒီယိုအဖြစ် တိုက်ရိုက်ပေါင်းစပ်မည် (Direct AI Video Maker)</span>
+                        <span>🎬 AI ပုံ (၁၀) ပုံနှင့် လူသားအသံဖိုင်ကို ဗီဒီယိုအဖြစ် တိုက်ရိုက်ပေါင်းစပ်မည် (10-Scene AI Video Maker)</span>
                       </h4>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        ဤဇာတ်လမ်းအတွက် Cinematic AI နောက်ခံပုံ၊ အသံဖိုင် နှင့် အသံလှိုင်း (Waveform) တို့ကို Download ဆွဲစရာမလိုဘဲ MP4 ဗီဒီယိုအဖြစ် တစ်ခါတည်း တိုက်ရိုက်ပေါင်းစပ်ပါ
+                        ဤဇာတ်လမ်းအတွက် Flow AI ရုပ်ပုံ (၁၀) ပုံ၊ လူသားအသံစစ်စစ်၊ အသံလှိုင်း (Waveform) နှင့် HD စာတန်းထိုးတို့ကို အလိုအလျောက် ပေါင်းစပ်ပြီး Dynamic Ken Burns Motion MP4 ဗီဒီယိုအဖြစ် တစ်ခါတည်း တိုက်ရိုက်ထုတ်ပေးပါမည်
                       </p>
                     </div>
 
@@ -5157,12 +5646,12 @@ export const App: React.FC = () => {
                         {isStoryVideoLoading ? (
                           <>
                             <RefreshCw className="w-4 h-4 animate-spin" />
-                            <span>Pro ဗီဒီယို ဖန်တီးနေပါသည်...</span>
+                            <span>ပုံ ၁၀ ပုံဖြင့် ဗီဒီယို ဖန်တီးနေပါသည်...</span>
                           </>
                         ) : (
                           <>
                             <Video className="w-4 h-4" />
-                            <span>🎬 Pro ဗီဒီယို တိုက်ရိုက်ထုတ်မည် (Multi-Scene)</span>
+                            <span>🎬 ပုံ (၁၀) ပုံ + အသံဖိုင် ပေါင်းစပ်၍ MP4 Video ထုတ်မည်</span>
                           </>
                         )}
                       </button>
@@ -7734,9 +8223,12 @@ export const App: React.FC = () => {
                       onChange={(e) => setPipelineDuration(e.target.value as any)}
                       className="w-full bg-[#0d101d] border border-amber-500/40 rounded-xl px-3 py-2.5 text-xs text-amber-200 font-bold focus:outline-none focus:border-amber-500"
                     >
-                      <option value="8min">⭐ ၈ မိနစ် ဇာတ်လမ်းရှည်အပြည့် (8 Minutes Full Story - စာလုံးရေ ၁၂,၀၀၀)</option>
+                      <option value="30min">👑 ၃၀ မိနစ် အပြည့် (30 Minutes Full Feature - စာလုံးရေ ၄၄,၀၀၀)</option>
+                      <option value="20min">🔥 ၂၀ မိနစ် ရုပ်ရှင်ဇာတ်ကားရှည် (20 Mins Epic - စာလုံးရေ ၃၀,၀၀၀)</option>
+                      <option value="15min">📖 ၁၅ မိနစ် (15 Mins Mega Story - စာလုံးရေ ၂၂,၀၀၀)</option>
+                      <option value="10min">🏆 ၁၀ မိနစ် (10 Mins Long Story - စာလုံးရေ ၁၅,၀၀၀)</option>
+                      <option value="8min">⭐ ၈ မိနစ် ဇာတ်လမ်းရှည် (8 Minutes Story - စာလုံးရေ ၁၂,၀၀၀)</option>
                       <option value="5min">🎥 ၅ မိနစ် - ၆ မိနစ် (5-6 Mins Standard Story - စာလုံးရေ ၇,၅၀၀)</option>
-                      <option value="10min">🏆 ၁၀ မိနစ် ရုပ်ရှင်ဇာတ်ကားရှည် (10 Mins Epic - စာလုံးရေ ၁၅,၀၀၀)</option>
                       <option value="3min">🎬 ၃ မိနစ် (3 Mins Story - စာလုံးရေ ၄,၅၀၀)</option>
                       <option value="short">⚡ ၃၀ စက္ကန့် - ၁ မိနစ်တို (Shorts / TikTok / Reels)</option>
                     </select>

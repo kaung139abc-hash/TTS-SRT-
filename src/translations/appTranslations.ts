@@ -109,7 +109,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     
     tabTts: "လူအစစ် TTS",
     tabSubtitle: "🎬 စာတန်းထိုးကပ်စက်",
-    tabImager: "🖼️ ပုံထုတ်စက်",
+    tabImager: "🎨 Flow AI ပုံထုတ်စက် (Unlimited)",
     tabAutoPipeline: "⚡ 1-Click ဗီဒီယို",
     tabWriter: "AI ဇာတ်လမ်း",
     tabHistory: "📂 မှတ်တမ်း",
@@ -168,7 +168,7 @@ export const APP_TRANSLATIONS: Record<AppLanguage, AppTranslationStrings> = {
     
     tabTts: "Human TTS",
     tabSubtitle: "🎬 Subtitle Burner",
-    tabImager: "🖼️ AI Image Studio",
+    tabImager: "🎨 Flow AI (Flux Unlimited)",
     tabAutoPipeline: "⚡ 1-Click Video",
     tabWriter: "AI Storyteller",
     tabHistory: "📂 History",
