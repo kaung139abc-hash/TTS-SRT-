@@ -1399,18 +1399,21 @@ export function resolveVoiceForText(
   let finalRate = requestedRate;
   let finalPitch = requestedPitch;
 
-  // Check preset mapping for default rate and pitch
+  // Check preset mapping for default rate, pitch, and canonical base voice
   if (finalVoice && VOICE_PRESET_MAP[finalVoice]) {
     const preset = VOICE_PRESET_MAP[finalVoice];
+    finalVoice = preset.baseVoice;
     if (!finalRate || finalRate === '+0%' || finalRate === '0%') {
       finalRate = preset.presetRate || '+0%';
     }
     if (!finalPitch || finalPitch === '+0Hz' || finalPitch === '0Hz') {
       finalPitch = preset.presetPitch || '+0Hz';
     }
+  } else if (!finalVoice.startsWith('gemini-')) {
+    finalVoice = getValidEdgeVoice(finalVoice, text);
   }
 
-  // Strictly preserve the user's selected voice! Zero unwanted voice changes!
+  // Strictly preserve the resolved voice throughout all chunks!
   return { engineVoice: finalVoice, rate: finalRate, pitch: finalPitch };
 }
 
@@ -2258,27 +2261,23 @@ export async function synthesizeBurmeseVoice(
   let rateToUse = (effectiveRate && effectiveRate !== '+0%' && effectiveRate !== '0%') ? effectiveRate : undefined;
   let pitchToUse = (effectivePitch && effectivePitch !== '+0Hz' && effectivePitch !== '0Hz') ? effectivePitch : undefined;
 
-  // 1. Primary Engine: Gemini Studio Real Human Speech (Fenrir, Aoede, Puck, Kore, Charon, Zephyr)
-  try {
-    const geminiAudio = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
-    if (geminiAudio && geminiAudio.length > 50) {
-      return geminiAudio;
-    }
-  } catch (_) {}
+  // 1. Explicit Gemini voice requested only (e.g. gemini-fenrir, gemini-aoede)
+  if (engineVoice && engineVoice.startsWith('gemini-')) {
+    try {
+      const geminiAudio = await synthesizeWithGeminiTts(cleanTxt, engineVoice);
+      if (geminiAudio && geminiAudio.length > 50) {
+        return geminiAudio;
+      }
+    } catch (_) {}
+  }
 
-  // 2. Secondary Engine: Multilingual Neural Voices (William, Ava, Andrew, Emma, Brian)
+  // 2. Pure Multilingual Neural Voice Engine (100% Locked Single Voice, Zero Switching)
+  // Guarantees all chunks stay 100% IDENTICAL with zero voice changes!
   const targetVoice = getValidEdgeVoice(engineVoice, cleanTxt);
-  let audioBuf = await synthesizeEdgeWithRetry(cleanTxt, targetVoice, rateToUse, pitchToUse, 3);
+  const audioBuf = await synthesizeEdgeWithRetry(cleanTxt, targetVoice, rateToUse, pitchToUse, 4);
   if (audioBuf && audioBuf.length > 50) {
     return audioBuf;
   }
-
-  // 3. Fallback Engine: Fast Google Speech
-  try {
-    const lang = detectGoogleTtsLang(targetVoice, cleanTxt);
-    const fastG = await synthesizeFastGoogleTTS(cleanTxt, lang);
-    if (fastG && fastG.length > 50) return fastG;
-  } catch (_) {}
 
   return Buffer.alloc(0);
 }
@@ -2287,7 +2286,7 @@ export async function synthesizeBurmeseVoice(
 async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effectiveRate: string = '+0%', effectivePitch: string = '+0Hz'): Promise<Buffer> {
   if (!cleanTxt || !cleanTxt.trim()) return Buffer.alloc(0);
 
-  const cacheKey = `tts_${engineVoice}_${effectiveRate}_${effectivePitch}_${cleanTxt}`;
+  const cacheKey = `v5_tts_${engineVoice}_${effectiveRate}_${effectivePitch}_${cleanTxt}`;
   const cached = getTtsAudioCache(cacheKey);
   if (cached && cached.audio.length > 50) {
     return cached.audio;
@@ -2301,16 +2300,16 @@ async function synthesizeSingleChunk(cleanTxt: string, engineVoice: string, effe
   const runChunkTask = (async (): Promise<Buffer> => {
     let finalAudio: Buffer = Buffer.alloc(0);
 
-    // Primary: Synthesize with the EXACT selected neural voice (100% Human Studio Quality, Zero Robot voice)
+    // Primary: Synthesize with the EXACT selected neural voice (100% Human Studio Quality, Zero Voice Switching)
     try {
       finalAudio = await synthesizeBurmeseVoice(cleanTxt, engineVoice, effectiveRate, effectivePitch);
     } catch (_) {}
 
-    // Fallback: Retry with the exact same voice
+    // Fallback: Retry with the EXACT same locked voice only
     if (!finalAudio || finalAudio.length < 50) {
       const resolvedEdgeVoice = getValidEdgeVoice(engineVoice, cleanTxt);
       try {
-        finalAudio = await synthesizeEdgeWithRetry(cleanTxt, resolvedEdgeVoice, effectiveRate, effectivePitch, 3);
+        finalAudio = await synthesizeEdgeWithRetry(cleanTxt, resolvedEdgeVoice, effectiveRate, effectivePitch, 4);
       } catch (_) {}
     }
 
@@ -2340,7 +2339,7 @@ async function synthesizeStream(txt: string, vName: string, rate: string = '+0%'
   const effectivePitch = resolved.pitch || '+0Hz';
 
   // Check cache for entire text
-  const cacheKey = `stream_${engineVoice}_${effectiveRate}_${effectivePitch}_${cleanTxt}`;
+  const cacheKey = `v5_stream_${engineVoice}_${effectiveRate}_${effectivePitch}_${cleanTxt}`;
   const cached = getTtsAudioCache(cacheKey);
   if (cached && cached.audio.length > 50) return cached.audio;
 
@@ -2533,7 +2532,7 @@ async function synthesizeStreamWithSubtitles(txt: string, vName: string, rate: s
   const effectiveRate = resolved.rate || '+0%';
   const effectivePitch = resolved.pitch || '+0Hz';
 
-  const cacheKey = `sub_${engineVoice}_${effectiveRate}_${effectivePitch}_${cleanTxt}`;
+  const cacheKey = `v5_sub_${engineVoice}_${effectiveRate}_${effectivePitch}_${cleanTxt}`;
   const cached = getTtsAudioCache(cacheKey);
   if (cached && cached.audio.length > 50) {
     return { audioBuffer: cached.audio, srtContent: cached.srt };
